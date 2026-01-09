@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "No Visitors",
+  "version": "0.1.0",
+  "identifier": "com.vana.no-visitors",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:3000"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "No Visitors - Git-based Arcane Archive",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all"
+  },
+  "plugins": {
+    "store": null
+  }
+}
+

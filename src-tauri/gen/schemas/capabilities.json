@@ -1,0 +1,1 @@
+{"main-capabilities":{"identifier":"main-capabilities","description":"Main application capabilities","local":true,"windows":["main"],"permissions":["core:webview:default","core:webview:allow-internal-toggle-devtools"]}}
