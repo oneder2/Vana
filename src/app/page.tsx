@@ -15,15 +15,41 @@ import {
   Database,
   X,
 } from 'lucide-react';
+import { TextSelection } from 'prosemirror-state';
 import { useTheme } from '@/components/ThemeProvider';
 import { Sidebar } from '@/components/Sidebar';
 import { Editor } from '@/components/Editor';
 import { RadialMenu } from '@/components/RadialMenu';
+import { BlockTypeSelector } from '@/components/BlockTypeSelector';
 import { getAllThemes, getThemeIcon } from '@/lib/themes';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
-import { BlockData } from '@/components/BlockRenderer';
 import { readFile, getWorkspacePath, ensureWorkspaceInitialized } from '@/lib/api';
 import { loadAtmosphereConfig } from '@/lib/atmosphere';
+import { Plus, AlignCenter, AlignLeft, AlignRight, Settings } from 'lucide-react';
+import Link from 'next/link';
+import type { Editor as TiptapEditor } from '@tiptap/react';
+import type { JSONContent } from '@tiptap/core';
+import type { EditorLayout } from '@/components/Editor';
+
+/**
+ * 计算 JSONContent 中的字数
+ */
+function countWords(content: JSONContent): number {
+  if (!content.content) return 0;
+  
+  let count = 0;
+  const traverse = (node: JSONContent) => {
+    if (node.type === 'text' && node.text) {
+      count += node.text.length;
+    }
+    if (node.content && Array.isArray(node.content)) {
+      node.content.forEach(traverse);
+    }
+  };
+  
+  traverse(content);
+  return count;
+}
 
 // 主应用组件（需要在 ThemeProvider 内部）
 function MainApp() {
@@ -33,8 +59,11 @@ function MainApp() {
   const [radialPos, setRadialPos] = useState({ x: 0, y: 0 });
   const [isPrivate, setIsPrivate] = useState(true);
   const [currentFilePath, setCurrentFilePath] = useState<string | undefined>();
-  const [blocks, setBlocks] = useState<BlockData[]>([]);
+  const [editorContent, setEditorContent] = useState<JSONContent>({ type: 'doc', content: [] });
   const [workspacePath, setWorkspacePath] = useState<string>('');
+  const [showBlockSelector, setShowBlockSelector] = useState(false);
+  const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
+  const [editorLayout, setEditorLayout] = useState<EditorLayout>('center');
 
   // 初始化工作区
   useEffect(() => {
@@ -63,30 +92,49 @@ function MainApp() {
       }
 
       const content = await readFile(path);
-      // 简单的文本解析（可以改进）
-      const parsedBlocks: BlockData[] = content
-        .split('\n\n')
-        .filter((line) => line.trim())
-        .map((line, index) => {
-          let type: BlockData['type'] = 'p';
-          let content = line.trim();
-
+      
+      // 尝试解析为 JSON（Tiptap 格式）
+      let parsedContent: JSONContent;
+      try {
+        parsedContent = JSON.parse(content);
+        // 验证是否为有效的 Tiptap JSON 格式
+        if (!parsedContent.type || parsedContent.type !== 'doc') {
+          throw new Error('Invalid Tiptap JSON format');
+        }
+      } catch (jsonError) {
+        // 如果不是 JSON，尝试作为旧格式文本解析（向后兼容）
+        console.warn('文件不是 JSON 格式，尝试解析为旧格式文本:', jsonError);
+        const lines = content.split('\n\n').filter((line) => line.trim());
+        const contentArray: JSONContent[] = lines.map((line) => {
           if (line.startsWith('# ')) {
-            type = 'h1';
-            content = line.substring(2);
+            return {
+              type: 'heading',
+              attrs: { level: 1 },
+              content: [{ type: 'text', text: line.substring(2).trim() }],
+            };
           } else if (line.startsWith('> ')) {
-            type = 'quote';
-            content = line.substring(2);
+            return {
+              type: 'blockquote',
+              content: [{
+                type: 'paragraph',
+                content: [{ type: 'text', text: line.substring(2).trim() }],
+              }],
+            };
+          } else {
+            return {
+              type: 'paragraph',
+              content: [{ type: 'text', text: line.trim() }],
+            };
           }
-
-          return {
-            id: `${index}-${Date.now()}`,
-            type,
-            content,
-          };
         });
+        
+        parsedContent = {
+          type: 'doc',
+          content: contentArray.length > 0 ? contentArray : [{ type: 'paragraph', content: [] }],
+        };
+      }
 
-      setBlocks(parsedBlocks);
+      setEditorContent(parsedContent);
       setCurrentFilePath(path);
     } catch (error) {
       console.error('加载文件失败:', error);
@@ -143,6 +191,73 @@ function MainApp() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* 移动端：块插入按钮 */}
+          <button
+            onClick={() => setShowBlockSelector(true)}
+            className="md:hidden"
+            style={{ color: getThemeAccentColor(theme) }}
+            title="插入新块"
+          >
+            <Plus size={20} />
+          </button>
+          
+          {/* 文本对齐按钮组 - 每个块独立对齐 */}
+          <div className="hidden md:flex items-center gap-1 border rounded"
+            style={{
+              borderColor: getThemeBorderColor(theme),
+              backgroundColor: getThemeSurfaceColor(theme),
+            }}
+          >
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().setTextAlign('left').run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive({ textAlign: 'left' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{ 
+                color: editorInstance?.isActive({ textAlign: 'left' }) ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="居左对齐"
+            >
+              <AlignLeft size={16} />
+            </button>
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().setTextAlign('center').run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive({ textAlign: 'center' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{ 
+                color: editorInstance?.isActive({ textAlign: 'center' }) ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="居中对齐"
+            >
+              <AlignCenter size={16} />
+            </button>
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().setTextAlign('right').run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive({ textAlign: 'right' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{ 
+                color: editorInstance?.isActive({ textAlign: 'right' }) ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="居右对齐"
+            >
+              <AlignRight size={16} />
+            </button>
+          </div>
+          
           <div className="flex items-center gap-2">
             <span
               className={`text-[9px] ${theme.uiFont} opacity-40 hidden sm:block`}
@@ -155,6 +270,14 @@ function MainApp() {
               } ${theme.glow}`}
             ></div>
           </div>
+          <Link
+            href="/settings"
+            style={{ color: getThemeAccentColor(theme) }}
+            className="hover:opacity-80 transition-opacity"
+            title="设置"
+          >
+            <Settings size={18} />
+          </Link>
           <button
             onClick={() => setIsPrivate(!isPrivate)}
             style={{ color: getThemeAccentColor(theme) }}
@@ -165,7 +288,7 @@ function MainApp() {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        {/* 左侧资源管理器 */}
+        {/* 左侧资源管理器 - 固定位置，不受滚动影响 */}
         <Sidebar
           workspacePath={workspacePath}
           onFileSelect={handleFileSelect}
@@ -174,17 +297,116 @@ function MainApp() {
           onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
         />
 
-        {/* 主编辑区 */}
+        {/* 主编辑区 - 可以滚动 */}
         <div
-          className="flex-1 relative"
-          onClick={() => setShowRadial(false)}
+          className="flex-1 relative overflow-y-auto"
+          onClick={(e) => {
+            // 只在点击编辑器外部区域时关闭菜单，避免阻止编辑器事件
+            if (e.target === e.currentTarget) {
+              setShowRadial(false);
+            }
+            
+            // 如果点击在主编辑区，但没有点击在编辑器内容上，触发 Editor 的容器点击处理
+            const target = e.target as HTMLElement;
+            const editorMain = target.closest('main');
+            const editorContent = target.closest('.ProseMirror');
+            
+            // 如果点击在主编辑区容器内，但不在编辑器内容上，且编辑器实例存在
+            if (!editorContent && editorInstance && editorInstance.view) {
+              // 检查是否点击在 Editor 的 main 标签内
+              if (editorMain) {
+                // 点击在 Editor 的 main 内，但不在编辑器内容上，触发容器点击
+                const { clientX, clientY } = e;
+                const { view } = editorInstance;
+                
+                // 使用 view.posAtCoords 尝试找到点击位置
+                const pos = view.posAtCoords({ left: clientX, top: clientY });
+                if (pos && pos.pos !== null) {
+                  const { state } = view;
+                  const { doc } = state;
+                  const validPos = Math.max(1, Math.min(pos.pos, doc.content.size));
+                  const tr = state.tr;
+                  const selection = TextSelection.create(doc, validPos);
+                  tr.setSelection(selection);
+                  view.dispatch(tr);
+                  
+                  setTimeout(() => {
+                    const dom = view.dom;
+                    if (dom) {
+                      (dom as HTMLElement).focus();
+                    }
+                  }, 0);
+                  return;
+                }
+                
+                // 如果 posAtCoords 找不到位置，使用距离计算找到最近的块
+                const { state } = view;
+                const { doc } = state;
+                
+                if (doc.content.size > 0) {
+                  let nearestBlock: { index: number; distance: number; pos: number } | null = null;
+                  
+                  for (let i = 0; i < doc.childCount; i++) {
+                    const child = doc.child(i);
+                    if (!child.isBlock) continue;
+                    
+                    try {
+                      let currentPos = 1;
+                      for (let j = 0; j < i; j++) {
+                        currentPos += doc.child(j).nodeSize;
+                      }
+                      
+                      const coords = view.coordsAtPos(currentPos);
+                      if (!coords) continue;
+                      
+                      const rowDiff = Math.abs(coords.top - clientY);
+                      const colDiff = Math.abs(coords.left - clientX);
+                      const distance = rowDiff * 1000 + colDiff;
+                      
+                      if (!nearestBlock || distance < nearestBlock.distance) {
+                        let bestPos = currentPos;
+                        if (child.content.size > 0) {
+                          bestPos = currentPos + 1;
+                        }
+                        
+                        nearestBlock = {
+                          index: i,
+                          distance,
+                          pos: bestPos,
+                        };
+                      }
+                    } catch (error) {
+                      continue;
+                    }
+                  }
+                  
+                  if (nearestBlock) {
+                    const { state } = view;
+                    const { doc } = state;
+                    const tr = state.tr;
+                    const selection = TextSelection.create(doc, Math.max(1, Math.min(nearestBlock.pos, doc.content.size)));
+                    tr.setSelection(selection);
+                    view.dispatch(tr);
+                    
+                    setTimeout(() => {
+                      const dom = view.dom;
+                      if (dom) {
+                        (dom as HTMLElement).focus();
+                      }
+                    }, 0);
+                  }
+                }
+              }
+            }
+          }}
         >
           <div className={isPrivate ? '' : 'blur-xl select-none opacity-20'}>
             <Editor
               filePath={currentFilePath}
-              initialBlocks={blocks}
-              onContentChange={setBlocks}
+              initialContent={editorContent}
+              onContentChange={setEditorContent}
               workspacePath={workspacePath}
+              onEditorReady={setEditorInstance}
             />
           </div>
         </div>
@@ -213,7 +435,7 @@ function MainApp() {
       >
         <div>PROJECT: NO VISITORS // ARCHIVE_STYX_OMEGA</div>
         <div className="flex gap-4">
-          <span>WORDS: {blocks.reduce((sum, b) => sum + b.content.length, 0)}</span>
+          <span>WORDS: {countWords(editorContent)}</span>
           <span>PLANAR: STABLE</span>
         </div>
       </footer>
@@ -264,6 +486,15 @@ function MainApp() {
           })}
         </div>
       </div>
+
+      {/* 移动端：块类型选择器（底部上拉框） */}
+      {showBlockSelector && (
+        <BlockTypeSelector
+          editor={editorInstance}
+          onClose={() => setShowBlockSelector(false)}
+          mode="mobile"
+        />
+      )}
     </div>
   );
 }

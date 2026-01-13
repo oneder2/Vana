@@ -18,6 +18,7 @@ interface ContextMenuProps {
   onAction?: (action: string) => void;
   hasSelection?: boolean;
   isBlock?: boolean;
+  isFile?: boolean; // 是否为文件操作菜单
 }
 
 /**
@@ -30,9 +31,51 @@ export function ContextMenu({
   onAction,
   hasSelection = false,
   isBlock = false,
+  isFile = false,
+  hasClipboard = false,
 }: ContextMenuProps) {
   const { theme } = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = React.useState({ x, y });
+
+  // 更新菜单位置，确保显示在点击位置
+  useEffect(() => {
+    setMenuPosition({ x, y });
+  }, [x, y]);
+
+  // 调整菜单位置，确保不超出视口
+  useEffect(() => {
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      
+      let adjustedX = menuPosition.x;
+      let adjustedY = menuPosition.y;
+      
+      // 如果菜单超出右边界，向左调整
+      if (rect.right > viewportWidth) {
+        adjustedX = viewportWidth - rect.width - 10;
+      }
+      
+      // 如果菜单超出下边界，向上调整
+      if (rect.bottom > viewportHeight) {
+        adjustedY = viewportHeight - rect.height - 10;
+      }
+      
+      // 确保不超出左边界和上边界
+      if (adjustedX < 10) {
+        adjustedX = 10;
+      }
+      if (adjustedY < 10) {
+        adjustedY = 10;
+      }
+      
+      if (adjustedX !== menuPosition.x || adjustedY !== menuPosition.y) {
+        setMenuPosition({ x: adjustedX, y: adjustedY });
+      }
+    }
+  }, [menuPosition.x, menuPosition.y]);
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -53,7 +96,19 @@ export function ContextMenu({
     onClose();
   };
 
-  const menuItems = [
+  // 文件操作菜单项
+  const fileMenuItems = [
+    { id: 'createFile', label: '新建文件', icon: FileText },
+    { id: 'createDirectory', label: '新建文件夹', icon: Folder },
+    { id: 'copy', label: '复制', icon: Copy },
+    { id: 'cut', label: '剪切', icon: Scissors },
+    ...(hasClipboard ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),
+    { id: 'rename', label: '重命名', icon: FileText },
+    { id: 'delete', label: '删除', icon: Trash2 },
+  ];
+
+  // 编辑器块操作菜单项
+  const blockMenuItems = [
     ...(hasSelection
       ? [
           { id: 'copy', label: '复制', icon: Copy },
@@ -65,13 +120,15 @@ export function ContextMenu({
     ...(isBlock ? [{ id: 'delete', label: '删除块', icon: Trash2 }] : []),
   ];
 
+  const menuItems = isFile ? fileMenuItems : blockMenuItems;
+
   return (
     <div
       ref={menuRef}
       className="fixed z-[100] min-w-[150px] rounded border shadow-lg"
       style={{
-        left: `${x}px`,
-        top: `${y}px`,
+        left: `${menuPosition.x}px`,
+        top: `${menuPosition.y}px`,
         backgroundColor: getThemeSurfaceColor(theme),
         borderColor: getThemeBorderColor(theme),
       }}

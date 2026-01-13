@@ -3,7 +3,7 @@
 // 所有文件都以 .enc 扩展名存储，内容使用 AES-256-GCM 加密
 
 use crate::crypto::{decrypt_content, encrypt_content};
-use crate::keychain::get_or_create_master_key_sync;
+use crate::keychain::get_or_create_master_key;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
@@ -30,8 +30,9 @@ pub async fn read_encrypted_file(path: &str, app: &AppHandle) -> Result<String> 
         .await
         .with_context(|| format!("无法读取文件: {}", file_path.display()))?;
 
-    // 获取主密钥
-    let master_key = get_or_create_master_key_sync(app)
+    // 获取主密钥（使用异步版本，因为我们在异步上下文中）
+    let master_key = get_or_create_master_key(app)
+        .await
         .context("无法获取主加密密钥")?;
 
     // 解密内容
@@ -60,8 +61,9 @@ pub async fn write_encrypted_file(
         PathBuf::from(format!("{}.enc", path))
     };
 
-    // 获取主密钥
-    let master_key = get_or_create_master_key_sync(app)
+    // 获取主密钥（使用异步版本，因为我们在异步上下文中）
+    let master_key = get_or_create_master_key(app)
+        .await
         .context("无法获取主加密密钥")?;
 
     // 加密内容
@@ -273,6 +275,111 @@ pub async fn rename_file_or_directory(old_path: &str, new_path: &str) -> Result<
     fs::rename(old, new)
         .await
         .with_context(|| format!("无法重命名: {} -> {}", old_path, new_path))?;
+
+    Ok(())
+}
+
+/// 复制文件或目录
+/// 
+/// # 参数
+/// - `source_path`: 源路径
+/// - `dest_path`: 目标路径
+/// 
+/// # 返回
+/// 成功时返回 Ok(())
+pub async fn copy_file_or_directory(source_path: &str, dest_path: &str) -> Result<()> {
+    let source = Path::new(source_path);
+    let dest = Path::new(dest_path);
+    
+    if !source.exists() {
+        anyhow::bail!("源文件或目录不存在: {}", source_path);
+    }
+
+    if dest.exists() {
+        anyhow::bail!("目标路径已存在: {}", dest_path);
+    }
+
+    // 确保目标路径的父目录存在
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("无法创建目录: {}", parent.display()))?;
+    }
+
+    if source.is_dir() {
+        // 复制目录（递归）
+        copy_dir_all(source, dest)
+            .await
+            .with_context(|| format!("无法复制目录: {} -> {}", source_path, dest_path))?;
+    } else {
+        // 复制文件
+        fs::copy(source, dest)
+            .await
+            .with_context(|| format!("无法复制文件: {} -> {}", source_path, dest_path))?;
+    }
+
+    Ok(())
+}
+
+/// 递归复制目录
+async fn copy_dir_all(source: &Path, dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest)
+        .await
+        .with_context(|| format!("无法创建目标目录: {}", dest.display()))?;
+
+    let mut entries = fs::read_dir(source)
+        .await
+        .with_context(|| format!("无法读取源目录: {}", source.display()))?;
+
+    use tokio::fs::DirEntry;
+    while let Some(entry) = entries.next_entry().await? {
+        let entry_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        let metadata = entry.metadata().await?;
+        if metadata.is_dir() {
+            copy_dir_all(&entry_path, &dest_path).await?;
+        } else {
+            let _bytes_copied = fs::copy(&entry_path, &dest_path)
+                .await
+                .with_context(|| format!("无法复制文件: {} -> {}", entry_path.display(), dest_path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// 移动文件或目录
+/// 
+/// # 参数
+/// - `source_path`: 源路径
+/// - `dest_path`: 目标路径
+/// 
+/// # 返回
+/// 成功时返回 Ok(())
+pub async fn move_file_or_directory(source_path: &str, dest_path: &str) -> Result<()> {
+    // 移动操作实际上就是重命名，但需要确保目标路径的父目录存在
+    let source = Path::new(source_path);
+    let dest = Path::new(dest_path);
+    
+    if !source.exists() {
+        anyhow::bail!("源文件或目录不存在: {}", source_path);
+    }
+
+    if dest.exists() {
+        anyhow::bail!("目标路径已存在: {}", dest_path);
+    }
+
+    // 确保目标路径的父目录存在
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("无法创建目录: {}", parent.display()))?;
+    }
+
+    fs::rename(source, dest)
+        .await
+        .with_context(|| format!("无法移动: {} -> {}", source_path, dest_path))?;
 
     Ok(())
 }

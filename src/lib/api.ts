@@ -200,3 +200,33 @@ export async function renameFileOrDirectory(
   });
 }
 
+/**
+ * 复制文件或目录
+ * @param sourcePath 源路径
+ * @param destPath 目标路径
+ */
+export async function copyFileOrDirectory(
+  sourcePath: string,
+  destPath: string
+): Promise<void> {
+  return await invoke<void>('copy_file_or_directory_command', {
+    source_path: sourcePath,
+    dest_path: destPath,
+  });
+}
+
+/**
+ * 移动文件或目录
+ * @param sourcePath 源路径
+ * @param destPath 目标路径
+ */
+export async function moveFileOrDirectory(
+  sourcePath: string,
+  destPath: string
+): Promise<void> {
+  return await invoke<void>('move_file_or_directory_command', {
+    source_path: sourcePath,
+    dest_path: destPath,
+  });
+}
+

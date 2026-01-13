@@ -31,3 +31,174 @@
   animation: spin-slow 10s linear infinite;
 }
 
+/* Tiptap 编辑器基础样式 */
+.tiptap-editor {
+  outline: none;
+  /* 确保光标可见 */
+  caret-color: currentColor;
+  /* 确保可以选中文本 */
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  /* 确保可以接收点击事件 */
+  pointer-events: auto;
+  /* 确保可以编辑 */
+  cursor: text;
+}
+
+/* 确保 Tiptap 编辑器中的光标始终可见 */
+.tiptap-editor:focus {
+  outline: none;
+  caret-color: currentColor;
+}
+
+/* 确保编辑器容器可以接收事件 */
+.tiptap-editor * {
+  cursor: inherit;
+}
+
+/* 确保光标在空段落中可见 */
+.tiptap-editor p.is-editor-empty:first-child {
+  min-height: 1.5em;
+}
+
+/* 确保所有空节点都能显示光标 */
+.tiptap-editor p.is-editor-empty,
+.tiptap-editor h1.is-editor-empty,
+.tiptap-editor h2.is-editor-empty,
+.tiptap-editor h3.is-editor-empty {
+  min-height: 1.5em;
+  /* 确保空节点有内容区域 */
+}
+
+.tiptap-editor blockquote p.is-editor-empty {
+  min-height: 1.5em;
+}
+
+.tiptap-editor pre.is-editor-empty {
+  min-height: 2em;
+}
+
+.tiptap-editor .meta-block.is-editor-empty {
+  min-height: 1em;
+}
+
+/* 确保列表项中的空段落也能显示光标 */
+.tiptap-editor li p.is-editor-empty {
+  min-height: 1.5em;
+}
+
+/* 确保编辑器始终可编辑 */
+.tiptap-editor[contenteditable="true"] {
+  outline: none;
+  /* 确保可以编辑和选中 */
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+  /* 确保光标可见 */
+  caret-color: currentColor;
+}
+
+.tiptap-editor p {
+  margin: 0.5rem 0;
+  word-wrap: break-word; /* 允许换行 */
+  overflow-wrap: break-word;
+}
+
+/* 所有块级元素都应该支持换行 */
+.tiptap-editor h1,
+.tiptap-editor h2,
+.tiptap-editor h3,
+.tiptap-editor blockquote,
+.tiptap-editor pre,
+.tiptap-editor ul,
+.tiptap-editor ol,
+.tiptap-editor .meta-block {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* TextAlign 扩展会自动添加对齐样式类（text-left, text-center, text-right） */
+
+/* 确保编辑器本身可以换行 */
+.ProseMirror {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap; /* 保留空白符但允许换行 */
+}
+
+/* Placeholder 扩展的占位符样式 */
+.tiptap-editor.is-editor-empty::before {
+  color: #78716c;
+  content: '铭刻...';
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* 占位符只显示在当前选中的空节点（由 Placeholder 扩展的 showOnlyCurrent 控制） */
+
+.tiptap-editor h1 {
+  font-size: 2rem;
+  font-weight: bold;
+  margin: 2rem 0 1rem 0;
+}
+
+.tiptap-editor blockquote {
+  border-left: 2px solid;
+  padding-left: 1rem;
+  margin: 2rem 0;
+  font-style: italic;
+}
+
+.tiptap-editor ul,
+.tiptap-editor ol {
+  padding-left: 1.5rem;
+  margin: 1rem 0;
+}
+
+.tiptap-editor li {
+  margin: 0.25rem 0;
+}
+
+.tiptap-editor code {
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.25rem;
+  font-family: monospace;
+}
+
+.tiptap-editor pre {
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: 0.25rem;
+  padding: 1rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+}
+
+.tiptap-editor pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.tiptap-editor .meta-block {
+  font-size: 0.75rem;
+  opacity: 0.4;
+  margin-bottom: 2.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* 主题特定样式 */
+.tiptap-editor.theme-arcane h1 {
+  letter-spacing: 0.1em;
+}
+
+.tiptap-editor.theme-terminal {
+  font-family: 'Courier New', monospace;
+}
+

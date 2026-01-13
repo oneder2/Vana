@@ -4,8 +4,8 @@
 
 use crate::git::{commit_changes, get_repository_status, git_gc, init_repository};
 use crate::storage::{
-    create_directory, create_file, delete_directory, delete_file, list_directory,
-    read_encrypted_file, rename_file_or_directory, write_encrypted_file, FileInfo,
+    copy_file_or_directory, create_directory, create_file, delete_directory, delete_file, list_directory,
+    move_file_or_directory, read_encrypted_file, rename_file_or_directory, write_encrypted_file, FileInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -338,6 +338,32 @@ pub async fn rename_file_or_directory_command(
     new_path: String,
 ) -> Result<(), String> {
     rename_file_or_directory(&old_path, &new_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 复制文件或目录
+/// 
+/// 前端调用: `invoke('copy_file_or_directory', { sourcePath: '...', destPath: '...' })`
+#[tauri::command]
+pub async fn copy_file_or_directory_command(
+    source_path: String,
+    dest_path: String,
+) -> Result<(), String> {
+    copy_file_or_directory(&source_path, &dest_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 移动文件或目录
+/// 
+/// 前端调用: `invoke('move_file_or_directory', { sourcePath: '...', destPath: '...' })`
+#[tauri::command]
+pub async fn move_file_or_directory_command(
+    source_path: String,
+    dest_path: String,
+) -> Result<(), String> {
+    move_file_or_directory(&source_path, &dest_path)
         .await
         .map_err(|e| e.to_string())
 }

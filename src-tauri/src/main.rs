@@ -30,6 +30,8 @@ fn main() {
             commands::delete_file_command,
             commands::delete_directory_command,
             commands::rename_file_or_directory_command,
+            commands::copy_file_or_directory_command,
+            commands::move_file_or_directory_command,
             // Git 命令
             commands::init_repository_command,
             commands::commit_changes_command,
