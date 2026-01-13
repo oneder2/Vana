@@ -322,31 +322,32 @@ pub async fn copy_file_or_directory(source_path: &str, dest_path: &str) -> Resul
 }
 
 /// 递归复制目录
-async fn copy_dir_all(source: &Path, dest: &Path) -> Result<()> {
-    fs::create_dir_all(dest)
-        .await
-        .with_context(|| format!("无法创建目标目录: {}", dest.display()))?;
+fn copy_dir_all<'a>(source: &'a Path, dest: &'a Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        fs::create_dir_all(dest)
+            .await
+            .with_context(|| format!("无法创建目标目录: {}", dest.display()))?;
 
-    let mut entries = fs::read_dir(source)
-        .await
-        .with_context(|| format!("无法读取源目录: {}", source.display()))?;
+        let mut entries = fs::read_dir(source)
+            .await
+            .with_context(|| format!("无法读取源目录: {}", source.display()))?;
 
-    use tokio::fs::DirEntry;
-    while let Some(entry) = entries.next_entry().await? {
-        let entry_path = entry.path();
-        let dest_path = dest.join(entry.file_name());
+        while let Some(entry) = entries.next_entry().await? {
+            let entry_path = entry.path();
+            let dest_path = dest.join(entry.file_name());
 
-        let metadata = entry.metadata().await?;
-        if metadata.is_dir() {
-            copy_dir_all(&entry_path, &dest_path).await?;
-        } else {
-            let _bytes_copied = fs::copy(&entry_path, &dest_path)
-                .await
-                .with_context(|| format!("无法复制文件: {} -> {}", entry_path.display(), dest_path.display()))?;
+            let metadata = entry.metadata().await?;
+            if metadata.is_dir() {
+                copy_dir_all(&entry_path, &dest_path).await?;
+            } else {
+                let _bytes_copied = fs::copy(&entry_path, &dest_path)
+                    .await
+                    .with_context(|| format!("无法复制文件: {} -> {}", entry_path.display(), dest_path.display()))?;
+            }
         }
-    }
 
-    Ok(())
+        Ok(())
+    })
 }
 
 /// 移动文件或目录
@@ -366,8 +367,24 @@ pub async fn move_file_or_directory(source_path: &str, dest_path: &str) -> Resul
         anyhow::bail!("源文件或目录不存在: {}", source_path);
     }
 
+    // 检查目标路径是否已存在
     if dest.exists() {
         anyhow::bail!("目标路径已存在: {}", dest_path);
+    }
+
+    // 规范化源路径（解析相对路径和符号链接）
+    let source_canonical = source.canonicalize()
+        .with_context(|| format!("无法解析源路径: {}", source_path))?;
+
+    // 防止将目录移动到其自身或子目录中
+    // 检查目标路径的父目录是否是源路径的子目录
+    if let Some(dest_parent) = dest.parent() {
+        if let Ok(dest_parent_canonical) = dest_parent.canonicalize() {
+            // 如果目标路径的父目录是源路径的子目录，则不允许
+            if dest_parent_canonical.starts_with(&source_canonical) && dest_parent_canonical != source_canonical {
+                anyhow::bail!("不能将目录移动到其自身或子目录中");
+            }
+        }
     }
 
     // 确保目标路径的父目录存在
@@ -377,7 +394,8 @@ pub async fn move_file_or_directory(source_path: &str, dest_path: &str) -> Resul
             .with_context(|| format!("无法创建目录: {}", parent.display()))?;
     }
 
-    fs::rename(source, dest)
+    // 使用规范化的源路径进行移动
+    fs::rename(&source_canonical, dest)
         .await
         .with_context(|| format!("无法移动: {} -> {}", source_path, dest_path))?;
 

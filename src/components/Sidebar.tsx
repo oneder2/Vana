@@ -36,6 +36,7 @@ function FolderItem({
   expandedPaths,
   onToggleExpand,
   onDrop,
+  onClearRootDragOver,
 }: {
   item: FileInfo;
   level?: number;
@@ -46,6 +47,7 @@ function FolderItem({
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
   onDrop?: (sourcePath: string, destPath: string) => void;
+  onClearRootDragOver?: () => void;
 }) {
   // 从expandedPaths恢复展开状态
   const [isExpanded, setIsExpanded] = useState(expandedPaths.has(item.path));
@@ -118,23 +120,33 @@ function FolderItem({
 
   const handleDragEnd = () => {
     setIsDragging(false);
+    // 拖拽结束时清除根目录的拖拽状态
+    onClearRootDragOver?.();
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     // 只允许拖拽到目录
     if (item.is_directory) {
       e.preventDefault();
+      e.stopPropagation(); // 阻止事件冒泡到根目录
       e.dataTransfer.dropEffect = 'move';
       setIsDragOver(true);
+      // 清除根目录的拖拽状态
+      onClearRootDragOver?.();
     }
   };
 
-  const handleDragLeave = () => {
-    setIsDragOver(false);
+  const handleDragLeave = (e: React.DragEvent) => {
+    // 只有当真正离开当前元素时才清除状态
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
+      setIsDragOver(false);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation(); // 阻止事件冒泡到根目录
     setIsDragOver(false);
     
     if (!item.is_directory) return;
@@ -142,13 +154,27 @@ function FolderItem({
     const sourcePath = e.dataTransfer.getData('text/plain');
     if (!sourcePath || sourcePath === item.path) return;
     
-    // 防止拖拽到自己的子目录
-    if (sourcePath.startsWith(item.path + '/')) {
+    // 防止拖拽到自己的子目录：检查目标目录是否是源目录的子目录
+    // 如果源路径是目标路径的前缀，说明目标目录在源目录内部
+    if (item.path.startsWith(sourcePath + '/')) {
       alert('不能将目录移动到其自身或子目录中');
       return;
     }
     
-    const destPath = `${item.path}/${sourcePath.split('/').pop()}`;
+    // 防止拖拽到自身
+    if (sourcePath === item.path) {
+      return;
+    }
+    
+    // 构建目标路径：目标目录路径 + 源文件名/目录名
+    const sourceName = sourcePath.split('/').pop() || sourcePath;
+    const destPath = `${item.path}/${sourceName}`;
+    
+    // 检查目标路径是否与源路径相同（防止移动到同一位置）
+    if (sourcePath === destPath) {
+      return;
+    }
+    
     onDrop?.(sourcePath, destPath);
   };
 
@@ -206,6 +232,7 @@ function FolderItem({
               expandedPaths={expandedPaths}
               onToggleExpand={onToggleExpand}
               onDrop={onDrop}
+              onClearRootDragOver={onClearRootDragOver}
             />
           ))}
         </div>
@@ -233,6 +260,9 @@ export function Sidebar({
   
   // 剪贴板状态管理
   const [clipboard, setClipboard] = useState<{ type: 'copy' | 'cut'; item: FileInfo } | null>(null);
+  
+  // 根目录拖拽状态
+  const [isRootDragOver, setIsRootDragOver] = useState(false);
   
   // 使用useRef维护展开状态，避免重新渲染时丢失
   const expandedPathsRef = useRef<Set<string>>(new Set());
@@ -263,12 +293,88 @@ export function Sidebar({
   // 处理拖拽放置
   const handleDrop = async (sourcePath: string, destPath: string) => {
     try {
+      // 再次检查边界条件（防止在异步操作前路径被修改）
+      // 检查源路径和目标路径是否相同
+      if (sourcePath === destPath) {
+        return;
+      }
+      
+      // 防止将目录移动到其自身或子目录中
+      // 检查目标路径的父目录是否是源路径的子目录
+      const destParent = destPath.substring(0, destPath.lastIndexOf('/'));
+      if (destParent.startsWith(sourcePath + '/')) {
+        alert('不能将目录移动到其自身或子目录中');
+        return;
+      }
+      
       await moveFileOrDirectory(sourcePath, destPath);
       await refreshFiles();
     } catch (error) {
       console.error('拖拽移动失败:', error);
-      alert(`移动文件失败: ${error}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // 提供更友好的错误信息
+      if (errorMessage.includes('目标路径已存在')) {
+        alert('目标位置已存在同名文件或目录');
+      } else if (errorMessage.includes('不能将目录移动到其自身或子目录')) {
+        alert('不能将目录移动到其自身或子目录中');
+      } else {
+        alert(`移动文件失败: ${errorMessage}`);
+      }
     }
+  };
+
+  // 处理根目录拖拽
+  const handleRootDragOver = (e: React.DragEvent) => {
+    // 检查是否有文件被拖拽（通过检查 dataTransfer 的类型）
+    if (e.dataTransfer.types.includes('text/plain')) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      setIsRootDragOver(true);
+    }
+  };
+
+  const handleRootDragLeave = (e: React.DragEvent) => {
+    // 只有当离开根目录区域且没有进入子元素时才清除状态
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    // 如果 relatedTarget 是文件列表项，不清除状态（由文件列表项自己处理）
+    if (relatedTarget && relatedTarget.closest('.space-y-1')) {
+      return;
+    }
+    // 如果真正离开了根目录区域，清除状态
+    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
+      setIsRootDragOver(false);
+    }
+  };
+
+  const handleRootDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsRootDragOver(false);
+    
+    const sourcePath = e.dataTransfer.getData('text/plain');
+    if (!sourcePath) return;
+    
+    // 检查源路径是否已经是根目录下的文件
+    if (sourcePath.startsWith(workspacePath + '/')) {
+      const relativePath = sourcePath.substring(workspacePath.length + 1);
+      // 如果源路径在根目录下且没有子目录，说明已经在根目录
+      if (!relativePath.includes('/')) {
+        return; // 已经在根目录，不需要移动
+      }
+    }
+    
+    // 构建目标路径：根目录 + 源文件名/目录名
+    const sourceName = sourcePath.split('/').pop() || sourcePath;
+    const destPath = `${workspacePath}/${sourceName}`;
+    
+    // 检查源路径和目标路径是否相同
+    if (sourcePath === destPath) {
+      return;
+    }
+    
+    await handleDrop(sourcePath, destPath);
   };
 
   // 刷新文件列表（保持展开状态）
@@ -473,7 +579,19 @@ export function Sidebar({
         e.stopPropagation();
       }}
     >
-      <div className="p-4 flex-1 overflow-y-auto">
+      <div 
+        className="p-4 flex-1 overflow-y-auto transition-colors"
+        onDragOver={handleRootDragOver}
+        onDragLeave={handleRootDragLeave}
+        onDrop={handleRootDrop}
+        style={{
+          ...(isRootDragOver ? {
+            backgroundColor: getThemeAccentBgColor(theme) + '40',
+            outline: `2px dashed ${getThemeAccentColor(theme)}`,
+            outlineOffset: '-2px',
+          } : {}),
+        }}
+      >
         <div className={`text-[10px] ${theme.uiFont} mb-4 opacity-40 uppercase tracking-widest flex items-center justify-between`}>
           <span>归档单元</span>
           {/* 创建文件/文件夹按钮 */}
@@ -545,6 +663,7 @@ export function Sidebar({
                 expandedPaths={expandedPaths}
                 onToggleExpand={handleToggleExpand}
                 onDrop={handleDrop}
+                onClearRootDragOver={() => setIsRootDragOver(false)}
               />
             ))}
           </div>

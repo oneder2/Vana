@@ -210,8 +210,8 @@ export async function copyFileOrDirectory(
   destPath: string
 ): Promise<void> {
   return await invoke<void>('copy_file_or_directory_command', {
-    source_path: sourcePath,
-    dest_path: destPath,
+    sourcePath: sourcePath,
+    destPath: destPath,
   });
 }
 
@@ -225,8 +225,8 @@ export async function moveFileOrDirectory(
   destPath: string
 ): Promise<void> {
   return await invoke<void>('move_file_or_directory_command', {
-    source_path: sourcePath,
-    dest_path: destPath,
+    sourcePath: sourcePath,
+    destPath: destPath,
   });
 }
 

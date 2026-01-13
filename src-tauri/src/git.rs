@@ -8,7 +8,6 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use gix::ThreadSafeRepository;
-use gix::prelude::*;
 use walkdir::WalkDir;
 
 /// 验证模式
@@ -383,7 +382,7 @@ fn create_tree_from_index_entries(
         let mut tree_entries = Vec::new();
         
         // 获取当前目录下的文件和子目录
-        for (sub_path, entries) in dir_trees {
+        for (sub_path, _entries) in dir_trees {
             if sub_path == dir_path || !sub_path.starts_with(dir_path) {
                 continue;
             }
