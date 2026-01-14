@@ -2,6 +2,13 @@
  * No Visitors - 主编辑器组件
  * 使用 Tiptap 实现的块式编辑器
  * 支持多种块类型、实时编辑和防抖保存（Tier 1）
+ *
+ * Git 自动化说明（对齐 docs/Sync Protocol.md）：
+ * - Tier 1：停止输入 2 秒后落盘（writeFile）
+ * - Tier 2：在关键时机触发 Git commit（必须以「工作区」为范围，而不是当前文档目录）
+ * - Tier 3：Commit 成功后（已配置 PAT + remote 且网络在线）后台同步（fetch + rebase + push）
+ *
+ * TODO(sync-status): 后续可把同步状态从 console.log 提升为 UI 状态指示灯（呼吸绿/静止灰/警告红）
  */
 
 'use client';
@@ -11,7 +18,8 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import { TextSelection } from 'prosemirror-state';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
-import { writeFile, commitChanges, readWorkspaceConfig } from '@/lib/api';
+import { writeFile, commitChanges, readWorkspaceConfig, syncWithRemote, getPatToken, getRemoteUrl, fetchFromRemote, getRepositoryStatus } from '@/lib/api';
+import { addFailedPushTask } from '@/lib/syncQueue';
 import { addBlockUUIDs } from '@/lib/smart-slice';
 import { handleEditorShortcut } from '@/lib/editor-shortcuts';
 import { ContextMenu } from './ContextMenu';
@@ -32,7 +40,7 @@ interface EditorProps {
   initialContent?: JSONContent; // 直接使用 Tiptap JSON
   onContentChange?: (content: JSONContent) => void; // 直接传递 JSON
   workspacePath?: string;
-  onEditorReady?: (editor: TiptapEditor | null) => void;
+  onEditorReady?: (editor: TiptapEditor | null, triggerCommit?: () => Promise<void>) => void;
   layout?: EditorLayout; // 布局类型
 }
 
@@ -47,6 +55,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   const hasUnsavedChangesRef = useRef(false);
   const isInitialLoadRef = useRef(true);
   const editorRef = useRef<TiptapEditor | null>(null);
+  const triggerTier2CommitRef = useRef<(() => Promise<void>) | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showBlockSelector, setShowBlockSelector] = useState(false);
   const [blockSelectorPos, setBlockSelectorPos] = useState<{ x: number; y: number } | null>(null);
@@ -73,15 +82,22 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   // 防抖保存函数（Tier 1: 停止打字 2 秒后保存）
   const debouncedSave = useCallback(
     async (json: JSONContent) => {
-      if (!filePath || !editorRef.current) return;
+      console.log('[debouncedSave] 被调用', { filePath, hasEditor: !!editorRef.current });
+      if (!filePath || !editorRef.current) {
+        console.warn('[debouncedSave] 提前返回：filePath 或 editorRef 为空');
+        return;
+      }
 
       // 清除之前的定时器
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+        console.log('[debouncedSave] 清除之前的定时器');
       }
 
       // 设置新的定时器（2 秒后保存）
+      console.log('[debouncedSave] 设置新的定时器（2秒后保存）');
       saveTimeoutRef.current = setTimeout(async () => {
+        console.log('[debouncedSave] 定时器触发，开始保存');
         try {
           // 自动为块添加 UUID（如果还没有）
           const jsonWithUUIDs = addBlockUUIDs(json);
@@ -90,6 +106,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
           await writeFile(filePath, jsonString);
           console.log('文件已保存:', filePath);
           hasUnsavedChangesRef.current = true;
+          console.log('[Tier 1] hasUnsavedChangesRef 已设置为 true');
           
           // 如果生成了新的 UUID，更新编辑器内容（但不会触发 onUpdate）
           if (editorRef.current && JSON.stringify(jsonWithUUIDs) !== JSON.stringify(json)) {
@@ -107,6 +124,41 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
           console.error('保存文件失败:', error);
         }
       }, 2000);
+    },
+    [filePath]
+  );
+
+  /**
+   * 强制刷新 Tier 1 的 pending 保存（如果存在）
+   *
+   * 场景：
+   * - 用户切出应用/窗口失焦/关闭窗口时立刻触发 Tier 2；
+   * - 但如果 Tier 1 的 2 秒防抖尚未落盘，本次 commit 可能拿不到最新内容，
+   *   造成“commit 很多次，但文件内容没更新”的假象。
+   */
+  const flushPendingTier1Save = useCallback(
+    async (reason: string) => {
+      if (!filePath || !editorRef.current) return;
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+        console.log('[Tier 1] flushPendingTier1Save: 清除 pending 定时器', { reason, filePath });
+      }
+
+      try {
+        const json = editorRef.current.getJSON();
+        const jsonWithUUIDs = addBlockUUIDs(json);
+        const jsonString = JSON.stringify(jsonWithUUIDs, null, 2);
+        await writeFile(filePath, jsonString);
+        hasUnsavedChangesRef.current = true;
+        console.log('[Tier 1] flushPendingTier1Save: 已强制落盘并标记 hasUnsavedChangesRef=true', {
+          reason,
+          filePath,
+        });
+      } catch (error) {
+        console.error('[Tier 1] flushPendingTier1Save: 强制落盘失败', { reason, filePath, error });
+      }
     },
     [filePath]
   );
@@ -288,6 +340,8 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     onUpdate: ({ editor }) => {
       if (!editor || editor.isDestroyed) return;
       
+      console.log('[Editor onUpdate] 编辑器内容更新');
+      
       // 确保文档始终至少有一个段落
       const { doc } = editor.state;
       if (doc.content.size === 0) {
@@ -385,10 +439,10 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   // 通知父组件编辑器已准备好
   useEffect(() => {
     if (editor) {
-      onEditorReady?.(editor);
+      onEditorReady?.(editor, triggerTier2Commit);
     }
     return () => {
-      onEditorReady?.(null);
+      onEditorReady?.(null, undefined);
     };
   }, [editor, onEditorReady]);
 
@@ -603,59 +657,191 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
 
   // Tier 2: Git 自动提交函数
   const triggerTier2Commit = useCallback(async () => {
-    if (!workspacePath || !hasUnsavedChangesRef.current) {
+    console.log('[triggerTier2Commit] 被调用', { 
+      workspacePath, 
+      hasUnsavedChanges: hasUnsavedChangesRef.current,
+      filePath 
+    });
+    
+    if (!workspacePath) {
+      console.log('[triggerTier2Commit] 提前返回：workspacePath 为空');
       return;
     }
 
+    console.log('[triggerTier2Commit] 开始执行提交');
     try {
-      const config = await readWorkspaceConfig();
-      const commitPath = config.commit_scope === 'directory' && filePath
-        ? filePath.substring(0, filePath.lastIndexOf('/'))
-        : workspacePath;
+      // 先确保当前文档最新内容已落盘（否则 Git 可能拿不到最新文件）
+      await flushPendingTier1Save('tier2_commit');
+
+      // 关键：按用户诉求，commit 必须覆盖「工作区全局」，而不是仅当前文档目录
+      // 因此这里固定使用 workspacePath 作为 repo path
+      // 注意：readWorkspaceConfig().commit_scope 仍保留给未来扩展，但不在这里生效
+      const commitPath = workspacePath;
+      
+      console.log('[triggerTier2Commit] 提交路径:', commitPath);
+
+      // 不再只依赖 hasUnsavedChangesRef（它只反映当前文档落盘状态）
+      // 以 git status 为准：确保“全局变更（创建/删除/移动/其它文件更新）”也能触发 commit
+      const status = await getRepositoryStatus(commitPath);
+      console.log('[triggerTier2Commit] git status:', status);
+
+      if (!status.has_changes) {
+        console.log('[triggerTier2Commit] 提前返回：工作区无任何变更，无需提交');
+        hasUnsavedChangesRef.current = false;
+        return;
+      }
 
       await commitChanges(commitPath, 'auto_snapshot');
       console.log('Tier 2: Git 提交成功');
       hasUnsavedChangesRef.current = false;
+      
+      // 自动同步：检查是否配置了远程仓库和PAT
+      try {
+        const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+        const patToken = await getPatToken();
+        
+        // 如果配置了远程仓库和PAT，执行自动同步
+        if (remoteUrl && patToken) {
+          console.log('Tier 2: 开始自动同步...');
+          try {
+            const syncResult = await syncWithRemote(workspacePath, 'origin', 'main', patToken);
+            
+            if (syncResult.success) {
+              if (syncResult.has_conflict) {
+                console.warn('Tier 2: 同步检测到冲突，已创建冲突分支:', syncResult.conflict_branch);
+                // 可以在这里显示用户通知
+              } else {
+                console.log('Tier 2: 自动同步成功');
+              }
+            } else {
+              console.error('Tier 2: 自动同步失败');
+              // 同步失败，可能是网络问题，加入队列
+              addFailedPushTask({
+                workspacePath,
+                remoteName: 'origin',
+                branchName: 'main',
+                patToken,
+                timestamp: Date.now(),
+              });
+            }
+          } catch (syncError: any) {
+            // 检查是否是网络错误
+            const isNetworkError = 
+              !navigator.onLine ||
+              syncError?.message?.includes('网络') ||
+              syncError?.message?.includes('network') ||
+              syncError?.message?.includes('fetch') ||
+              syncError?.message?.includes('timeout') ||
+              syncError?.message?.includes('offline');
+            
+            if (isNetworkError) {
+              console.warn('Tier 2: 网络错误，将任务加入队列:', syncError);
+              addFailedPushTask({
+                workspacePath,
+                remoteName: 'origin',
+                branchName: 'main',
+                patToken,
+                timestamp: Date.now(),
+              });
+            } else {
+              console.error('Tier 2: 自动同步出错（非网络错误）:', syncError);
+            }
+          }
+        }
+      } catch (syncError) {
+        // 同步失败不影响提交，只记录错误
+        console.error('Tier 2: 自动同步出错:', syncError);
+      }
     } catch (error) {
       console.error('Tier 2: Git 提交失败:', error);
     }
-  }, [workspacePath, filePath]);
+  }, [workspacePath, filePath, flushPendingTier1Save]);
+
+  // 前台恢复时触发 Fetch
+  const triggerForegroundFetch = useCallback(async () => {
+    if (!workspacePath) {
+      console.log('[triggerForegroundFetch] 提前返回：workspacePath 为空');
+      return;
+    }
+
+    try {
+      const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+      const patToken = await getPatToken();
+      
+      if (remoteUrl && patToken) {
+        console.log('[triggerForegroundFetch] 前台恢复：执行 Fetch');
+        await fetchFromRemote(workspacePath, 'origin', patToken);
+        console.log('[triggerForegroundFetch] Fetch 完成');
+      } else {
+        console.log('[triggerForegroundFetch] 未配置远程仓库或 PAT，跳过 Fetch');
+      }
+    } catch (error) {
+      console.error('[triggerForegroundFetch] Fetch 失败:', error);
+      // Fetch 失败不影响应用使用
+    }
+  }, [workspacePath]);
 
   // Tier 2: 监听 App 后台切换和文档关闭事件
   useEffect(() => {
     if (!filePath) return;
 
+    // Sync Protocol 桌面端补强：
+    // - visibilitychange 在 Tauri Desktop 下可能不稳定
+    // - 额外监听 window blur/focus 作为“进入后台/恢复前台”的等价信号
     const handleVisibilityChange = () => {
       if (document.hidden) {
+        console.log('[Tier 2] visibilitychange 触发：应用进入后台');
         triggerTier2Commit();
+      } else {
+        console.log('[Tier 2] visibilitychange 触发：应用恢复前台');
+        triggerForegroundFetch();
       }
     };
 
+    const handleWindowBlur = () => {
+      console.log('[Tier 2] window blur 触发：窗口失焦（桌面端后台语义）');
+      triggerTier2Commit();
+    };
+
+    const handleWindowFocus = () => {
+      console.log('[Tier 2] window focus 触发：窗口聚焦（桌面端前台语义）');
+      triggerForegroundFetch();
+    };
+
     const handleBeforeUnload = () => {
+        console.log('[Tier 2] beforeunload 触发：窗口即将关闭');
         triggerTier2Commit();
     };
 
     const configPromise = readWorkspaceConfig();
     configPromise.then(async (config) => {
       const intervalMs = config.auto_commit_interval * 60 * 1000;
+      console.log('[Tier 2] 设置定时器，间隔:', intervalMs, 'ms (', config.auto_commit_interval, '分钟)');
       tier2IntervalRef.current = setInterval(() => {
+        console.log('[Tier 2] 定时器触发，hasUnsavedChanges:', hasUnsavedChangesRef.current);
         if (hasUnsavedChangesRef.current) {
           triggerTier2Commit();
         }
       }, intervalMs);
+    }).catch((error) => {
+      console.error('[Tier 2] 读取配置失败，无法设置定时器:', error);
     });
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       if (tier2IntervalRef.current) {
         clearInterval(tier2IntervalRef.current);
       }
     };
-  }, [filePath, triggerTier2Commit]);
+  }, [filePath, triggerTier2Commit, triggerForegroundFetch]);
 
   // 清理函数
   useEffect(() => {

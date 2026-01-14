@@ -2,7 +2,8 @@
 // 将所有 Rust 功能暴露给前端 JavaScript/TypeScript
 // 每个命令都对应一个可以被前端调用的函数
 
-use crate::git::{commit_changes, get_repository_status, git_gc, init_repository};
+use crate::git::{commit_changes, get_repository_status, git_gc, init_repository, verify_repository, get_commit_history, SyncResult};
+use crate::keychain::{store_pat_token, get_pat_token, remove_pat_token, has_pat_token};
 use crate::storage::{
     copy_file_or_directory, create_directory, create_file, delete_directory, delete_file, list_directory,
     move_file_or_directory, read_encrypted_file, rename_file_or_directory, write_encrypted_file, FileInfo,
@@ -78,6 +79,24 @@ pub fn get_repository_status_command(path: String) -> Result<crate::git::GitStat
 #[tauri::command]
 pub fn git_gc_command(path: String) -> Result<(), String> {
     git_gc(PathBuf::from(path).as_path())
+        .map_err(|e| e.to_string())
+}
+
+/// 验证 Git 仓库
+/// 
+/// 前端调用: `invoke('verify_repository', { path: '...' })`
+#[tauri::command]
+pub fn verify_repository_command(path: String) -> Result<crate::git::RepositoryVerification, String> {
+    verify_repository(PathBuf::from(path).as_path())
+        .map_err(|e| e.to_string())
+}
+
+/// 获取提交历史
+/// 
+/// 前端调用: `invoke('get_commit_history', { path: '...', limit: 10 })`
+#[tauri::command]
+pub fn get_commit_history_command(path: String, limit: Option<usize>) -> Result<Vec<crate::git::CommitInfo>, String> {
+    get_commit_history(PathBuf::from(path).as_path(), limit)
         .map_err(|e| e.to_string())
 }
 
@@ -246,10 +265,10 @@ pub async fn read_workspace_config(app: AppHandle) -> Result<WorkspaceConfig, St
     let config_file = PathBuf::from(&workspace_path).join(".config/settings.json");
     
     if !config_file.exists() {
-        // 返回默认配置
+        // 返回默认配置（根据 Sync Protocol.md，默认 10 分钟）
         return Ok(WorkspaceConfig {
             commit_scope: "workspace".to_string(),
-            auto_commit_interval: 15,
+            auto_commit_interval: 10,
         });
     }
     
@@ -366,5 +385,144 @@ pub async fn move_file_or_directory_command(
     move_file_or_directory(&source_path, &dest_path)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 存储 GitHub PAT Token
+/// 
+/// 前端调用: `invoke('store_pat', { token: '...' })`
+#[tauri::command]
+pub async fn store_pat(app: AppHandle, token: String) -> Result<(), String> {
+    store_pat_token(&app, &token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 获取 GitHub PAT Token
+/// 
+/// 前端调用: `invoke('get_pat')`
+#[tauri::command]
+pub async fn get_pat(app: AppHandle) -> Result<Option<String>, String> {
+    get_pat_token(&app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 删除 GitHub PAT Token
+/// 
+/// 前端调用: `invoke('remove_pat')`
+#[tauri::command]
+pub async fn remove_pat(app: AppHandle) -> Result<(), String> {
+    remove_pat_token(&app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 检查是否已配置 GitHub PAT Token
+/// 
+/// 前端调用: `invoke('has_pat')`
+#[tauri::command]
+pub async fn has_pat(app: AppHandle) -> Result<bool, String> {
+    has_pat_token(&app)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 添加远程仓库
+/// 
+/// 前端调用: `invoke('add_remote', { path: '...', name: 'origin', url: '...' })`
+#[tauri::command]
+pub fn add_remote(path: String, name: String, url: String) -> Result<(), String> {
+    crate::git::add_remote(PathBuf::from(path).as_path(), &name, &url)
+        .map_err(|e| e.to_string())
+}
+
+/// 获取远程仓库URL
+/// 
+/// 前端调用: `invoke('get_remote_url', { path: '...', name: 'origin' })`
+#[tauri::command]
+pub fn get_remote_url(path: String, name: String) -> Result<Option<String>, String> {
+    crate::git::get_remote_url(PathBuf::from(path).as_path(), &name)
+        .map_err(|e| e.to_string())
+}
+
+/// 删除远程仓库配置
+/// 
+/// 前端调用: `invoke('remove_remote', { path: '...', name: 'origin' })`
+#[tauri::command]
+pub fn remove_remote(path: String, name: String) -> Result<(), String> {
+    crate::git::remove_remote(PathBuf::from(path).as_path(), &name)
+        .map_err(|e| e.to_string())
+}
+
+/// 从远程仓库获取更新（fetch）
+/// 
+/// 前端调用: `invoke('fetch_from_remote', { path: '...', remoteName: 'origin', patToken: '...' })`
+#[tauri::command]
+pub fn fetch_from_remote(path: String, remoteName: String, patToken: Option<String>) -> Result<(), String> {
+    crate::git::fetch_from_remote(
+        PathBuf::from(path).as_path(),
+        &remoteName,
+        patToken.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 推送本地提交到远程仓库（push）
+/// 
+/// 前端调用: `invoke('push_to_remote', { path: '...', remoteName: 'origin', branchName: 'main', patToken: '...' })`
+#[tauri::command]
+pub fn push_to_remote(
+    path: String,
+    remoteName: String,
+    branchName: String,
+    patToken: Option<String>,
+) -> Result<(), String> {
+    crate::git::push_to_remote(
+        PathBuf::from(path).as_path(),
+        &remoteName,
+        &branchName,
+        patToken.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 同步远程仓库（fetch + rebase/push）
+/// 
+/// 前端调用: `invoke('sync_with_remote', { path: '...', remoteName: 'origin', branchName: 'main', patToken: '...' })`
+#[tauri::command]
+pub fn sync_with_remote(
+    path: String,
+    remoteName: String,
+    branchName: String,
+    patToken: Option<String>,
+) -> Result<SyncResult, String> {
+    eprintln!("[sync_with_remote] 开始同步: path={}, remote={}, branch={}", path, remoteName, branchName);
+    crate::git::sync_with_remote(
+        PathBuf::from(path).as_path(),
+        &remoteName,
+        &branchName,
+        patToken.as_deref(),
+    )
+    .map_err(|e| {
+        eprintln!("[sync_with_remote] 同步失败: {}", e);
+        e.to_string()
+    })
+}
+
+/// 处理同步冲突
+/// 
+/// 前端调用: `invoke('handle_sync_conflict', { path: '...', remoteName: 'origin', branchName: 'main' })`
+#[tauri::command]
+pub fn handle_sync_conflict(
+    path: String,
+    remote_name: String,
+    branch_name: String,
+) -> Result<String, String> {
+    crate::git::handle_sync_conflict(
+        PathBuf::from(path).as_path(),
+        &remote_name,
+        &branch_name,
+    )
+    .map_err(|e| e.to_string())
 }
 

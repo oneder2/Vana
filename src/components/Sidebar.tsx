@@ -7,10 +7,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Folder, FileText, ChevronRight, Plus, FilePlus, FolderPlus } from 'lucide-react';
+import { Folder, FileText, ChevronRight, Plus } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
 import { listDirectory, type FileInfo, createFile, createDirectory, deleteFile, deleteDirectory, renameFileOrDirectory, copyFileOrDirectory, moveFileOrDirectory } from '@/lib/api';
+import type { JSONContent } from '@tiptap/core';
 import { ContextMenu } from './ContextMenu';
 import { saveTreeExpandedState, loadTreeExpandedState } from '@/lib/cache';
 
@@ -255,8 +256,6 @@ export function Sidebar({
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: FileInfo | null } | null>(null);
-  const [showCreateMenu, setShowCreateMenu] = useState(false);
-  const createMenuRef = useRef<HTMLDivElement>(null);
   
   // 剪贴板状态管理
   const [clipboard, setClipboard] = useState<{ type: 'copy' | 'cut'; item: FileInfo } | null>(null);
@@ -405,80 +404,65 @@ export function Sidebar({
     setContextMenu({ x: e.clientX, y: e.clientY, item });
   };
 
-  // 处理创建文件
-  const handleCreateFile = async () => {
-    const fileName = prompt('请输入文件名（不含扩展名）:');
-    if (fileName) {
-      try {
-        await createFile(`${workspacePath}/${fileName}`, '');
-        await refreshFiles();
-        setShowCreateMenu(false);
-      } catch (error) {
-        console.error('创建文件失败:', error);
-        alert(`创建文件失败: ${error}`);
-      }
-    }
-  };
-
-  // 处理创建文件夹
-  const handleCreateDirectory = async () => {
-    const dirName = prompt('请输入目录名:');
-    if (dirName) {
-      try {
-        await createDirectory(`${workspacePath}/${dirName}`);
-        await refreshFiles();
-        setShowCreateMenu(false);
-      } catch (error) {
-        console.error('创建文件夹失败:', error);
-        alert(`创建文件夹失败: ${error}`);
-      }
-    }
-  };
-
-  // 点击外部关闭创建菜单
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
-        setShowCreateMenu(false);
-      }
-    };
-
-    if (showCreateMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
-    }
-  }, [showCreateMenu]);
 
   // 处理菜单操作
   const handleMenuAction = async (action: string) => {
-    if (!contextMenu?.item && action !== 'paste') return;
+    // 根目录右键菜单只需要处理创建操作
+    const isRootMenu = !contextMenu?.item;
+    if (isRootMenu && action !== 'createFile' && action !== 'createDirectory') {
+      return;
+    }
+    
+    if (!contextMenu?.item && action !== 'paste' && action !== 'createFile' && action !== 'createDirectory') return;
 
     const item = contextMenu?.item;
     try {
       switch (action) {
         case 'createFile': {
-          if (!item) break;
           const fileName = prompt('请输入文件名（不含扩展名）:');
           if (fileName) {
-            const filePath = item.is_directory
-              ? `${item.path}/${fileName}`
-              : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${fileName}`;
-            await createFile(filePath, '');
+            let filePath: string;
+            if (isRootMenu) {
+              // 根目录右键菜单
+              filePath = `${workspacePath}/${fileName}`;
+            } else if (item) {
+              filePath = item.is_directory
+                ? `${item.path}/${fileName}`
+                : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${fileName}`;
+            } else {
+              return;
+            }
+            // 创建新文件时使用默认的 Tiptap JSON 格式
+            const defaultContent: JSONContent = { type: 'doc', content: [] };
+            await createFile(filePath, JSON.stringify(defaultContent, null, 2));
             await refreshFiles();
+            // 如果是根目录右键菜单，关闭菜单
+            if (isRootMenu) {
+              setContextMenu(null);
+            }
           }
           break;
         }
         case 'createDirectory': {
-          if (!item) break;
           const dirName = prompt('请输入目录名:');
           if (dirName) {
-            const dirPath = item.is_directory
-              ? `${item.path}/${dirName}`
-              : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${dirName}`;
+            let dirPath: string;
+            if (isRootMenu) {
+              // 根目录右键菜单
+              dirPath = `${workspacePath}/${dirName}`;
+            } else if (item) {
+              dirPath = item.is_directory
+                ? `${item.path}/${dirName}`
+                : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${dirName}`;
+            } else {
+              return;
+            }
             await createDirectory(dirPath);
             await refreshFiles();
+            // 如果是根目录右键菜单，关闭菜单
+            if (isRootMenu) {
+              setContextMenu(null);
+            }
           }
           break;
         }
@@ -584,6 +568,21 @@ export function Sidebar({
         onDragOver={handleRootDragOver}
         onDragLeave={handleRootDragLeave}
         onDrop={handleRootDrop}
+        onContextMenu={(e) => {
+          // 如果点击的是文件列表项，不处理（由文件列表项自己处理）
+          const target = e.target as HTMLElement;
+          if (target.closest('.space-y-1')) {
+            return;
+          }
+          // 如果点击的是创建按钮，不处理（由按钮自己处理）
+          if (target.closest('button[title="创建文件或文件夹"]')) {
+            return;
+          }
+          // 显示根目录右键菜单
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenu({ x: e.clientX, y: e.clientY, item: null });
+        }}
         style={{
           ...(isRootDragOver ? {
             backgroundColor: getThemeAccentBgColor(theme) + '40',
@@ -594,54 +593,28 @@ export function Sidebar({
       >
         <div className={`text-[10px] ${theme.uiFont} mb-4 opacity-40 uppercase tracking-widest flex items-center justify-between`}>
           <span>归档单元</span>
-          {/* 创建文件/文件夹按钮 */}
-          <div className="relative" ref={createMenuRef}>
-            <button
-              onClick={() => setShowCreateMenu(!showCreateMenu)}
-              className="w-6 h-6 rounded border flex items-center justify-center transition-opacity hover:opacity-80"
-              style={{
-                backgroundColor: getThemeAccentBgColor(theme),
-                borderColor: getThemeBorderColor(theme),
-                color: getThemeAccentColor(theme),
-              }}
-              title="创建文件或文件夹"
-            >
-              <Plus size={14} />
-            </button>
-            {/* 创建菜单下拉框 */}
-            {showCreateMenu && (
-              <div
-                className="absolute right-0 top-8 min-w-[160px] rounded border shadow-lg z-50"
-                style={{
-                  backgroundColor: getThemeSurfaceColor(theme),
-                  borderColor: getThemeBorderColor(theme),
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  onClick={handleCreateFile}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80 transition-opacity text-sm rounded-t"
-                  style={{
-                    color: getThemeAccentColor(theme),
-                  }}
-                >
-                  <FilePlus size={16} />
-                  <span>新建文件</span>
-                </button>
-                <button
-                  onClick={handleCreateDirectory}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80 transition-opacity text-sm rounded-b border-t"
-                  style={{
-                    color: getThemeAccentColor(theme),
-                    borderColor: getThemeBorderColor(theme),
-                  }}
-                >
-                  <FolderPlus size={16} />
-                  <span>新建文件夹</span>
-                </button>
-              </div>
-            )}
-          </div>
+          {/* 创建文件/文件夹按钮 - 点击后显示根目录右键菜单 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              // 获取按钮位置
+              const rect = e.currentTarget.getBoundingClientRect();
+              setContextMenu({ 
+                x: rect.right, 
+                y: rect.top, 
+                item: null 
+              });
+            }}
+            className="w-6 h-6 rounded border flex items-center justify-center transition-opacity hover:opacity-80"
+            style={{
+              backgroundColor: getThemeAccentBgColor(theme),
+              borderColor: getThemeBorderColor(theme),
+              color: getThemeAccentColor(theme),
+            }}
+            title="创建文件或文件夹"
+          >
+            <Plus size={14} />
+          </button>
         </div>
         {loading ? (
           <div className="text-xs opacity-50">加载中...</div>
@@ -680,6 +653,7 @@ export function Sidebar({
           isBlock={false}
           isFile={true}
           hasClipboard={!!clipboard}
+          isRootMenu={!contextMenu.item}
         />
       )}
     </aside>

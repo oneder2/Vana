@@ -1,11 +1,11 @@
-# No Visitors - Git-based Arcane Archive
+# Vana - No Visitors: Git-based Arcane Archive
 
 **版本**: v5.1 (Refined Storage & Sync)  
 **核心理念**: Git 为核 (Git as Engine)、零知识加密 (Zero-Knowledge Encryption)、氛围拟态 (Atmosphere Protocol)、Tauri 驱动。
 
 ## 项目概述
 
-No Visitors 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档管理系统，实现零知识加密、双层保存策略和氛围协议驱动的多主题 UI。
+Vana 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档管理系统，实现零知识加密、双层保存策略和氛围协议驱动的多主题 UI。
 
 ## 技术栈
 
@@ -17,7 +17,7 @@ No Visitors 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档�
 
 ## 功能特性
 
-### ✅ 已实现
+### 已实现
 
 1. **Tauri 基础架构**
    - Tauri v2 项目初始化
@@ -38,6 +38,8 @@ No Visitors 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档�
    - Git 仓库初始化
    - 自动提交功能
    - 仓库状态查询
+   - 仓库验证功能（检查初始化、提交历史）
+   - 提交历史查询
 
 5. **双层保存策略**
    - Tier 1: 防抖磁盘保存（停止打字 2 秒后）
@@ -58,14 +60,38 @@ No Visitors 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档�
    - 环形菜单
    - 主题提供者
 
-### 🚧 待实现
+9. **PAT 存储和管理** (Phase 2 完成)
+   - GitHub PAT Token 安全存储（Keychain）
+   - PAT 的存储、读取、删除功能
+   - 前端 PAT 配置界面
 
-- Phase 3: GitHub 云端同步和冲突处理
+10. **远程仓库配置** (Phase 3 部分完成)
+    - 远程仓库添加、查询、删除
+    - 支持 HTTPS + PAT 认证
+    - 前端远程仓库配置界面
+
+11. **GitHub 云端同步** (Phase 3 完成 ✅)
+    - 远程同步操作（fetch/push）✅
+    - 同步状态显示
+    - 手动同步功能
+    - 自动同步集成（在 Git 提交后触发）
+    - 冲突处理完整实现（rebase 和 reset 操作）✅
+    - 自动冲突隔离分支创建 ✅
+
+12. **Git 维护功能** (Phase 2 完成 ✅)
+    - Git GC 实现（轻量维护策略）✅
+    - 打包引用和松散对象 ✅
+    - 清理不可达对象 ✅
+
+### 待实现
+
+- 将命令行 git 实现迁移到纯 gix API（当前使用命令行作为临时方案）
 - 生物识别认证
 - Git 历史折叠功能
 - 更多主题和自定义主题
 - 文档搜索功能
 - 导出功能（PDF、Markdown 等）
+- 二维码验证功能
 
 ## 项目结构
 
@@ -163,5 +189,54 @@ ISC
 
 ## 开发状态
 
-项目目前处于开发阶段，核心功能已实现，但部分功能（如 Git 操作的完整实现）仍在完善中。
+项目目前处于开发阶段，核心功能已实现。Phase 2（Git 仓库验证）和 Phase 3（PAT 部署和 GitHub 同步）的基础框架已完成：
+
+### 最新更新 (Phase 2 & Phase 3)
+
+1. **本地 Git 仓库验证**
+   - 实现了仓库初始化检查
+   - 实现了提交历史查询功能
+   - 提供了仓库状态验证 API
+
+2. **PAT 存储系统**
+   - 实现了 PAT Token 的安全存储（使用 Keychain）
+   - 提供了完整的 PAT 管理 API（存储、读取、删除、检查）
+   - 实现了前端 PAT 配置界面
+
+3. **远程仓库配置**
+   - 实现了远程仓库的添加、查询、删除功能
+   - 支持配置 GitHub 远程仓库 URL
+
+4. **远程同步功能**
+   - 实现了同步操作的基础框架（fetch/push）
+   - 实现了同步状态显示和手动同步功能
+   - 集成了自动同步（在 Git 提交后自动触发）
+   - 实现了冲突处理的基础框架
+   - **2026-01 更新**：Tier 2 自动提交改为**始终对工作区全局内容提交**（避免“只提交当前文档”的错觉），并在桌面端补强 `blur/focus` 触发以更贴合 `docs/Sync Protocol.md` 的“后台/前台恢复”语义
+
+**注意**: gix 0.66 的 fetch/push API 实现较为复杂，当前版本提供了基础框架和占位符实现。完整的网络同步功能需要进一步研究 gix 的远程操作 API 或考虑使用其他方案。
+
+## 使用说明
+
+### 配置 GitHub 同步
+
+1. **配置 PAT Token**
+   - 打开设置页面
+   - 在 "GitHub PAT 配置" 区域输入您的 GitHub Personal Access Token
+   - 点击 "保存 PAT" 按钮
+
+2. **配置远程仓库**
+   - 在 "远程仓库配置" 区域点击 "配置远程仓库" 按钮
+   - 系统会自动配置默认的 GitHub 仓库 URL
+
+3. **执行同步**
+   - 手动同步：在设置页面点击 "立即同步" 按钮
+   - 自动同步：在 Git 自动提交后，如果已配置 PAT 和远程仓库，系统会自动执行同步
+
+### 冲突处理
+
+当检测到同步冲突时，系统会：
+1. 自动创建冲突分支（格式：`conflict_[timestamp]`）
+2. 尝试恢复主线到远程状态
+3. 显示冲突信息给用户
 

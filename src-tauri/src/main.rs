@@ -37,9 +37,25 @@ fn main() {
             commands::commit_changes_command,
             commands::get_repository_status_command,
             commands::git_gc_command,
+            commands::verify_repository_command,
+            commands::get_commit_history_command,
             // 氛围协议命令
             commands::read_atmosphere_config,
             commands::write_atmosphere_config,
+            // PAT 管理命令
+            commands::store_pat,
+            commands::get_pat,
+            commands::remove_pat,
+            commands::has_pat,
+            // 远程仓库命令
+            commands::add_remote,
+            commands::get_remote_url,
+            commands::remove_remote,
+            // 远程同步命令
+            commands::fetch_from_remote,
+            commands::push_to_remote,
+            commands::sync_with_remote,
+            commands::handle_sync_conflict,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

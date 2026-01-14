@@ -23,9 +23,10 @@ import { RadialMenu } from '@/components/RadialMenu';
 import { BlockTypeSelector } from '@/components/BlockTypeSelector';
 import { getAllThemes, getThemeIcon } from '@/lib/themes';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
-import { readFile, getWorkspacePath, ensureWorkspaceInitialized } from '@/lib/api';
+import { readFile, getWorkspacePath, ensureWorkspaceInitialized, fetchFromRemote, getRemoteUrl, getPatToken, commitChanges, readWorkspaceConfig } from '@/lib/api';
+import { retryFailedPushTasks, getQueueSize } from '@/lib/syncQueue';
 import { loadAtmosphereConfig } from '@/lib/atmosphere';
-import { Plus, AlignCenter, AlignLeft, AlignRight, Settings } from 'lucide-react';
+import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit } from 'lucide-react';
 import Link from 'next/link';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
@@ -64,6 +65,7 @@ function MainApp() {
   const [showBlockSelector, setShowBlockSelector] = useState(false);
   const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
   const [editorLayout, setEditorLayout] = useState<EditorLayout>('center');
+  const [editorTriggerCommit, setEditorTriggerCommit] = useState<(() => Promise<void>) | undefined>(undefined);
 
   // 初始化工作区
   useEffect(() => {
@@ -75,6 +77,23 @@ function MainApp() {
         
         // 确保工作区已初始化
         await ensureWorkspaceInitialized();
+        
+        // 应用冷启动时执行 Fetch（根据 Sync Protocol.md）
+        try {
+          const remoteUrl = await getRemoteUrl(path, 'origin');
+          const patToken = await getPatToken();
+          
+          if (remoteUrl && patToken) {
+            console.log('[initWorkspace] 应用启动：执行 Fetch');
+            await fetchFromRemote(path, 'origin', patToken);
+            console.log('[initWorkspace] Fetch 完成');
+          } else {
+            console.log('[initWorkspace] 未配置远程仓库或 PAT，跳过 Fetch');
+          }
+        } catch (fetchError) {
+          console.error('[initWorkspace] Fetch 失败:', fetchError);
+          // Fetch 失败不影响应用启动
+        }
       } catch (error) {
         console.error('初始化工作区失败:', error);
       }
@@ -83,12 +102,84 @@ function MainApp() {
     initWorkspace();
   }, []);
 
+  // 网络恢复时执行 Fetch 和重试 Push（根据 Sync Protocol.md）
+  useEffect(() => {
+    if (!workspacePath) return;
+
+    const handleOnline = async () => {
+      console.log('[网络恢复] 检测到网络连接恢复');
+      try {
+        const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+        const patToken = await getPatToken();
+        
+        if (remoteUrl && patToken) {
+          console.log('[网络恢复] 执行 Fetch');
+          await fetchFromRemote(workspacePath, 'origin', patToken);
+          console.log('[网络恢复] Fetch 完成');
+          
+          // 网络恢复后，重试失败的 Push 任务
+          try {
+            console.log('[网络恢复] 开始重试失败的 Push 任务');
+            const retryResult = await retryFailedPushTasks();
+            console.log('[网络恢复] Push 任务重试完成:', retryResult);
+          } catch (retryError) {
+            console.error('[网络恢复] 重试 Push 任务失败:', retryError);
+          }
+        } else {
+          console.log('[网络恢复] 未配置远程仓库或 PAT，跳过 Fetch');
+        }
+      } catch (error) {
+        console.error('[网络恢复] Fetch 失败:', error);
+      }
+    };
+    
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [workspacePath]);
+
+  // 清仓同步：应用关闭前执行队列中的 Push 任务（根据 Sync Protocol.md）
+  useEffect(() => {
+    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
+      const queueSize = getQueueSize();
+      if (queueSize > 0 && workspacePath) {
+        console.log('[清仓同步] 检测到应用即将关闭，队列中有', queueSize, '个待处理任务');
+        
+        // 注意：beforeunload 中的异步操作可能被浏览器终止
+        // 使用 sendBeacon 或同步方式尝试最后一次同步
+        // 这里我们尝试快速执行，但不阻塞关闭
+        try {
+          const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+          const patToken = await getPatToken();
+          
+          if (remoteUrl && patToken) {
+            // 使用 navigator.sendBeacon 发送同步请求（如果支持）
+            // 或者尝试快速同步（但可能被中断）
+            console.log('[清仓同步] 尝试执行最后的同步...');
+            // 由于 beforeunload 的限制，这里只记录日志
+            // 实际的清仓同步应该在 Tauri 层面处理
+          }
+        } catch (error) {
+          console.error('[清仓同步] 失败:', error);
+        }
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [workspacePath]);
+
   // 加载文件
   const handleFileSelect = async (path: string) => {
     try {
       // 关闭旧文件时触发 Tier 2 提交（如果有旧文件）
-      if (currentFilePath && currentFilePath !== path) {
-        // Tier 2 提交会在 Editor 组件中处理
+      if (currentFilePath && currentFilePath !== path && editorTriggerCommit) {
+        console.log('[handleFileSelect] 切换文件前触发 Commit');
+        try {
+          await editorTriggerCommit();
+        } catch (error) {
+          console.error('[handleFileSelect] 切换文件时的 Commit 失败:', error);
+          // 即使 Commit 失败，也继续切换文件
+        }
       }
 
       const content = await readFile(path);
@@ -270,6 +361,49 @@ function MainApp() {
               } ${theme.glow}`}
             ></div>
           </div>
+          {/* 提交调试按钮 */}
+          {currentFilePath && (
+            <button
+              onClick={async () => {
+                console.log('[Debug Commit] 手动触发提交');
+                try {
+                  if (!workspacePath) {
+                    console.error('[Debug Commit] workspacePath 为空');
+                    alert('工作区路径为空');
+                    return;
+                  }
+                  
+                  const config = await readWorkspaceConfig();
+                  // 调试按钮：强制以工作区为范围执行提交（符合 Sync Protocol 的“全局快照”语义）
+                  // 注意：不要使用当前文档目录作为 commit 范围，否则会造成“只提交当前文档”的错觉
+                  const commitPath = workspacePath;
+                  
+                  console.log('[Debug Commit] 提交路径:', commitPath);
+                  console.log('[Debug Commit] 当前文件路径:', currentFilePath);
+                  console.log('[Debug Commit] 工作区路径:', workspacePath);
+                  console.log('[Debug Commit] Commit 范围:', config.commit_scope);
+                  
+                  // 强制触发提交（不检查 hasUnsavedChanges）
+                  await commitChanges(commitPath, 'manual_debug_commit');
+                  console.log('[Debug Commit] 提交成功');
+                  alert('提交成功！请查看控制台日志。');
+                } catch (error) {
+                  console.error('[Debug Commit] 提交失败:', error);
+                  alert(`提交失败: ${error instanceof Error ? error.message : String(error)}`);
+                }
+              }}
+              className="p-1.5 border rounded hover:opacity-80 transition-opacity"
+              style={{ 
+                color: getThemeAccentColor(theme),
+                borderColor: getThemeBorderColor(theme),
+                backgroundColor: getThemeSurfaceColor(theme),
+              }}
+              title="手动提交（调试）"
+            >
+              <GitCommit size={16} />
+            </button>
+          )}
+          
           <Link
             href="/settings"
             style={{ color: getThemeAccentColor(theme) }}
@@ -406,7 +540,10 @@ function MainApp() {
               initialContent={editorContent}
               onContentChange={setEditorContent}
               workspacePath={workspacePath}
-              onEditorReady={setEditorInstance}
+              onEditorReady={(editor, triggerCommit) => {
+                setEditorInstance(editor);
+                setEditorTriggerCommit(() => triggerCommit);
+              }}
             />
           </div>
         </div>

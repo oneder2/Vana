@@ -9,6 +9,7 @@ use tauri::AppHandle;
 
 // 密钥存储键名
 const MASTER_KEY_STORE_KEY: &str = "master_encryption_key";
+const PAT_TOKEN_STORE_KEY: &str = "github_pat_token";
 
 /// 获取或创建主加密密钥
 /// 
@@ -64,6 +65,103 @@ pub fn get_or_create_master_key_sync(app: &AppHandle) -> Result<Vec<u8>> {
     // 使用 tokio runtime 执行异步操作
     let rt = tokio::runtime::Runtime::new().context("无法创建 Tokio runtime")?;
     rt.block_on(get_or_create_master_key(app))
+}
+
+/// 存储 GitHub PAT Token
+/// 
+/// # 参数
+/// - `app`: Tauri 应用句柄
+/// - `token`: PAT Token 字符串
+/// 
+/// # 返回
+/// 成功时返回 Ok(())
+/// 
+/// PAT 使用 base64 编码存储以增强安全性
+pub async fn store_pat_token(app: &AppHandle, token: &str) -> Result<()> {
+    use tauri_plugin_store::StoreBuilder;
+    use std::path::PathBuf;
+    
+    let store = StoreBuilder::new(
+        app,
+        PathBuf::from("vault_keys.json"),
+    )
+    .build()?;
+    
+    // 使用 base64 编码存储 PAT（增强安全性）
+    let token_base64 = base64::engine::general_purpose::STANDARD.encode(token.as_bytes());
+    store.set(PAT_TOKEN_STORE_KEY.to_string(), serde_json::json!(token_base64));
+    
+    store.save()?;
+    
+    Ok(())
+}
+
+/// 获取 GitHub PAT Token
+/// 
+/// # 参数
+/// - `app`: Tauri 应用句柄
+/// 
+/// # 返回
+/// 返回 PAT Token，如果未配置则返回 None
+pub async fn get_pat_token(app: &AppHandle) -> Result<Option<String>> {
+    use tauri_plugin_store::StoreBuilder;
+    use std::path::PathBuf;
+    
+    let store = StoreBuilder::new(
+        app,
+        PathBuf::from("vault_keys.json"),
+    )
+    .build()?;
+    
+    // 尝试读取存储的 PAT
+    if let Some(value) = store.get(PAT_TOKEN_STORE_KEY) {
+        if let Some(token_base64) = value.as_str() {
+            // 从 base64 解码
+            if let Ok(token_bytes) = base64::engine::general_purpose::STANDARD.decode(token_base64) {
+                if let Ok(token) = String::from_utf8(token_bytes) {
+                    return Ok(Some(token));
+                }
+            }
+        }
+    }
+    
+    Ok(None)
+}
+
+/// 删除 GitHub PAT Token
+/// 
+/// # 参数
+/// - `app`: Tauri 应用句柄
+/// 
+/// # 返回
+/// 成功时返回 Ok(())
+pub async fn remove_pat_token(app: &AppHandle) -> Result<()> {
+    use tauri_plugin_store::StoreBuilder;
+    use std::path::PathBuf;
+    
+    let store = StoreBuilder::new(
+        app,
+        PathBuf::from("vault_keys.json"),
+    )
+    .build()?;
+    
+    // 删除 PAT
+    store.delete(PAT_TOKEN_STORE_KEY);
+    store.save()?;
+    
+    Ok(())
+}
+
+/// 检查是否已配置 GitHub PAT Token
+/// 
+/// # 参数
+/// - `app`: Tauri 应用句柄
+/// 
+/// # 返回
+/// 如果已配置返回 true，否则返回 false
+pub async fn has_pat_token(app: &AppHandle) -> Result<bool> {
+    let token = get_pat_token(app).await?;
+    Ok(token.is_some())
 }
 
 #[cfg(test)]

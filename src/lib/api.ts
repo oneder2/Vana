@@ -19,6 +19,24 @@ export interface GitStatus {
   is_clean: boolean;
 }
 
+// 仓库验证信息接口
+export interface RepositoryVerification {
+  is_initialized: boolean;
+  has_commits: boolean;
+  commit_count: number;
+  latest_commit_sha: string | null;
+  latest_commit_message: string | null;
+  latest_commit_time: string | null;
+}
+
+// 提交信息接口
+export interface CommitInfo {
+  sha: string;
+  message: string;
+  time: string;
+  author: string;
+}
+
 // 氛围协议配置接口
 export interface AtmosphereConfig {
   theme: string;
@@ -90,6 +108,25 @@ export async function getRepositoryStatus(path: string): Promise<GitStatus> {
  */
 export async function gitGc(path: string): Promise<void> {
   return await invoke<void>('git_gc_command', { path });
+}
+
+/**
+ * 验证 Git 仓库
+ * @param path 仓库路径
+ * @returns 仓库验证信息
+ */
+export async function verifyRepository(path: string): Promise<RepositoryVerification> {
+  return await invoke<RepositoryVerification>('verify_repository_command', { path });
+}
+
+/**
+ * 获取提交历史
+ * @param path 仓库路径
+ * @param limit 返回的最大提交数量（可选，默认10）
+ * @returns 提交历史列表
+ */
+export async function getCommitHistory(path: string, limit?: number): Promise<CommitInfo[]> {
+  return await invoke<CommitInfo[]>('get_commit_history_command', { path, limit });
 }
 
 /**
@@ -227,6 +264,153 @@ export async function moveFileOrDirectory(
   return await invoke<void>('move_file_or_directory_command', {
     sourcePath: sourcePath,
     destPath: destPath,
+  });
+}
+
+/**
+ * 存储 GitHub PAT Token
+ * @param token PAT Token
+ */
+export async function storePatToken(token: string): Promise<void> {
+  return await invoke<void>('store_pat', { token });
+}
+
+/**
+ * 获取 GitHub PAT Token
+ * @returns PAT Token，如果未配置则返回 null
+ */
+export async function getPatToken(): Promise<string | null> {
+  return await invoke<string | null>('get_pat');
+}
+
+/**
+ * 删除 GitHub PAT Token
+ */
+export async function removePatToken(): Promise<void> {
+  return await invoke<void>('remove_pat');
+}
+
+/**
+ * 检查是否已配置 GitHub PAT Token
+ * @returns 如果已配置返回 true，否则返回 false
+ */
+export async function hasPatToken(): Promise<boolean> {
+  return await invoke<boolean>('has_pat');
+}
+
+/**
+ * 添加远程仓库
+ * @param path 仓库路径
+ * @param name 远程仓库名称（默认 "origin"）
+ * @param url 远程仓库URL
+ */
+export async function addRemote(path: string, name: string, url: string): Promise<void> {
+  return await invoke<void>('add_remote', { path, name, url });
+}
+
+/**
+ * 获取远程仓库URL
+ * @param path 仓库路径
+ * @param name 远程仓库名称（默认 "origin"）
+ * @returns 远程仓库URL，如果未配置则返回 null
+ */
+export async function getRemoteUrl(path: string, name: string = 'origin'): Promise<string | null> {
+  return await invoke<string | null>('get_remote_url', { path, name });
+}
+
+/**
+ * 删除远程仓库配置
+ * @param path 仓库路径
+ * @param name 远程仓库名称（默认 "origin"）
+ */
+export async function removeRemote(path: string, name: string = 'origin'): Promise<void> {
+  return await invoke<void>('remove_remote', { path, name });
+}
+
+// 同步结果接口
+export interface SyncResult {
+  success: boolean;
+  has_conflict: boolean;
+  conflict_branch: string | null;
+}
+
+/**
+ * 从远程仓库获取更新（fetch）
+ * @param path 仓库路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param patToken PAT Token（可选）
+ */
+export async function fetchFromRemote(
+  path: string,
+  remoteName: string = 'origin',
+  patToken?: string
+): Promise<void> {
+  return await invoke<void>('fetch_from_remote', { 
+    path, 
+    remoteName: remoteName, 
+    patToken: patToken 
+  });
+}
+
+/**
+ * 推送本地提交到远程仓库（push）
+ * @param path 仓库路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param branchName 分支名称（默认 "main"）
+ * @param patToken PAT Token（可选）
+ */
+export async function pushToRemote(
+  path: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main',
+  patToken?: string
+): Promise<void> {
+  return await invoke<void>('push_to_remote', {
+    path,
+    remoteName: remoteName,
+    branchName: branchName,
+    patToken: patToken,
+  });
+}
+
+/**
+ * 同步远程仓库（fetch + rebase/push）
+ * @param path 仓库路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param branchName 分支名称（默认 "main"）
+ * @param patToken PAT Token（可选）
+ * @returns 同步结果
+ */
+export async function syncWithRemote(
+  path: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main',
+  patToken?: string
+): Promise<SyncResult> {
+  return await invoke<SyncResult>('sync_with_remote', {
+    path,
+    remoteName,
+    branchName,
+    patToken,
+  });
+}
+
+/**
+ * 处理同步冲突
+ * @param path 仓库路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param branchName 分支名称（默认 "main"）
+ * @returns 冲突分支名称
+ */
+export async function handleSyncConflict(
+  path: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main'
+): Promise<string> {
+  return await invoke<string>('handle_sync_conflict', {
+    path,
+    remoteName: remoteName,
+    branchName: branchName,
   });
 }
 

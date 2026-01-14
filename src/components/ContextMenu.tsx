@@ -19,6 +19,8 @@ interface ContextMenuProps {
   hasSelection?: boolean;
   isBlock?: boolean;
   isFile?: boolean; // 是否为文件操作菜单
+  hasClipboard?: boolean; // 剪贴板是否有内容（用于文件操作）
+  isRootMenu?: boolean; // 是否为根目录右键菜单
 }
 
 /**
@@ -33,6 +35,7 @@ export function ContextMenu({
   isBlock = false,
   isFile = false,
   hasClipboard = false,
+  isRootMenu = false,
 }: ContextMenuProps) {
   const { theme } = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -63,10 +66,12 @@ export function ContextMenu({
         adjustedY = viewportHeight - rect.height - 10;
       }
       
-      // 确保不超出左边界和上边界
+      // 如果菜单超出左边界，向右调整
       if (adjustedX < 10) {
         adjustedX = 10;
       }
+      
+      // 如果菜单超出上边界，向下调整
       if (adjustedY < 10) {
         adjustedY = 10;
       }
@@ -97,15 +102,21 @@ export function ContextMenu({
   };
 
   // 文件操作菜单项
-  const fileMenuItems = [
-    { id: 'createFile', label: '新建文件', icon: FileText },
-    { id: 'createDirectory', label: '新建文件夹', icon: Folder },
-    { id: 'copy', label: '复制', icon: Copy },
-    { id: 'cut', label: '剪切', icon: Scissors },
-    ...(hasClipboard ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),
-    { id: 'rename', label: '重命名', icon: FileText },
-    { id: 'delete', label: '删除', icon: Trash2 },
-  ];
+  const fileMenuItems = isRootMenu
+    ? [
+        // 根目录右键菜单：只有新建文件和新建文件夹
+        { id: 'createFile', label: '新建文件', icon: FileText },
+        { id: 'createDirectory', label: '新建文件夹', icon: Folder },
+      ]
+    : [
+        { id: 'createFile', label: '新建文件', icon: FileText },
+        { id: 'createDirectory', label: '新建文件夹', icon: Folder },
+        { id: 'copy', label: '复制', icon: Copy },
+        { id: 'cut', label: '剪切', icon: Scissors },
+        ...(hasClipboard ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),
+        { id: 'rename', label: '重命名', icon: FileText },
+        { id: 'delete', label: '删除', icon: Trash2 },
+      ];
 
   // 编辑器块操作菜单项
   const blockMenuItems = [
