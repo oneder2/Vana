@@ -59,17 +59,35 @@ pub fn init_repository(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 提交所有更改
+/// 提交所有更改（全局提交）
+/// 
+/// 此函数在工作区根目录执行全局提交，等价于：
+/// `git add . && git commit -m "[message]"`
+/// 
+/// 会提交工作区中所有文件的变更，包括：
+/// - 新增的文件
+/// - 修改的文件
+/// - 删除的文件
+/// - 重命名的文件
 /// 
 /// # 参数
-/// - `repo_path`: 仓库路径
+/// - `repo_path`: 仓库路径（工作区根目录）
 /// - `message`: 提交消息
 /// 
 /// # 返回
 /// 成功时返回提交的 SHA
 /// 
 /// 基于 gix 0.66.0 API 实现
+/// 
+/// 注意：此函数会在 draft 分支上提交，而不是 main 分支
 pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
+    // 双层分支模型：确保 draft 分支存在并切换到 draft 分支
+    eprintln!("[GitOperation] commit_changes: 开始提交，使用 draft 分支");
+    ensure_draft_branch(repo_path)
+        .context("无法确保 draft 分支存在")?;
+    switch_to_branch(repo_path, "draft")
+        .context("无法切换到 draft 分支")?;
+    
     // 发现并打开仓库（纯 Rust 实现，不使用命令行）
     let repo = ThreadSafeRepository::discover(repo_path)
         .context("无法打开 Git 仓库")?;
@@ -234,11 +252,47 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
     let worktree_dir = worktree.base();
     eprintln!("[GitOperation] commit_changes: 工作树目录: {:?}", worktree_dir);
 
-    // 添加所有文件到索引（每次 commit 前必须执行）
-    eprintln!("[GitOperation] commit_changes: 开始添加所有文件到索引");
-    add_all_files_to_index(&mut index, worktree_dir, &repo)
-        .context("无法添加文件到索引")?;
-    eprintln!("[GitOperation] commit_changes: 文件添加完成，索引条目数: {}", index.entries().len());
+    // 先使用 git add -A 同步索引和工作树（处理删除、重命名等）
+    // 这确保索引与工作树完全同步，包括已删除的文件
+    eprintln!("[GitOperation] commit_changes: 使用 git add -A 同步索引和工作树");
+    let add_all_output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("add")
+        .arg("-A")  // 添加所有变更，包括删除和重命名
+        .output();
+
+    // 根据 git add -A 的结果决定如何处理索引
+    let mut index = match add_all_output {
+        Ok(out) if out.status.success() => {
+            eprintln!("[GitOperation] commit_changes: git add -A 成功，索引已同步");
+            // git add -A 成功后，重新读取索引以获取最新状态
+            // 因为 git add -A 已经更新了索引文件，我们需要重新加载索引
+            let updated_index_handle = worktree.index()
+                .context("无法重新读取索引文件")?;
+            eprintln!("[GitOperation] commit_changes: 重新读取索引后，索引条目数: {}", updated_index_handle.entries().len());
+            
+            // 索引已通过 git add -A 同步，克隆用于后续操作
+            (*updated_index_handle).clone()
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprintln!("[GitOperation] commit_changes: git add -A 失败: {}，回退到使用 gix 方式", stderr);
+            // git add -A 失败，回退到使用 gix 的方式
+            add_all_files_to_index(&mut index, worktree_dir, &repo)
+                .context("无法添加文件到索引")?;
+            eprintln!("[GitOperation] commit_changes: 文件添加完成，索引条目数: {}", index.entries().len());
+            index
+        }
+        Err(e) => {
+            eprintln!("[GitOperation] commit_changes: 无法执行 git add -A: {}，回退到使用 gix 方式", e);
+            // 无法执行 git add -A，回退到使用 gix 的方式
+            add_all_files_to_index(&mut index, worktree_dir, &repo)
+                .context("无法添加文件到索引")?;
+            eprintln!("[GitOperation] commit_changes: 文件添加完成，索引条目数: {}", index.entries().len());
+            index
+        }
+    };
 
     // 将索引写回
     index.write(gix::index::write::Options::default())
@@ -281,8 +335,12 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
         &parent_ids,
     )?;
 
-    // 更新 HEAD
-    update_head_ref(&repo, commit_id, message)?;
+    // 获取当前分支名（应该是 draft）
+    let current_branch = get_current_branch(repo_path)
+        .unwrap_or_else(|_| "draft".to_string()); // 如果获取失败，默认使用 draft
+    
+    // 更新 HEAD 到当前分支（draft）
+    update_head_ref(&repo, commit_id, message, &current_branch)?;
     
     // 提交完成后，使用 git 命令确保索引与 HEAD 一致
     // 这可以避免后续 rebase 时出现"索引中包含未提交的变更"的错误
@@ -295,6 +353,10 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
         .output();
     // 注意：read-tree 失败不影响提交成功，只是记录日志
     eprintln!("[GitOperation] commit_changes: 索引已同步到 HEAD");
+    
+    // 确保提交后仍然在 draft 分支上（双重保护）
+    eprintln!("[GitOperation] commit_changes: 确保仍在 draft 分支上");
+    let _ = switch_to_branch(repo_path, "draft");
 
     Ok(commit_id.to_hex().to_string())
 }
@@ -683,11 +745,18 @@ fn create_commit_object(
 /// 使用 refs::transaction API 来更新 HEAD 引用
 /// 
 /// 注意：由于 gix 0.66 的 API 复杂度较高，这里使用一个简化但可用的实现
-/// 实际的 HEAD 更新可能需要使用更复杂的 API，这里暂时实现一个基础版本
+/// 更新 HEAD 引用到指定分支
+/// 
+/// # 参数
+/// - `repo`: Git 仓库
+/// - `commit_id`: 提交 ID
+/// - `_message`: 提交消息（未使用）
+/// - `branch_name`: 分支名称（如 "draft" 或 "main"）
 fn update_head_ref(
     repo: &gix::Repository,
     commit_id: gix::hash::ObjectId,
     _message: &str,
+    branch_name: &str,
 ) -> Result<()> {
     // 获取 refs store（通过 Repository 的内部方法）
     // 根据 gix 0.66 的设计，可能需要通过不同的方式获取 refs store
@@ -696,16 +765,23 @@ fn update_head_ref(
     // 获取 .git 目录路径
     let git_dir = repo.git_dir();
     
-    // 创建或更新 refs/heads/main 引用
+    // 创建或更新 refs/heads/{branch_name} 引用
     let refs_dir = git_dir.join("refs/heads");
     std::fs::create_dir_all(&refs_dir)?;
     
-    let main_ref_path = refs_dir.join("main");
-    std::fs::write(&main_ref_path, commit_id.to_hex().to_string())?;
+    let branch_ref_path = refs_dir.join(branch_name);
+    std::fs::write(&branch_ref_path, commit_id.to_hex().to_string())
+        .with_context(|| format!("无法更新分支引用: {:?}", branch_ref_path))?;
     
-    // 更新 HEAD 指向 main 分支
+    eprintln!("[GitOperation] update_head_ref: 已更新分支 {} 的引用到 {}", branch_name, commit_id.to_hex());
+    
+    // 更新 HEAD 指向指定分支
     let head_path = git_dir.join("HEAD");
-    std::fs::write(&head_path, "ref: refs/heads/main\n")?;
+    let head_content = format!("ref: refs/heads/{}\n", branch_name);
+    std::fs::write(&head_path, head_content)
+        .context("无法更新 HEAD 引用")?;
+    
+    eprintln!("[GitOperation] update_head_ref: 已更新 HEAD 指向分支 {}", branch_name);
 
     Ok(())
 }
@@ -1455,9 +1531,166 @@ pub struct SyncResult {
 /// 
 /// 根据PRD要求，使用Rebase优先策略
 pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pat_token: Option<&str>) -> Result<SyncResult> {
-    // 先执行fetch
+    eprintln!("[GitOperation] sync_with_remote: 开始同步，使用双层分支模型");
+    
+    // ===== 阶段 1: Fetch 远程更新 =====
+    eprintln!("[GitOperation] sync_with_remote: 阶段 1 - Fetch 远程更新");
     fetch_from_remote(repo_path, remote_name, pat_token)
         .context("无法从远程获取更新")?;
+    
+    // ===== 阶段 2: 压缩阶段 - 将 draft 的多个 commit 压缩到 main =====
+    eprintln!("[GitOperation] sync_with_remote: 阶段 2 - 压缩阶段");
+    
+    // 确保 draft 分支存在
+    ensure_draft_branch(repo_path)?;
+    
+    // 切换到 main 分支
+    switch_to_branch(repo_path, branch_name)
+        .context("无法切换到 main 分支")?;
+    
+    // 检查 draft 是否有新 commit
+    let draft_count = get_draft_commits_count(repo_path)?;
+    eprintln!("[GitOperation] sync_with_remote: draft 分支相对于 main 有 {} 个 commit", draft_count);
+    
+    if draft_count > 0 {
+        // 在 squash 之前，先尝试 rebase draft 到最新的远程 main（处理多端冲突）
+        eprintln!("[GitOperation] sync_with_remote: 先 rebase draft 到最新的远程 main");
+        switch_to_branch(repo_path, "draft")?;
+        
+        let remote_ref = format!("{}/{}", remote_name, branch_name);
+        let draft_rebase_output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .arg("rebase")
+            .arg(&remote_ref)
+            .arg("--quiet")
+            .arg("--no-verify")
+            .output();
+        
+        match draft_rebase_output {
+            Ok(out) if !out.status.success() => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let has_conflict = stderr.contains("CONFLICT") 
+                    || stderr.contains("conflict") 
+                    || stderr.contains("merge conflicts");
+                
+                if has_conflict {
+                    eprintln!("[GitOperation] sync_with_remote: draft rebase 发生冲突，中止");
+                    let abort_output = std::process::Command::new("git")
+                        .arg("-C")
+                        .arg(repo_path)
+                        .arg("rebase")
+                        .arg("--abort")
+                        .output();
+                    
+                    if let Err(e) = abort_output {
+                        eprintln!("[GitOperation] sync_with_remote: 警告 - 无法中止 draft rebase: {}", e);
+                    }
+                    
+                    // 切换回 main 分支
+                    let _ = switch_to_branch(repo_path, branch_name);
+                    
+                    // 创建冲突分支
+                    let conflict_branch = handle_sync_conflict(repo_path, remote_name, branch_name)?;
+                    return Ok(SyncResult {
+                        success: true,
+                        has_conflict: true,
+                        conflict_branch: Some(conflict_branch),
+                    });
+                } else {
+                    eprintln!("[GitOperation] sync_with_remote: draft rebase 失败（非冲突）: {}", stderr);
+                    // 尝试中止 rebase 并继续
+                    let _ = std::process::Command::new("git")
+                        .arg("-C")
+                        .arg(repo_path)
+                        .arg("rebase")
+                        .arg("--abort")
+                        .output();
+                    // 继续尝试 squash，可能只是警告
+                }
+            }
+            _ => {
+                eprintln!("[GitOperation] sync_with_remote: draft rebase 成功或无需 rebase");
+            }
+        }
+        
+        // 切换回 main 分支进行 squash
+        switch_to_branch(repo_path, branch_name)?;
+        
+        // 执行 squash merge：将 draft 的所有 commit 压缩成一个
+        eprintln!("[GitOperation] sync_with_remote: 执行 squash merge draft 到 main");
+        let squash_output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .arg("merge")
+            .arg("--squash")
+            .arg("draft")
+            .output()
+            .context("无法执行 git merge --squash 命令")?;
+        
+        if !squash_output.status.success() {
+            let stderr = String::from_utf8_lossy(&squash_output.stderr);
+            eprintln!("[GitOperation] sync_with_remote: squash merge 失败: {}", stderr);
+            
+            // 尝试中止 merge
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .arg("merge")
+                .arg("--abort")
+                .output();
+            
+            anyhow::bail!("Squash merge 失败: {}", stderr);
+        }
+        
+        // 创建压缩后的 commit
+        eprintln!("[GitOperation] sync_with_remote: 创建压缩后的 commit");
+        let commit_message = format!("sync: {} commits compressed", draft_count);
+        let commit_output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .arg("commit")
+            .arg("-m")
+            .arg(&commit_message)
+            .arg("--no-verify") // 跳过 hooks
+            .output()
+            .context("无法创建压缩 commit")?;
+        
+        if !commit_output.status.success() {
+            let stderr = String::from_utf8_lossy(&commit_output.stderr);
+            eprintln!("[GitOperation] sync_with_remote: 创建压缩 commit 失败: {}", stderr);
+            
+            // 尝试重置到 squash 前的状态（squash 后索引有变更但未提交）
+            let reset_output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .arg("reset")
+                .arg("--hard")
+                .arg("HEAD")
+                .output();
+            
+            if let Err(e) = reset_output {
+                eprintln!("[GitOperation] sync_with_remote: 警告 - 无法重置到 squash 前状态: {}", e);
+            }
+            
+            // 尝试中止 merge（如果还在进行中）
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .arg("merge")
+                .arg("--abort")
+                .output();
+            
+            anyhow::bail!("创建压缩 commit 失败: {}", stderr);
+        }
+        
+        eprintln!("[GitOperation] sync_with_remote: 压缩阶段完成，已创建压缩 commit");
+    } else {
+        eprintln!("[GitOperation] sync_with_remote: draft 没有新 commit，跳过压缩阶段");
+    }
+    
+    // ===== 阶段 3: 整合阶段 - Rebase + Push =====
+    eprintln!("[GitOperation] sync_with_remote: 阶段 3 - 整合阶段");
     
     // 打开仓库
     let repo = ThreadSafeRepository::discover(repo_path)
@@ -1471,6 +1704,21 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
             // 没有本地提交，直接push
             push_to_remote(repo_path, remote_name, branch_name, pat_token)
                 .context("无法推送到远程")?;
+            
+            // 即使没有本地提交，也要执行阶段4（重置 draft 分支）
+            // 使用 goto 风格的跳转，避免代码重复
+            // 实际上，我们可以在函数末尾统一处理阶段4
+            // 这里先执行阶段4，然后返回
+            eprintln!("[GitOperation] sync_with_remote: 阶段 4 - 重置 draft 分支到 main（早期返回路径）");
+            let _ = switch_to_branch(repo_path, "draft");
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .arg("reset")
+                .arg("--hard")
+                .arg(branch_name)
+                .output();
+            
             return Ok(SyncResult {
                 success: true,
                 has_conflict: false,
@@ -1491,6 +1739,18 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
             // 远程分支不存在，直接push
             push_to_remote(repo_path, remote_name, branch_name, pat_token)
                 .context("无法推送到远程")?;
+            
+            // 即使远程分支不存在，也要执行阶段4（重置 draft 分支）
+            eprintln!("[GitOperation] sync_with_remote: 阶段 4 - 重置 draft 分支到 main（早期返回路径2）");
+            let _ = switch_to_branch(repo_path, "draft");
+            let _ = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .arg("reset")
+                .arg("--hard")
+                .arg(branch_name)
+                .output();
+            
             return Ok(SyncResult {
                 success: true,
                 has_conflict: false,
@@ -1505,6 +1765,41 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
     
     if needs_rebase {
         eprintln!("[GitOperation] sync_with_remote: 需要 rebase，开始执行");
+        
+        // 在 rebase 之前，确保工作树干净（没有未暂存的变更）
+        // 检查工作树状态，如果有未提交的变更，先暂存
+        eprintln!("[GitOperation] sync_with_remote: 检查工作树状态");
+        let worktree_status_output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .arg("status")
+            .arg("--porcelain")
+            .output();
+        
+        if let Ok(status_out) = worktree_status_output {
+            if status_out.status.success() {
+                let status_str = String::from_utf8_lossy(&status_out.stdout);
+                if !status_str.trim().is_empty() {
+                    eprintln!("[GitOperation] sync_with_remote: 检测到未提交的变更，先执行 git add -A 暂存所有变更");
+                    // 使用 git add -A 暂存所有变更（包括删除）
+                    let add_output = std::process::Command::new("git")
+                        .arg("-C")
+                        .arg(repo_path)
+                        .arg("add")
+                        .arg("-A")
+                        .output();
+                    
+                    if let Ok(add_out) = add_output {
+                        if add_out.status.success() {
+                            eprintln!("[GitOperation] sync_with_remote: git add -A 成功，所有变更已暂存");
+                        } else {
+                            let stderr = String::from_utf8_lossy(&add_out.stderr);
+                            eprintln!("[GitOperation] sync_with_remote: git add -A 失败: {}", stderr);
+                        }
+                    }
+                }
+            }
+        }
         
         // 在 rebase 之前，确保索引与 HEAD 一致
         // 如果索引中有未提交的变更，先重置索引到 HEAD
@@ -1587,6 +1882,36 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
     push_to_remote(repo_path, remote_name, branch_name, pat_token)
         .context("无法推送到远程")?;
     
+    // ===== 阶段 4: 同步成功后，重置 draft 分支到 main =====
+    // 无论 draft_count 是否为 0，都确保 draft 分支指向 main
+    // 这样可以确保 draft 分支的状态与 main 一致，为下次 commit 做准备
+    eprintln!("[GitOperation] sync_with_remote: 阶段 4 - 重置 draft 分支到 main");
+    switch_to_branch(repo_path, "draft")
+        .context("无法切换到 draft 分支")?;
+    
+    let reset_output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("reset")
+        .arg("--hard")
+        .arg(branch_name)
+        .output();
+    
+    match reset_output {
+        Ok(out) if out.status.success() => {
+            eprintln!("[GitOperation] sync_with_remote: draft 分支已重置到 main");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprintln!("[GitOperation] sync_with_remote: 警告 - 重置 draft 分支失败: {}", stderr);
+            // 重置失败不影响同步成功，只记录警告
+        }
+        Err(e) => {
+            eprintln!("[GitOperation] sync_with_remote: 警告 - 重置 draft 分支出错: {}", e);
+            // 重置失败不影响同步成功，只记录警告
+        }
+    }
+    
     Ok(SyncResult {
         success: true,
         has_conflict: false,
@@ -1667,4 +1992,173 @@ pub fn handle_sync_conflict(repo_path: &Path, remote_name: &str, branch_name: &s
     
     eprintln!("[GitOperation] handle_sync_conflict: 冲突处理完成，冲突分支: {}", conflict_branch_name);
     Ok(conflict_branch_name)
+}
+
+// ============================================================================
+// 双层分支模型：Draft + Main 分支管理
+// ============================================================================
+
+/// 确保 draft 分支存在，不存在则从 main 创建
+/// 
+/// # 参数
+/// - `repo_path`: 仓库路径
+/// 
+/// # 返回
+/// 成功时返回 Ok(())
+/// 
+/// 如果 main 分支不存在，则从当前 HEAD 创建 draft 分支
+pub fn ensure_draft_branch(repo_path: &Path) -> Result<()> {
+    eprintln!("[GitOperation] ensure_draft_branch: 检查 draft 分支是否存在");
+    
+    // 检查 draft 分支是否存在
+    let draft_ref = repo_path.join(".git/refs/heads/draft");
+    if draft_ref.exists() {
+        eprintln!("[GitOperation] ensure_draft_branch: draft 分支已存在");
+        return Ok(());
+    }
+    
+    eprintln!("[GitOperation] ensure_draft_branch: draft 分支不存在，开始创建");
+    
+    // 尝试从 main 分支创建 draft 分支
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("draft")
+        .arg("main")
+        .output();
+    
+    match output {
+        Ok(out) if out.status.success() => {
+            eprintln!("[GitOperation] ensure_draft_branch: 从 main 分支创建 draft 分支成功");
+            Ok(())
+        }
+        _ => {
+            // main 分支不存在，尝试从当前 HEAD 创建
+            eprintln!("[GitOperation] ensure_draft_branch: main 分支不存在，尝试从当前 HEAD 创建 draft 分支");
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .arg("branch")
+                .arg("draft")
+                .output()
+                .context("无法创建 draft 分支")?;
+            
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                eprintln!("[GitOperation] ensure_draft_branch: 创建 draft 分支失败: {}", stderr);
+                anyhow::bail!("无法创建 draft 分支: {}", stderr);
+            }
+            
+            eprintln!("[GitOperation] ensure_draft_branch: 从当前 HEAD 创建 draft 分支成功");
+            Ok(())
+        }
+    }
+}
+
+/// 切换到指定分支
+/// 
+/// # 参数
+/// - `repo_path`: 仓库路径
+/// - `branch`: 分支名称
+/// 
+/// # 返回
+/// 成功时返回 Ok(())
+/// 
+/// 使用 `git checkout -B` 确保分支存在（不存在则创建）
+pub fn switch_to_branch(repo_path: &Path, branch: &str) -> Result<()> {
+    eprintln!("[GitOperation] switch_to_branch: 切换到分支: {}", branch);
+    
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("checkout")
+        .arg("-B") // 如果不存在则创建，存在则切换
+        .arg(branch)
+        .output()
+        .context("无法执行 git checkout 命令")?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[GitOperation] switch_to_branch: 切换分支失败: {}", stderr);
+        anyhow::bail!("无法切换到分支 {}: {}", branch, stderr);
+    }
+    
+    eprintln!("[GitOperation] switch_to_branch: 成功切换到分支: {}", branch);
+    Ok(())
+}
+
+/// 获取当前分支名
+/// 
+/// # 参数
+/// - `repo_path`: 仓库路径
+/// 
+/// # 返回
+/// 当前分支名，如果无法获取则返回错误
+pub fn get_current_branch(repo_path: &Path) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .output()
+        .context("无法执行 git rev-parse 命令")?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("无法获取当前分支: {}", stderr);
+    }
+    
+    let branch_name = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_string();
+    
+    eprintln!("[GitOperation] get_current_branch: 当前分支: {}", branch_name);
+    Ok(branch_name)
+}
+
+/// 获取 draft 分支相对于 main 分支的 commit 数量
+/// 
+/// # 参数
+/// - `repo_path`: 仓库路径
+/// 
+/// # 返回
+/// Draft 分支相对于 main 的 commit 数量
+/// 
+/// 如果 draft 或 main 分支不存在，返回 0
+pub fn get_draft_commits_count(repo_path: &Path) -> Result<usize> {
+    // 检查 draft 和 main 分支是否存在
+    let draft_ref = repo_path.join(".git/refs/heads/draft");
+    let main_ref = repo_path.join(".git/refs/heads/main");
+    
+    if !draft_ref.exists() || !main_ref.exists() {
+        eprintln!("[GitOperation] get_draft_commits_count: draft 或 main 分支不存在，返回 0");
+        return Ok(0);
+    }
+    
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("rev-list")
+        .arg("--count")
+        .arg("main..draft")
+        .output();
+    
+    match output {
+        Ok(out) if out.status.success() => {
+            let count_str = String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .to_string();
+            let count = count_str.parse::<usize>()
+                .unwrap_or(0);
+            eprintln!("[GitOperation] get_draft_commits_count: draft 相对于 main 有 {} 个 commit", count);
+            Ok(count)
+        }
+        _ => {
+            // 如果命令失败（可能是分支不存在或没有差异），返回 0
+            eprintln!("[GitOperation] get_draft_commits_count: 无法计算 commit 数量，返回 0");
+            Ok(0)
+        }
+    }
 }

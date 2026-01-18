@@ -140,32 +140,58 @@ function MainApp() {
   // 清仓同步：应用关闭前执行队列中的 Push 任务（根据 Sync Protocol.md）
   useEffect(() => {
     const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
+      console.log('[页面关闭] ===== page.tsx beforeunload 事件触发 =====');
+      console.log('[页面关闭] 时间:', new Date().toISOString());
+      console.log('[页面关闭] workspacePath:', workspacePath);
+      
       const queueSize = getQueueSize();
+      console.log('[页面关闭] 队列大小:', queueSize);
+      
       if (queueSize > 0 && workspacePath) {
-        console.log('[清仓同步] 检测到应用即将关闭，队列中有', queueSize, '个待处理任务');
+        console.log('[页面关闭] [队列处理] 检测到应用即将关闭，队列中有', queueSize, '个待处理任务');
+        console.log('[页面关闭] [队列处理] 注意：beforeunload 中的异步操作可能被浏览器终止');
         
         // 注意：beforeunload 中的异步操作可能被浏览器终止
         // 使用 sendBeacon 或同步方式尝试最后一次同步
         // 这里我们尝试快速执行，但不阻塞关闭
         try {
+          console.log('[页面关闭] [队列处理] 尝试获取远程配置...');
           const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
           const patToken = await getPatToken();
+          
+          console.log('[页面关闭] [队列处理] 远程配置状态 - URL:', remoteUrl ? '已配置' : '未配置', 'PAT:', patToken ? '已配置' : '未配置');
           
           if (remoteUrl && patToken) {
             // 使用 navigator.sendBeacon 发送同步请求（如果支持）
             // 或者尝试快速同步（但可能被中断）
-            console.log('[清仓同步] 尝试执行最后的同步...');
+            console.log('[页面关闭] [队列处理] ⚠️ 由于 beforeunload 的限制，队列任务无法在此处处理');
+            console.log('[页面关闭] [队列处理] ⚠️ 队列任务将在下次应用启动时通过网络恢复机制重试');
             // 由于 beforeunload 的限制，这里只记录日志
             // 实际的清仓同步应该在 Tauri 层面处理
+          } else {
+            console.log('[页面关闭] [队列处理] ⏭️ 跳过队列处理：未配置远程仓库或 PAT');
           }
         } catch (error) {
-          console.error('[清仓同步] 失败:', error);
+          console.error('[页面关闭] [队列处理] ❌ 队列处理失败:', error);
+        }
+      } else {
+        if (queueSize === 0) {
+          console.log('[页面关闭] 队列为空，无需处理');
+        }
+        if (!workspacePath) {
+          console.log('[页面关闭] workspacePath 为空，跳过队列处理');
         }
       }
+      
+      console.log('[页面关闭] ===== page.tsx beforeunload 处理完成 =====');
     };
     
+    console.log('[页面关闭] 注册 beforeunload 事件监听器');
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      console.log('[页面关闭] 卸载 beforeunload 事件监听器');
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
   }, [workspacePath]);
 
   // 加载文件
@@ -373,15 +399,13 @@ function MainApp() {
                     return;
                   }
                   
-                  const config = await readWorkspaceConfig();
-                  // 调试按钮：强制以工作区为范围执行提交（符合 Sync Protocol 的“全局快照”语义）
-                  // 注意：不要使用当前文档目录作为 commit 范围，否则会造成“只提交当前文档”的错觉
+                  // 全局提交：所有 commit 都在工作区根目录执行，等价于 `git add . && git commit -m "[message]"`
+                  // 固定使用 workspacePath 作为 repo path，确保提交所有文件的变更
                   const commitPath = workspacePath;
                   
-                  console.log('[Debug Commit] 提交路径:', commitPath);
+                  console.log('[Debug Commit] 提交路径（工作区根目录）:', commitPath);
                   console.log('[Debug Commit] 当前文件路径:', currentFilePath);
                   console.log('[Debug Commit] 工作区路径:', workspacePath);
-                  console.log('[Debug Commit] Commit 范围:', config.commit_scope);
                   
                   // 强制触发提交（不检查 hasUnsavedChanges）
                   await commitChanges(commitPath, 'manual_debug_commit');

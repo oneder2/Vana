@@ -18,7 +18,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import { TextSelection } from 'prosemirror-state';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
-import { writeFile, commitChanges, readWorkspaceConfig, syncWithRemote, getPatToken, getRemoteUrl, fetchFromRemote, getRepositoryStatus } from '@/lib/api';
+import { writeFile, commitChanges, readWorkspaceConfig, syncWithRemote, getPatToken, getRemoteUrl, fetchFromRemote, getRepositoryStatus, getCurrentBranch, switchToBranch } from '@/lib/api';
 import { addFailedPushTask } from '@/lib/syncQueue';
 import { addBlockUUIDs } from '@/lib/smart-slice';
 import { handleEditorShortcut } from '@/lib/editor-shortcuts';
@@ -56,6 +56,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   const isInitialLoadRef = useRef(true);
   const editorRef = useRef<TiptapEditor | null>(null);
   const triggerTier2CommitRef = useRef<(() => Promise<void>) | null>(null);
+  const syncInProgressRef = useRef(false); // 原子性保护：同步进行中标志
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [showBlockSelector, setShowBlockSelector] = useState(false);
   const [blockSelectorPos, setBlockSelectorPos] = useState<{ x: number; y: number } | null>(null);
@@ -660,11 +661,19 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     console.log('[triggerTier2Commit] 被调用', { 
       workspacePath, 
       hasUnsavedChanges: hasUnsavedChangesRef.current,
-      filePath 
+      filePath,
+      syncInProgress: syncInProgressRef.current
     });
     
     if (!workspacePath) {
       console.log('[triggerTier2Commit] 提前返回：workspacePath 为空');
+      return;
+    }
+
+    // 原子性保护：如果同步正在进行中，延迟 commit
+    if (syncInProgressRef.current) {
+      console.log('[triggerTier2Commit] 同步进行中，延迟 2 秒后重试 commit');
+      setTimeout(() => triggerTier2Commit(), 2000);
       return;
     }
 
@@ -673,12 +682,26 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       // 先确保当前文档最新内容已落盘（否则 Git 可能拿不到最新文件）
       await flushPendingTier1Save('tier2_commit');
 
-      // 关键：按用户诉求，commit 必须覆盖「工作区全局」，而不是仅当前文档目录
-      // 因此这里固定使用 workspacePath 作为 repo path
-      // 注意：readWorkspaceConfig().commit_scope 仍保留给未来扩展，但不在这里生效
+      // 全局提交：所有 commit 都在工作区根目录执行，等价于 `git add . && git commit -m "[message]"`
+      // 固定使用 workspacePath 作为 repo path，确保提交所有文件的变更
       const commitPath = workspacePath;
       
       console.log('[triggerTier2Commit] 提交路径:', commitPath);
+
+      // 分支检查和自动纠错：确保当前在 draft 分支
+      try {
+        const currentBranch = await getCurrentBranch(commitPath);
+        console.log('[triggerTier2Commit] 当前分支:', currentBranch);
+        
+        if (currentBranch !== 'draft') {
+          console.warn('[triggerTier2Commit] 检测到当前分支不是 draft，自动切换到 draft 分支');
+          await switchToBranch(commitPath, 'draft');
+          console.log('[triggerTier2Commit] 已切换到 draft 分支');
+        }
+      } catch (branchError) {
+        console.error('[triggerTier2Commit] 分支检查失败，继续执行 commit（commit_changes 会处理分支切换）:', branchError);
+        // 分支检查失败不影响 commit，因为 commit_changes 内部也会确保分支正确
+      }
 
       // 不再只依赖 hasUnsavedChangesRef（它只反映当前文档落盘状态）
       // 以 git status 为准：确保“全局变更（创建/删除/移动/其它文件更新）”也能触发 commit
@@ -692,66 +715,12 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       }
 
       await commitChanges(commitPath, 'auto_snapshot');
-      console.log('Tier 2: Git 提交成功');
+      console.log('Tier 2: Git 提交成功（在 draft 分支上）');
       hasUnsavedChangesRef.current = false;
       
-      // 自动同步：检查是否配置了远程仓库和PAT
-      try {
-        const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
-        const patToken = await getPatToken();
-        
-        // 如果配置了远程仓库和PAT，执行自动同步
-        if (remoteUrl && patToken) {
-          console.log('Tier 2: 开始自动同步...');
-          try {
-            const syncResult = await syncWithRemote(workspacePath, 'origin', 'main', patToken);
-            
-            if (syncResult.success) {
-              if (syncResult.has_conflict) {
-                console.warn('Tier 2: 同步检测到冲突，已创建冲突分支:', syncResult.conflict_branch);
-                // 可以在这里显示用户通知
-              } else {
-                console.log('Tier 2: 自动同步成功');
-              }
-            } else {
-              console.error('Tier 2: 自动同步失败');
-              // 同步失败，可能是网络问题，加入队列
-              addFailedPushTask({
-                workspacePath,
-                remoteName: 'origin',
-                branchName: 'main',
-                patToken,
-                timestamp: Date.now(),
-              });
-            }
-          } catch (syncError: any) {
-            // 检查是否是网络错误
-            const isNetworkError = 
-              !navigator.onLine ||
-              syncError?.message?.includes('网络') ||
-              syncError?.message?.includes('network') ||
-              syncError?.message?.includes('fetch') ||
-              syncError?.message?.includes('timeout') ||
-              syncError?.message?.includes('offline');
-            
-            if (isNetworkError) {
-              console.warn('Tier 2: 网络错误，将任务加入队列:', syncError);
-              addFailedPushTask({
-                workspacePath,
-                remoteName: 'origin',
-                branchName: 'main',
-                patToken,
-                timestamp: Date.now(),
-              });
-            } else {
-              console.error('Tier 2: 自动同步出错（非网络错误）:', syncError);
-            }
-          }
-        }
-      } catch (syncError) {
-        // 同步失败不影响提交，只记录错误
-        console.error('Tier 2: 自动同步出错:', syncError);
-      }
+      // 双层分支模型：不再每次 commit 后都自动同步
+      // Commit 会在 draft 分支上累积，只在手动同步或特定场景（应用关闭前）才同步
+      // 这样可以减少 push 频率，提高性能
     } catch (error) {
       console.error('Tier 2: Git 提交失败:', error);
     }
@@ -809,8 +778,112 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     };
 
     const handleBeforeUnload = () => {
-        console.log('[Tier 2] beforeunload 触发：窗口即将关闭');
-        triggerTier2Commit();
+        console.log('[窗口关闭] ===== beforeunload 事件触发 =====');
+        console.log('[窗口关闭] 时间:', new Date().toISOString());
+        console.log('[窗口关闭] workspacePath:', workspacePath);
+        console.log('[窗口关闭] syncInProgress:', syncInProgressRef.current);
+        console.log('[窗口关闭] hasUnsavedChanges:', hasUnsavedChangesRef.current);
+        
+        // beforeunload 事件中不能执行异步操作，只能同步执行
+        // 先触发 commit（如果有未保存更改）
+        if (hasUnsavedChangesRef.current) {
+          console.log('[窗口关闭] 检测到未保存更改，触发 commit');
+          triggerTier2Commit().then(() => {
+            console.log('[窗口关闭] commit 完成');
+          }).catch(err => {
+            console.error('[窗口关闭] commit 失败:', err);
+          });
+        } else {
+          console.log('[窗口关闭] 无未保存更改，跳过 commit');
+        }
+        
+        // 清仓同步：将 draft 分支的所有 commit 压缩并推送到远程
+        // 注意：beforeunload 中的异步操作可能被浏览器终止
+        // 使用非阻塞方式触发同步（不等待完成）
+        if (!workspacePath) {
+          console.log('[窗口关闭] workspacePath 为空，跳过清仓同步');
+          return;
+        }
+        
+        if (syncInProgressRef.current) {
+          console.log('[窗口关闭] 同步正在进行中，跳过本次清仓同步');
+          return;
+        }
+        
+        console.log('[窗口关闭] 开始准备清仓同步（异步执行）');
+        
+        // 使用 Promise 但不 await，避免阻塞页面关闭
+        (async () => {
+          const syncStartTime = Date.now();
+          console.log('[窗口关闭] [清仓同步] 异步函数开始执行，时间:', new Date().toISOString());
+          
+          try {
+            console.log('[窗口关闭] [清仓同步] 步骤 1: 获取远程仓库 URL');
+            const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+            console.log('[窗口关闭] [清仓同步] 远程 URL:', remoteUrl ? '已配置' : '未配置');
+            
+            console.log('[窗口关闭] [清仓同步] 步骤 2: 获取 PAT Token');
+            const patToken = await getPatToken();
+            console.log('[窗口关闭] [清仓同步] PAT Token:', patToken ? '已配置' : '未配置');
+            
+            if (remoteUrl && patToken) {
+              console.log('[窗口关闭] [清仓同步] 步骤 3: 开始执行同步操作');
+              syncInProgressRef.current = true;
+              
+              try {
+                console.log('[窗口关闭] [清仓同步] 调用 syncWithRemote...');
+                const syncResult = await syncWithRemote(workspacePath, 'origin', 'main', patToken);
+                const syncDuration = Date.now() - syncStartTime;
+                
+                if (syncResult.success) {
+                  console.log('[窗口关闭] [清仓同步] ✅ 同步成功，耗时:', syncDuration, 'ms');
+                  if (syncResult.has_conflict) {
+                    console.warn('[窗口关闭] [清仓同步] ⚠️ 检测到冲突，冲突分支:', syncResult.conflict_branch);
+                  }
+                } else {
+                  console.warn('[窗口关闭] [清仓同步] ❌ 同步失败，耗时:', syncDuration, 'ms');
+                  console.warn('[窗口关闭] [清仓同步] 将任务加入重试队列');
+                  addFailedPushTask({
+                    workspacePath,
+                    remoteName: 'origin',
+                    branchName: 'main',
+                    patToken,
+                    timestamp: Date.now(),
+                  });
+                }
+              } catch (error: any) {
+                const syncDuration = Date.now() - syncStartTime;
+                console.error('[窗口关闭] [清仓同步] ❌ 同步操作异常，耗时:', syncDuration, 'ms');
+                console.error('[窗口关闭] [清仓同步] 错误详情:', error);
+                console.error('[窗口关闭] [清仓同步] 错误消息:', error?.message || String(error));
+                console.warn('[窗口关闭] [清仓同步] 将任务加入重试队列');
+                addFailedPushTask({
+                  workspacePath,
+                  remoteName: 'origin',
+                  branchName: 'main',
+                  patToken,
+                  timestamp: Date.now(),
+                });
+              } finally {
+                syncInProgressRef.current = false;
+                console.log('[窗口关闭] [清仓同步] 同步操作完成，已释放同步锁');
+              }
+            } else {
+              console.log('[窗口关闭] [清仓同步] ⏭️ 跳过同步：未配置远程仓库或 PAT');
+              console.log('[窗口关闭] [清仓同步] remoteUrl:', remoteUrl ? '✓' : '✗', 'patToken:', patToken ? '✓' : '✗');
+            }
+          } catch (error: any) {
+            const syncDuration = Date.now() - syncStartTime;
+            console.error('[窗口关闭] [清仓同步] ❌ 准备阶段失败，耗时:', syncDuration, 'ms');
+            console.error('[窗口关闭] [清仓同步] 错误:', error);
+            console.error('[窗口关闭] [清仓同步] 错误消息:', error?.message || String(error));
+          }
+          
+          const totalDuration = Date.now() - syncStartTime;
+          console.log('[窗口关闭] [清仓同步] 异步函数执行完毕，总耗时:', totalDuration, 'ms');
+        })();
+        
+        console.log('[窗口关闭] ===== beforeunload 处理函数返回 =====');
     };
 
     const configPromise = readWorkspaceConfig();

@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '@/components/ThemeProvider';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
-import { Settings, Save, Trash2, RefreshCw, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { Settings, Save, Trash2, RefreshCw, CheckCircle, XCircle, Loader, Camera } from 'lucide-react';
 import Link from 'next/link';
 import {
   storePatToken,
@@ -20,6 +20,9 @@ import {
   syncWithRemote,
   getWorkspacePath,
 } from '@/lib/api';
+import { QRCodeDisplay } from '@/components/QRCodeDisplay';
+import { QRCodeScanner } from '@/components/QRCodeScanner';
+import { isMobile } from '@/lib/platform';
 
 /**
  * 设置页面组件
@@ -33,6 +36,10 @@ export default function SettingsPage() {
   const [patConfigured, setPatConfigured] = useState(false);
   const [patSaving, setPatSaving] = useState(false);
   const [patMessage, setPatMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [displayPatToken, setDisplayPatToken] = useState<string>(''); // 用于二维码显示的 PAT token
+  const [showQRCode, setShowQRCode] = useState(false); // 是否显示二维码
+  const [showScanner, setShowScanner] = useState(false); // 是否显示扫描器
+  const [isMobileDevice, setIsMobileDevice] = useState(false); // 是否为移动设备
   
   // 远程仓库相关状态
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
@@ -51,9 +58,21 @@ export default function SettingsPage() {
   useEffect(() => {
     const init = async () => {
       try {
+        // 检查是否为移动设备
+        const mobile = await isMobile();
+        setIsMobileDevice(mobile);
+        
         // 检查PAT是否已配置
         const hasPat = await hasPatToken();
         setPatConfigured(hasPat);
+        
+        // 如果已配置 PAT，获取它用于生成二维码
+        if (hasPat) {
+          const token = await getPatToken();
+          if (token) {
+            setDisplayPatToken(token);
+          }
+        }
         
         // 获取工作区路径
         const workspace = await getWorkspacePath();
@@ -83,8 +102,10 @@ export default function SettingsPage() {
     try {
       await storePatToken(patToken);
       setPatConfigured(true);
+      setDisplayPatToken(patToken); // 保存用于二维码显示
       setPatToken(''); // 清空输入框
       setPatMessage({ type: 'success', text: 'PAT Token 已保存' });
+      setShowQRCode(true); // 自动显示二维码
     } catch (error) {
       setPatMessage({ type: 'error', text: `保存失败: ${error}` });
     } finally {
@@ -101,12 +122,53 @@ export default function SettingsPage() {
       await removePatToken();
       setPatConfigured(false);
       setPatToken('');
+      setDisplayPatToken(''); // 清空显示用的 PAT
+      setShowQRCode(false); // 隐藏二维码
       setPatMessage({ type: 'success', text: 'PAT Token 已清除' });
     } catch (error) {
       setPatMessage({ type: 'error', text: `清除失败: ${error}` });
     } finally {
       setPatSaving(false);
     }
+  };
+  
+  // 生成二维码：从已保存的 PAT 生成二维码
+  const handleGenerateQRCode = async () => {
+    if (!patConfigured) {
+      setPatMessage({ type: 'error', text: '请先配置 PAT Token' });
+      return;
+    }
+    
+    try {
+      const token = await getPatToken();
+      if (token) {
+        setDisplayPatToken(token);
+        setShowQRCode(true);
+      } else {
+        setPatMessage({ type: 'error', text: '无法获取 PAT Token' });
+      }
+    } catch (error) {
+      setPatMessage({ type: 'error', text: `获取 PAT Token 失败: ${error}` });
+    }
+  };
+  
+  // 处理二维码扫描成功
+  const handleScanSuccess = async (patToken: string) => {
+    try {
+      // 自动保存扫描到的 PAT token
+      await storePatToken(patToken);
+      setPatConfigured(true);
+      setDisplayPatToken(patToken);
+      setShowScanner(false);
+      setPatMessage({ type: 'success', text: 'PAT Token 已通过扫描导入' });
+    } catch (error) {
+      setPatMessage({ type: 'error', text: `保存 PAT Token 失败: ${error}` });
+    }
+  };
+  
+  // 处理扫描错误
+  const handleScanError = (error: string) => {
+    setPatMessage({ type: 'error', text: `扫描失败: ${error}` });
   };
   
   // 配置远程仓库
@@ -306,26 +368,114 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <div>
-                  <label
-                    className="block text-sm mb-2"
-                    style={{ color: getThemeAccentColor(theme) }}
-                  >
-                    二维码验证
-                  </label>
-                  <div
-                    className="w-64 h-64 border-2 border-dashed flex items-center justify-center rounded"
-                    style={{
-                      borderColor: getThemeBorderColor(theme),
-                      backgroundColor: getThemeBgColor(theme),
-                    }}
-                  >
-                    <p className="text-sm opacity-40 text-center px-4">
-                      二维码功能暂未实现
-                      <br />
-                      <span className="text-xs">用于手机端验证（后续版本）</span>
-                    </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <label
+                      className="block text-sm"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      二维码传输
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {isMobileDevice && (
+                        <button
+                          onClick={() => setShowScanner(true)}
+                          className="text-xs px-2 py-1 rounded border hover:opacity-80 transition-opacity"
+                          style={{
+                            backgroundColor: getThemeBgColor(theme),
+                            borderColor: getThemeBorderColor(theme),
+                            color: getThemeAccentColor(theme),
+                          }}
+                        >
+                          扫描二维码
+                        </button>
+                      )}
+                      {patConfigured && !isMobileDevice && (
+                        <button
+                          onClick={handleGenerateQRCode}
+                          className="text-xs px-2 py-1 rounded border hover:opacity-80 transition-opacity"
+                          style={{
+                            backgroundColor: getThemeBgColor(theme),
+                            borderColor: getThemeBorderColor(theme),
+                            color: getThemeAccentColor(theme),
+                          }}
+                        >
+                          {showQRCode ? '刷新二维码' : '生成二维码'}
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  {isMobileDevice ? (
+                    // 移动端：显示扫描提示或扫描结果
+                    <div
+                      className="w-full border-2 border-dashed flex items-center justify-center rounded"
+                      style={{
+                        borderColor: getThemeBorderColor(theme),
+                        backgroundColor: getThemeBgColor(theme),
+                        minHeight: '256px',
+                      }}
+                    >
+                      <div className="text-center px-4 py-8">
+                        <p className="text-sm opacity-80 mb-4">
+                          {patConfigured
+                            ? 'PAT Token 已配置'
+                            : '点击"扫描二维码"按钮导入 PAT Token'}
+                        </p>
+                        {!patConfigured && (
+                          <button
+                            onClick={() => setShowScanner(true)}
+                            className="px-4 py-2 rounded border flex items-center gap-2 mx-auto hover:opacity-80 transition-opacity"
+                            style={{
+                              backgroundColor: getThemeSurfaceColor(theme),
+                              borderColor: getThemeBorderColor(theme),
+                              color: getThemeAccentColor(theme),
+                            }}
+                          >
+                            <Camera size={16} />
+                            <span>扫描二维码</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    // 桌面端：显示二维码
+                    <>
+                      {showQRCode && patConfigured ? (
+                        <QRCodeDisplay patToken={displayPatToken} size={256} />
+                      ) : (
+                        <div
+                          className="w-64 h-64 border-2 border-dashed flex items-center justify-center rounded"
+                          style={{
+                            borderColor: getThemeBorderColor(theme),
+                            backgroundColor: getThemeBgColor(theme),
+                          }}
+                        >
+                          <p className="text-sm opacity-40 text-center px-4">
+                            {patConfigured
+                              ? '点击"生成二维码"按钮显示二维码'
+                              : '请先配置 PAT Token 后生成二维码'}
+                            <br />
+                            <span className="text-xs">用于手机端扫描导入 PAT</span>
+                          </p>
+                        </div>
+                      )}
+                      {patConfigured && showQRCode && (
+                        <p className="text-xs opacity-60 mt-2">
+                          二维码包含当前 PAT Token，请妥善保管，避免泄露
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
+                
+                {/* 二维码扫描器（移动端） */}
+                {isMobileDevice && (
+                  <QRCodeScanner
+                    isOpen={showScanner}
+                    onClose={() => setShowScanner(false)}
+                    onScanSuccess={handleScanSuccess}
+                    onScanError={handleScanError}
+                  />
+                )}
               </div>
             </div>
           </section>

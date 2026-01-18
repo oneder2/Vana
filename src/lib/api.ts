@@ -84,8 +84,14 @@ export async function initRepository(path: string): Promise<void> {
 }
 
 /**
- * 提交更改
- * @param path 仓库路径
+ * 提交更改（全局提交）
+ * 
+ * 在工作区根目录执行全局提交，等价于：
+ * `git add . && git commit -m "[message]"`
+ * 
+ * 会提交工作区中所有文件的变更，包括新增、修改、删除和重命名。
+ * 
+ * @param path 仓库路径（工作区根目录）
  * @param message 提交消息
  * @returns 提交的 SHA
  */
@@ -232,8 +238,42 @@ export async function renameFileOrDirectory(
   newPath: string
 ): Promise<void> {
   return await invoke<void>('rename_file_or_directory_command', {
-    old_path: oldPath,
-    new_path: newPath,
+    oldPath: oldPath,
+    newPath: newPath,
+  });
+}
+
+/**
+ * 重命名文件或目录并同步到 Git（原子操作）
+ * 
+ * 此函数会：
+ * 1. 执行文件重命名
+ * 2. 执行 git add -A（自动删除旧索引、添加新索引）
+ * 3. 执行 git commit
+ * 4. 执行 git push（如果配置了远程仓库和 PAT）
+ * 
+ * @param workspacePath 工作区路径
+ * @param oldPath 旧路径
+ * @param newPath 新路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param branchName 分支名称（默认 "main"）
+ * @param patToken PAT Token（可选）
+ */
+export async function renameFileWithGitSync(
+  workspacePath: string,
+  oldPath: string,
+  newPath: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main',
+  patToken?: string | null
+): Promise<void> {
+  return await invoke<void>('rename_file_with_git_sync_command', {
+    workspacePath,
+    oldPath,
+    newPath,
+    remoteName,
+    branchName,
+    patToken: patToken || null,
   });
 }
 
@@ -412,5 +452,23 @@ export async function handleSyncConflict(
     remoteName: remoteName,
     branchName: branchName,
   });
+}
+
+/**
+ * 获取当前分支名
+ * @param path 仓库路径
+ * @returns 当前分支名
+ */
+export async function getCurrentBranch(path: string): Promise<string> {
+  return await invoke<string>('get_current_branch_command', { path });
+}
+
+/**
+ * 切换到指定分支
+ * @param path 仓库路径
+ * @param branch 分支名称
+ */
+export async function switchToBranch(path: string, branch: string): Promise<void> {
+  return await invoke<void>('switch_to_branch_command', { path, branch });
 }
 

@@ -30,6 +30,7 @@ fn main() {
             commands::delete_file_command,
             commands::delete_directory_command,
             commands::rename_file_or_directory_command,
+            commands::rename_file_with_git_sync_command,
             commands::copy_file_or_directory_command,
             commands::move_file_or_directory_command,
             // Git 命令
@@ -56,6 +57,9 @@ fn main() {
             commands::push_to_remote,
             commands::sync_with_remote,
             commands::handle_sync_conflict,
+            // 分支管理命令
+            commands::get_current_branch_command,
+            commands::switch_to_branch_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

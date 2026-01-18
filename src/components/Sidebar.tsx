@@ -10,10 +10,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Folder, FileText, ChevronRight, Plus } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
-import { listDirectory, type FileInfo, createFile, createDirectory, deleteFile, deleteDirectory, renameFileOrDirectory, copyFileOrDirectory, moveFileOrDirectory } from '@/lib/api';
+import { listDirectory, type FileInfo, createFile, createDirectory, deleteFile, deleteDirectory, renameFileOrDirectory, renameFileWithGitSync, copyFileOrDirectory, moveFileOrDirectory, getPatToken, getRemoteUrl } from '@/lib/api';
 import type { JSONContent } from '@tiptap/core';
 import { ContextMenu } from './ContextMenu';
 import { saveTreeExpandedState, loadTreeExpandedState } from '@/lib/cache';
+import { LoadingOverlay } from './LoadingOverlay';
 
 // 侧边栏属性
 interface SidebarProps {
@@ -256,6 +257,7 @@ export function Sidebar({
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: FileInfo | null } | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false); // 重命名操作进行中标志
   
   // 剪贴板状态管理
   const [clipboard, setClipboard] = useState<{ type: 'copy' | 'cut'; item: FileInfo } | null>(null);
@@ -522,8 +524,43 @@ export function Sidebar({
           const newName = prompt('请输入新名称:', item.name);
           if (newName && newName !== item.name) {
             const newPath = item.path.replace(item.name, newName);
-            await renameFileOrDirectory(item.path, newPath);
-            await refreshFiles();
+            
+            // 显示加载覆盖层
+            setIsRenaming(true);
+            
+            try {
+              // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
+              const patToken = await getPatToken();
+              const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+              
+              // 如果配置了远程仓库和 PAT，使用带 Git 同步的重命名
+              if (remoteUrl && patToken) {
+                console.log('[重命名] 使用 Git 同步重命名');
+                await renameFileWithGitSync(
+                  workspacePath,
+                  item.path,
+                  newPath,
+                  'origin',
+                  'main',
+                  patToken
+                );
+              } else {
+                // 否则只执行重命名（不推送）
+                console.log('[重命名] 仅执行重命名（未配置远程仓库或 PAT）');
+                await renameFileOrDirectory(item.path, newPath);
+                // 仍然执行 commit（但不 push）
+                // 注意：这里需要先导入 commitChanges
+                // await commitChanges(workspacePath, `rename: ${item.path} -> ${newPath}`);
+              }
+              
+              await refreshFiles();
+            } catch (error) {
+              console.error('[重命名] 操作失败:', error);
+              alert(`重命名失败: ${error instanceof Error ? error.message : String(error)}`);
+            } finally {
+              // 隐藏加载覆盖层
+              setIsRenaming(false);
+            }
           }
           break;
         }
@@ -656,6 +693,12 @@ export function Sidebar({
           isRootMenu={!contextMenu.item}
         />
       )}
+      
+      {/* 加载覆盖层：重命名操作进行中时显示 */}
+      <LoadingOverlay 
+        isVisible={isRenaming} 
+        message="正在重命名并同步到云端..." 
+      />
     </aside>
   );
 }
