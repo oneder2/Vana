@@ -8,7 +8,7 @@
  * - Tier 2：在关键时机触发 Git commit（必须以「工作区」为范围，而不是当前文档目录）
  * - Tier 3：Commit 成功后（已配置 PAT + remote 且网络在线）后台同步（fetch + rebase + push）
  *
- * TODO(sync-status): 后续可把同步状态从 console.log 提升为 UI 状态指示灯（呼吸绿/静止灰/警告红）
+ * 同步状态 UI 指示灯已实现（呼吸绿/静止灰/警告红）
  */
 
 'use client';
@@ -19,6 +19,7 @@ import { TextSelection } from 'prosemirror-state';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
 import { writeFile, commitChanges, readWorkspaceConfig, syncWithRemote, getPatToken, getRemoteUrl, fetchFromRemote, getRepositoryStatus, getCurrentBranch, switchToBranch } from '@/lib/api';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { addFailedPushTask } from '@/lib/syncQueue';
 import { addBlockUUIDs } from '@/lib/smart-slice';
 import { handleEditorShortcut } from '@/lib/editor-shortcuts';
@@ -27,6 +28,7 @@ import { BlockTypeSelector } from './BlockTypeSelector';
 import { Breadcrumb } from './Breadcrumb';
 import { EditorSkeleton } from './Skeleton';
 import { Plus } from 'lucide-react';
+import { useToast } from './ToastProvider';
 import { getThemeAccentColor, getThemeSurfaceColor, getThemeBorderColor } from '@/lib/themeStyles';
 import { saveFileState, loadFileState } from '@/lib/cache';
 import type { Editor as TiptapEditor } from '@tiptap/react';
@@ -52,6 +54,7 @@ interface EditorProps {
  */
 export function Editor({ filePath, initialContent, onContentChange, workspacePath, onEditorReady, onUnsavedChangesChange }: EditorProps) {
   const { theme } = useTheme();
+  const toast = useToast();
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const tier2IntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasUnsavedChangesRef = useRef(false);
@@ -66,6 +69,11 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const cursorSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 同步状态管理
+  type SyncStatus = 'idle' | 'syncing' | 'success' | 'error' | 'conflict';
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [syncMessage, setSyncMessage] = useState<string>('');
 
   // 确保只在客户端挂载后初始化编辑器
   useEffect(() => {
@@ -737,6 +745,20 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     }
   }, [workspacePath, filePath, flushPendingTier1Save]);
 
+  // 同步状态更新辅助函数
+  const updateSyncStatus = useCallback((status: SyncStatus, message: string = '') => {
+    setSyncStatus(status);
+    setSyncMessage(message);
+    
+    // 成功状态3秒后自动切换为idle
+    if (status === 'success') {
+      setTimeout(() => {
+        setSyncStatus('idle');
+        setSyncMessage('');
+      }, 3000);
+    }
+  }, []);
+
   // 前台恢复时触发 Fetch
   const triggerForegroundFetch = useCallback(async () => {
     if (!workspacePath) {
@@ -750,24 +772,29 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       
       if (remoteUrl && patToken) {
         console.log('[triggerForegroundFetch] 前台恢复：执行 Fetch');
+        updateSyncStatus('syncing', '正在获取远程更新...');
         await fetchFromRemote(workspacePath, 'origin', patToken);
         console.log('[triggerForegroundFetch] Fetch 完成');
+        updateSyncStatus('success', '已获取最新更新');
       } else {
         console.log('[triggerForegroundFetch] 未配置远程仓库或 PAT，跳过 Fetch');
+        updateSyncStatus('idle', '');
       }
     } catch (error) {
       console.error('[triggerForegroundFetch] Fetch 失败:', error);
+      updateSyncStatus('error', `获取更新失败: ${error instanceof Error ? error.message : String(error)}`);
       // Fetch 失败不影响应用使用
     }
-  }, [workspacePath]);
+  }, [workspacePath, updateSyncStatus]);
 
   // Tier 2: 监听 App 后台切换和文档关闭事件
   useEffect(() => {
     if (!filePath) return;
 
-    // Sync Protocol 桌面端补强：
+    // Sync Protocol 桌面端和移动端补强：
     // - visibilitychange 在 Tauri Desktop 下可能不稳定
-    // - 额外监听 window blur/focus 作为“进入后台/恢复前台”的等价信号
+    // - 额外监听 window blur/focus 作为"进入后台/恢复前台"的等价信号
+    // - 在 Tauri 环境中，尝试使用窗口事件监听（移动端支持更好）
     const handleVisibilityChange = () => {
       if (document.hidden) {
         console.log('[Tier 2] visibilitychange 触发：应用进入后台');
@@ -787,6 +814,36 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       console.log('[Tier 2] window focus 触发：窗口聚焦（桌面端前台语义）');
       triggerForegroundFetch();
     };
+    
+    // Tauri 窗口事件监听（移动端和桌面端都支持）
+    let tauriBlurListenerCleanup: (() => void) | null = null;
+    let tauriFocusListenerCleanup: (() => void) | null = null;
+    
+    // 异步注册 Tauri 事件监听
+    (async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        
+        // 监听窗口失焦（进入后台）
+        const blurCleanup = await appWindow.onBlur(() => {
+          console.log('[Tier 2] Tauri window blur 触发：窗口失焦（移动端/桌面端后台语义）');
+          triggerTier2Commit();
+        });
+        tauriBlurListenerCleanup = blurCleanup;
+        
+        // 监听窗口聚焦（恢复前台）
+        const focusCleanup = await appWindow.onFocus(() => {
+          console.log('[Tier 2] Tauri window focus 触发：窗口聚焦（移动端/桌面端前台语义）');
+          triggerForegroundFetch();
+        });
+        tauriFocusListenerCleanup = focusCleanup;
+        
+        console.log('[Tier 2] Tauri 窗口事件监听已注册');
+      } catch (error) {
+        // 非 Tauri 环境或权限不足，使用 Web API 作为后备
+        console.log('[Tier 2] Tauri 窗口 API 不可用，使用 Web API 作为后备:', error);
+      }
+    })();
 
     const handleBeforeUnload = () => {
         console.log('[窗口关闭] ===== beforeunload 事件触发 =====');
@@ -843,6 +900,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
               
               try {
                 console.log('[窗口关闭] [清仓同步] 调用 syncWithRemote...');
+                updateSyncStatus('syncing', '正在同步到远程...');
                 const syncResult = await syncWithRemote(workspacePath, 'origin', 'main', patToken);
                 const syncDuration = Date.now() - syncStartTime;
                 
@@ -850,10 +908,17 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
                   console.log('[窗口关闭] [清仓同步] ✅ 同步成功，耗时:', syncDuration, 'ms');
                   if (syncResult.has_conflict) {
                     console.warn('[窗口关闭] [清仓同步] ⚠️ 检测到冲突，冲突分支:', syncResult.conflict_branch);
+                    const conflictBranch = syncResult.conflict_branch || '未知';
+                    updateSyncStatus('conflict', `检测到冲突，冲突分支: ${conflictBranch}`);
+                    toast.warning(`检测到同步冲突，已创建冲突分支: ${conflictBranch}。您可以在设置页面查看和管理冲突分支。`);
+                  } else {
+                    updateSyncStatus('success', '同步成功');
                   }
                 } else {
                   console.warn('[窗口关闭] [清仓同步] ❌ 同步失败，耗时:', syncDuration, 'ms');
                   console.warn('[窗口关闭] [清仓同步] 将任务加入重试队列');
+                  updateSyncStatus('error', '同步失败，已加入重试队列');
+                  toast.error('同步失败，已加入重试队列。网络恢复后将自动重试。');
                   addFailedPushTask({
                     workspacePath,
                     remoteName: 'origin',
@@ -868,6 +933,9 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
                 console.error('[窗口关闭] [清仓同步] 错误详情:', error);
                 console.error('[窗口关闭] [清仓同步] 错误消息:', error?.message || String(error));
                 console.warn('[窗口关闭] [清仓同步] 将任务加入重试队列');
+                const errorMsg = error?.message || String(error);
+                updateSyncStatus('error', `同步异常: ${errorMsg}`);
+                toast.error(`同步异常: ${errorMsg}。已加入重试队列。`);
                 addFailedPushTask({
                   workspacePath,
                   remoteName: 'origin',
@@ -911,16 +979,27 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       console.error('[Tier 2] 读取配置失败，无法设置定时器:', error);
     });
 
+    // Web API 事件监听（作为后备方案）
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
+      // 清理 Web API 事件监听
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      
+      // 清理 Tauri 窗口事件监听
+      if (tauriBlurListenerCleanup) {
+        tauriBlurListenerCleanup();
+      }
+      if (tauriFocusListenerCleanup) {
+        tauriFocusListenerCleanup();
+      }
+      
       if (tier2IntervalRef.current) {
         clearInterval(tier2IntervalRef.current);
       }
@@ -1154,6 +1233,33 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       }}
       className="flex-1 overflow-y-auto relative"
     >
+      {/* 同步状态指示器 */}
+      {workspacePath && (
+        <div className="fixed top-4 right-4 z-50">
+          <div
+            className="w-3 h-3 rounded-full transition-all duration-300"
+            style={{
+              backgroundColor: 
+                syncStatus === 'syncing' ? '#10b981' : // 呼吸绿
+                syncStatus === 'success' || syncStatus === 'idle' ? '#6b7280' : // 静止灰
+                syncStatus === 'error' || syncStatus === 'conflict' ? '#ef4444' : // 警告红
+                '#6b7280',
+              boxShadow: syncStatus === 'syncing' 
+                ? '0 0 8px rgba(16, 185, 129, 0.6), 0 0 16px rgba(16, 185, 129, 0.4)' 
+                : 'none',
+              animation: syncStatus === 'syncing' ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none',
+            }}
+            title={syncMessage || (
+              syncStatus === 'syncing' ? '正在同步...' :
+              syncStatus === 'success' ? '同步成功' :
+              syncStatus === 'error' ? '同步失败' :
+              syncStatus === 'conflict' ? '存在冲突' :
+              '已是最新'
+            )}
+          />
+        </div>
+      )}
+
       {/* 面包屑导航 */}
       <Breadcrumb filePath={filePath} workspacePath={workspacePath} />
 

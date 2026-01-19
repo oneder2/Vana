@@ -29,6 +29,8 @@ fn main() {
             commands::create_directory_command,
             commands::delete_file_command,
             commands::delete_directory_command,
+            commands::delete_file_with_git_sync_command,
+            commands::delete_directory_with_git_sync_command,
             commands::rename_file_or_directory_command,
             commands::rename_file_with_git_sync_command,
             commands::copy_file_or_directory_command,
@@ -60,6 +62,8 @@ fn main() {
             // 分支管理命令
             commands::get_current_branch_command,
             commands::switch_to_branch_command,
+            // 搜索命令
+            commands::search_files_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

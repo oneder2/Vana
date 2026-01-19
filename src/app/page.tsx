@@ -23,13 +23,15 @@ import { Sidebar } from '@/components/Sidebar';
 import { Editor } from '@/components/Editor';
 import { RadialMenu } from '@/components/RadialMenu';
 import { BlockTypeSelector } from '@/components/BlockTypeSelector';
+import { SearchModal } from '@/components/SearchModal';
 import { getAllThemes, getThemeIcon } from '@/lib/themes';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
 import { readFile, getWorkspacePath, ensureWorkspaceInitialized, fetchFromRemote, getRemoteUrl, getPatToken, commitChanges, readWorkspaceConfig } from '@/lib/api';
 import { retryFailedPushTasks, getQueueSize } from '@/lib/syncQueue';
-import { loadAtmosphereConfig } from '@/lib/atmosphere';
+import { loadAtmosphereConfig, findThemeForFile } from '@/lib/atmosphere';
 import { loadWindowState, saveWindowState } from '@/lib/windowState';
-import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit } from 'lucide-react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit, Search } from 'lucide-react';
 import Link from 'next/link';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
@@ -74,40 +76,115 @@ function MainApp() {
   const [pendingFileSelect, setPendingFileSelect] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('');
+  const [showSearchModal, setShowSearchModal] = useState(false);
 
-  // 窗口状态记忆（基础框架，实际窗口操作需要Tauri命令支持）
+  // 窗口状态记忆（集成 Tauri 窗口 API）
   useEffect(() => {
-    // 尝试从缓存恢复窗口状态
-    // TODO: 集成Tauri窗口API以实际恢复窗口大小和位置
-    const savedState = loadWindowState();
-    if (savedState) {
-      console.log('[windowState] 恢复窗口状态:', savedState);
-      // 注意：实际窗口恢复需要在Tauri层面实现
-    }
+    const restoreWindowState = async () => {
+      try {
+        const savedState = loadWindowState();
+        if (!savedState) {
+          console.log('[windowState] 没有保存的窗口状态');
+          return;
+        }
+        
+        console.log('[windowState] 恢复窗口状态:', savedState);
+        const appWindow = getCurrentWindow();
+        
+        // 恢复窗口大小
+        if (savedState.width && savedState.height) {
+          await appWindow.setSize({
+            type: 'Logical',
+            width: savedState.width,
+            height: savedState.height,
+          });
+          console.log('[windowState] 窗口大小已恢复:', savedState.width, 'x', savedState.height);
+        }
+        
+        // 恢复窗口位置
+        if (savedState.x !== undefined && savedState.y !== undefined) {
+          await appWindow.setPosition({
+            type: 'Logical',
+            x: savedState.x,
+            y: savedState.y,
+          });
+          console.log('[windowState] 窗口位置已恢复:', savedState.x, ',', savedState.y);
+        }
+        
+        // 恢复最大化状态
+        if (savedState.maximized) {
+          await appWindow.maximize();
+          console.log('[windowState] 窗口已最大化');
+        }
+      } catch (error) {
+        console.warn('[windowState] 恢复窗口状态失败:', error);
+        // 在非 Tauri 环境中（如开发模式），忽略错误
+      }
+    };
+    
+    restoreWindowState();
   }, []);
 
-  // 保存窗口状态（在窗口大小改变时）
+  // 保存窗口状态（在窗口大小/位置改变时）
   useEffect(() => {
-    const handleResize = () => {
-      const state = {
-        width: window.innerWidth,
-        height: window.innerHeight,
-        // x, y 和 maximized 需要从Tauri窗口API获取
-      };
-      saveWindowState(state);
+    const saveWindowStateAsync = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        const size = await appWindow.innerSize();
+        const position = await appWindow.innerPosition();
+        const isMaximized = await appWindow.isMaximized();
+        
+        const state = {
+          width: size.width,
+          height: size.height,
+          x: position.x,
+          y: position.y,
+          maximized: isMaximized,
+        };
+        
+        saveWindowState(state);
+        console.log('[windowState] 窗口状态已保存:', state);
+      } catch (error) {
+        // 在非 Tauri 环境中，使用 fallback
+        const state = {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        };
+        saveWindowState(state);
+        console.warn('[windowState] 使用 fallback 保存窗口状态:', error);
+      }
     };
 
     // 防抖保存
     let timeoutId: NodeJS.Timeout;
     const debouncedSave = () => {
       clearTimeout(timeoutId);
-      timeoutId = setTimeout(handleResize, 500);
+      timeoutId = setTimeout(saveWindowStateAsync, 500);
     };
 
     window.addEventListener('resize', debouncedSave);
+    
+    // 监听窗口移动（仅在 Tauri 环境中）
+    let moveListenerCleanup: (() => void) | null = null;
+    (async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        const cleanup = await appWindow.onMoved(() => {
+          debouncedSave();
+        });
+        moveListenerCleanup = cleanup;
+      } catch (error) {
+        // 非 Tauri 环境或权限不足，忽略
+        console.warn('[windowState] 无法监听窗口移动事件:', error);
+      }
+    })();
+    
     return () => {
       window.removeEventListener('resize', debouncedSave);
       clearTimeout(timeoutId);
+      if (moveListenerCleanup) {
+        moveListenerCleanup();
+      }
     };
   }, []);
 
@@ -145,6 +222,24 @@ function MainApp() {
     
     initWorkspace();
   }, []);
+
+  // 快捷键支持：Ctrl+F / Cmd+F 打开搜索
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setShowSearchModal(true);
+      }
+      if (e.key === 'Escape' && showSearchModal) {
+        setShowSearchModal(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showSearchModal]);
 
   // 网络恢复时执行 Fetch 和重试 Push（根据 Sync Protocol.md）
   useEffect(() => {
@@ -308,6 +403,15 @@ function MainApp() {
 
       setEditorContent(parsedContent);
       setCurrentFilePath(path);
+      
+      // 加载文件时，使用主题继承查找逻辑（从文件向上查找最近的.vnode.json）
+      try {
+        const fileTheme = await findThemeForFile(path);
+        setTheme(fileTheme.id);
+      } catch (error) {
+        console.error('加载文件主题失败:', error);
+        // 主题加载失败不影响文件加载，使用当前主题
+      }
     } catch (error) {
       console.error('加载文件失败:', error);
       toast.error(`加载文件失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -480,6 +584,16 @@ function MainApp() {
               } ${theme.glow}`}
             ></div>
           </div>
+          {/* 搜索按钮 */}
+          <button
+            onClick={() => setShowSearchModal(true)}
+            className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
+            style={{ color: getThemeAccentColor(theme) }}
+            title="搜索文档 (Ctrl+F / Cmd+F)"
+          >
+            <Search size={18} />
+          </button>
+
           {/* 提交调试按钮 */}
           {currentFilePath && (
             <button
@@ -675,7 +789,46 @@ function MainApp() {
           onClose={() => setShowRadial(false)}
           onAction={(action) => {
             console.log('执行操作:', action);
-            // TODO: 实现操作逻辑
+            
+            if (!editorInstance) {
+              toast.error('编辑器未就绪');
+              return;
+            }
+            
+            try {
+              switch (action) {
+                case 'h1':
+                  // 将当前块转换为 H1
+                  editorInstance.chain().focus().setHeading({ level: 1 }).run();
+                  toast.success('已转换为标题');
+                  break;
+                case 'quote':
+                  // 切换引用块
+                  editorInstance.chain().focus().toggleBlockquote().run();
+                  toast.success('已切换引用块');
+                  break;
+                case 'list':
+                  // 切换无序列表
+                  editorInstance.chain().focus().toggleBulletList().run();
+                  toast.success('已切换列表');
+                  break;
+                case 'meta':
+                  // 切换元数据块（代码块作为占位）
+                  if (editorInstance.isActive('codeBlock')) {
+                    editorInstance.chain().focus().toggleCodeBlock().run();
+                    toast.success('已切换代码块');
+                  } else {
+                    editorInstance.chain().focus().toggleCodeBlock().run();
+                    toast.success('已创建代码块');
+                  }
+                  break;
+                default:
+                  console.warn('未知操作:', action);
+              }
+            } catch (error) {
+              console.error('执行操作失败:', error);
+              toast.error(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
+            }
           }}
         />
       )}
@@ -765,6 +918,14 @@ function MainApp() {
           closeOnOverlayClick={false}
         />
       )}
+
+      {/* 搜索模态框 */}
+      <SearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        workspacePath={workspacePath}
+        onFileSelect={handleFileSelect}
+      />
     </div>
   );
 }

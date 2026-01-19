@@ -6,7 +6,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { Copy, Scissors, Clipboard, MousePointer2, Trash2, FileText, Folder } from 'lucide-react';
+import { Copy, Scissors, Clipboard, MousePointer2, Trash2, FileText, Folder, Palette } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
 
@@ -21,6 +21,7 @@ interface ContextMenuProps {
   isFile?: boolean; // 是否为文件操作菜单
   hasClipboard?: boolean; // 剪贴板是否有内容（用于文件操作）
   isRootMenu?: boolean; // 是否为根目录右键菜单
+  isDirectory?: boolean; // 当前选中的项是否为目录（用于显示"设置主题"选项）
 }
 
 /**
@@ -36,6 +37,7 @@ export function ContextMenu({
   isFile = false,
   hasClipboard = false,
   isRootMenu = false,
+  isDirectory = false,
 }: ContextMenuProps) {
   const { theme } = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -111,6 +113,7 @@ export function ContextMenu({
     : [
         { id: 'createFile', label: '新建文件', icon: FileText },
         { id: 'createDirectory', label: '新建文件夹', icon: Folder },
+        ...(isDirectory ? [{ id: 'setTheme', label: '设置主题', icon: Palette }] : []), // 仅在目录右键菜单中显示
         { id: 'copy', label: '复制', icon: Copy },
         { id: 'cut', label: '剪切', icon: Scissors },
         ...(hasClipboard ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),

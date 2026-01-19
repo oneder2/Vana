@@ -5,7 +5,9 @@
   "windows": ["main"],
   "permissions": [
     "core:webview:default",
-    "core:webview:allow-internal-toggle-devtools"
+    "core:webview:allow-internal-toggle-devtools",
+    "core:event:allow-listen",
+    "core:event:default"
   ]
 }
 

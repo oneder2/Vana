@@ -9,8 +9,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Folder, FileText, ChevronRight, Plus } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
-import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
-import { listDirectory, type FileInfo, createFile, createDirectory, deleteFile, deleteDirectory, renameFileOrDirectory, renameFileWithGitSync, copyFileOrDirectory, moveFileOrDirectory, getPatToken, getRemoteUrl } from '@/lib/api';
+import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor, getThemeBgColor } from '@/lib/themeStyles';
+import { getTheme } from '@/lib/themes';
+import { listDirectory, type FileInfo, createFile, createDirectory, deleteFile, deleteDirectory, deleteFileWithGitSync, deleteDirectoryWithGitSync, renameFileOrDirectory, renameFileWithGitSync, copyFileOrDirectory, moveFileOrDirectory, getPatToken, getRemoteUrl } from '@/lib/api';
 import type { JSONContent } from '@tiptap/core';
 import { ContextMenu } from './ContextMenu';
 import { saveTreeExpandedState, loadTreeExpandedState } from '@/lib/cache';
@@ -18,9 +19,13 @@ import { LoadingOverlay } from './LoadingOverlay';
 import { useToast } from './ToastProvider';
 import { Modal } from './Modal';
 import { InputModal } from './InputModal';
+import { ThemeSelectorModal } from './ThemeSelectorModal';
 import { validateFileName } from '@/lib/fileValidator';
 import { removeEncSuffix, ensureEncSuffix } from '@/lib/fileNameUtils';
 import { FileTreeSkeleton } from './Skeleton';
+import { writeAtmosphereConfig, readAtmosphereConfig } from '@/lib/api';
+import { loadAtmosphereConfig } from '@/lib/atmosphere';
+import type { ThemeId } from '@/lib/themes';
 
 // 侧边栏属性
 interface SidebarProps {
@@ -46,6 +51,7 @@ function FolderItem({
   onDrop,
   onClearRootDragOver,
   focusedItemPath,
+  directoryThemeId,
 }: {
   item: FileInfo;
   level?: number;
@@ -58,15 +64,30 @@ function FolderItem({
   onDrop?: (sourcePath: string, destPath: string) => void;
   onClearRootDragOver?: () => void;
   focusedItemPath?: string | null;
+  directoryThemeId?: ThemeId; // 目录的主题ID（用于显示颜色标识）
 }) {
   // 从expandedPaths恢复展开状态
   const [isExpanded, setIsExpanded] = useState(expandedPaths.has(item.path));
   const [children, setChildren] = useState<FileInfo[]>([]);
+  const [itemThemeId, setItemThemeId] = useState<ThemeId | undefined>(directoryThemeId);
 
   // 当expandedPaths改变时，同步展开状态
   useEffect(() => {
     setIsExpanded(expandedPaths.has(item.path));
   }, [expandedPaths, item.path]);
+
+  // 加载目录的主题配置（如果未提供）
+  useEffect(() => {
+    if (item.is_directory && !itemThemeId) {
+      readAtmosphereConfig(item.path)
+        .then((config) => {
+          setItemThemeId(config.theme as ThemeId);
+        })
+        .catch((error) => {
+          // 如果目录没有 .vnode.json，不设置（使用默认主题）
+        });
+    }
+  }, [item.path, item.is_directory, itemThemeId]);
 
   // 如果已展开但还没有加载子项，则加载
   useEffect(() => {
@@ -242,26 +263,46 @@ function FolderItem({
             <FileText size={16} />
           </>
         )}
-        <span className="text-xs truncate">{removeEncSuffix(item.name)}</span>
+        <span className="text-xs truncate flex-1">{removeEncSuffix(item.name)}</span>
+        {/* 目录主题颜色标识 */}
+        {item.is_directory && itemThemeId && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <div
+              className="w-2 h-2 rounded-full border"
+              style={{
+                backgroundColor: getThemeAccentBgColor(getTheme(itemThemeId)).replace(/\/\d+/, ''),
+                borderColor: getThemeBorderColor(getTheme(itemThemeId)),
+              }}
+              title={`主题: ${getTheme(itemThemeId).name}`}
+            />
+          </div>
+        )}
       </div>
       {isExpanded && item.is_directory && (
         <div>
-          {children.map((child) => (
-            <FolderItem
-              key={child.path}
-              item={child}
-              level={level + 1}
-              onSelect={onSelect}
-              onDirectoryChange={onDirectoryChange}
-              theme={theme}
-              onContextMenu={onContextMenu}
-              expandedPaths={expandedPaths}
-              onToggleExpand={onToggleExpand}
-              onDrop={onDrop}
-              onClearRootDragOver={onClearRootDragOver}
-              focusedItemPath={focusedItemPath}
-            />
-          ))}
+          {children.map((child) => {
+            // 尝试从父组件传入的主题映射中获取子目录的主题
+            // 这里需要父组件传递一个directoryThemesMap
+            // 暂时使用null，让每个FolderItem自己加载（如果性能有问题再优化）
+            const childThemeId = child.is_directory ? undefined : undefined;
+            return (
+              <FolderItem
+                key={child.path}
+                item={child}
+                level={level + 1}
+                onSelect={onSelect}
+                onDirectoryChange={onDirectoryChange}
+                theme={theme}
+                onContextMenu={onContextMenu}
+                expandedPaths={expandedPaths}
+                onToggleExpand={onToggleExpand}
+                onDrop={onDrop}
+                onClearRootDragOver={onClearRootDragOver}
+                focusedItemPath={focusedItemPath}
+                directoryThemeId={childThemeId}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -291,6 +332,16 @@ export function Sidebar({
     type: 'createFile' | 'createDirectory' | 'rename';
     defaultValue?: string;
   }>({ isOpen: false, type: 'createFile' });
+  
+  // 主题选择模态框状态
+  const [themeSelectorModal, setThemeSelectorModal] = useState<{
+    isOpen: boolean;
+    directoryPath: string | null;
+    currentThemeId?: ThemeId;
+  }>({ isOpen: false, directoryPath: null });
+  
+  // 目录主题配置缓存（用于显示颜色标识）
+  const [directoryThemes, setDirectoryThemes] = useState<Map<string, ThemeId>>(new Map());
   
   // 剪贴板状态管理
   const [clipboard, setClipboard] = useState<{ type: 'copy' | 'cut'; item: FileInfo } | null>(null);
@@ -498,6 +549,25 @@ export function Sidebar({
       setLoading(true);
       const items = await listDirectory(workspacePath);
       setFiles(items);
+      
+      // 加载目录主题配置（用于显示颜色标识）
+      const newThemes = new Map<string, ThemeId>();
+      const loadDirectoryThemes = async (dirItems: FileInfo[]) => {
+        for (const item of dirItems) {
+          if (item.is_directory) {
+            try {
+              const config = await readAtmosphereConfig(item.path);
+              newThemes.set(item.path, config.theme as ThemeId);
+            } catch (error) {
+              // 如果目录没有 .vnode.json，不设置（使用默认主题）
+            }
+          }
+        }
+      };
+      
+      await loadDirectoryThemes(items);
+      setDirectoryThemes(newThemes);
+      
       // 刷新后展开状态会自动恢复（通过expandedPaths state）
     } catch (error) {
       console.error('加载文件列表失败:', error);
@@ -604,6 +674,27 @@ export function Sidebar({
           setInputModal({ isOpen: true, type: 'rename', defaultValue: removeEncSuffix(item.name) });
           break;
         }
+        case 'setTheme': {
+          if (!item || !item.is_directory) break;
+          // 打开主题选择器
+          // 先加载当前目录的主题配置
+          try {
+            const config = await readAtmosphereConfig(item.path);
+            setThemeSelectorModal({
+              isOpen: true,
+              directoryPath: item.path,
+              currentThemeId: config.theme as ThemeId,
+            });
+          } catch (error) {
+            // 如果加载失败，使用默认主题
+            setThemeSelectorModal({
+              isOpen: true,
+              directoryPath: item.path,
+              currentThemeId: 'arcane',
+            });
+          }
+          break;
+        }
         case 'delete': {
           if (!item) break;
           // 显示删除确认对话框
@@ -617,6 +708,34 @@ export function Sidebar({
     }
   };
 
+  // 处理主题选择
+  const handleThemeSelect = async (themeId: ThemeId) => {
+    if (!themeSelectorModal.directoryPath || isOperationInProgress) return;
+
+    setIsOperationInProgress(true);
+    try {
+      // 保存主题配置到目录的 .vnode.json
+      await writeAtmosphereConfig(themeSelectorModal.directoryPath, { theme: themeId });
+      
+      // 更新本地缓存
+      const newThemes = new Map(directoryThemes);
+      newThemes.set(themeSelectorModal.directoryPath, themeId);
+      setDirectoryThemes(newThemes);
+      
+      // 通知父组件目录主题已更改（如果需要立即应用主题）
+      onDirectoryChange?.(themeSelectorModal.directoryPath);
+      
+      toast.info(`主题已设置为 ${themeId}`);
+      setThemeSelectorModal({ isOpen: false, directoryPath: null });
+      setContextMenu(null);
+    } catch (error) {
+      console.error('设置主题失败:', error);
+      toast.error(`设置主题失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsOperationInProgress(false);
+    }
+  };
+
   // 处理删除确认
   const handleDeleteConfirm = async () => {
     const item = deleteModal.item;
@@ -624,10 +743,46 @@ export function Sidebar({
 
     setIsOperationInProgress(true);
     try {
-      if (item.is_directory) {
-        await deleteDirectory(item.path);
+      // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
+      const patToken = await getPatToken();
+      const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+      
+      // 如果配置了远程仓库和 PAT，使用带 Git 同步的删除
+      if (remoteUrl && patToken) {
+        console.log('[删除] 使用 Git 同步删除');
+        if (item.is_directory) {
+          await deleteDirectoryWithGitSync(
+            workspacePath,
+            item.path,
+            'origin',
+            'main',
+            patToken
+          );
+          // 删除目录时，也清除主题缓存
+          const newThemes = new Map(directoryThemes);
+          newThemes.delete(item.path);
+          setDirectoryThemes(newThemes);
+        } else {
+          await deleteFileWithGitSync(
+            workspacePath,
+            item.path,
+            'origin',
+            'main',
+            patToken
+          );
+        }
       } else {
-        await deleteFile(item.path);
+        // 否则只执行删除（不推送）
+        console.log('[删除] 仅执行删除（未配置远程仓库或 PAT）');
+        if (item.is_directory) {
+          await deleteDirectory(item.path);
+          // 删除目录时，也清除主题缓存
+          const newThemes = new Map(directoryThemes);
+          newThemes.delete(item.path);
+          setDirectoryThemes(newThemes);
+        } else {
+          await deleteFile(item.path);
+        }
       }
       await refreshFiles();
       setDeleteModal({ isOpen: false, item: null });
@@ -839,6 +994,7 @@ export function Sidebar({
                 onDrop={handleDrop}
                 onClearRootDragOver={() => setIsRootDragOver(false)}
                 focusedItemPath={focusedItemPath}
+                directoryThemeId={item.is_directory ? directoryThemes.get(item.path) : undefined}
               />
             ))}
           </div>
@@ -856,6 +1012,7 @@ export function Sidebar({
           isFile={true}
           hasClipboard={!!clipboard}
           isRootMenu={!contextMenu.item}
+          isDirectory={contextMenu.item?.is_directory || false}
         />
       )}
       
@@ -889,6 +1046,14 @@ export function Sidebar({
         onConfirm={handleInputConfirm}
         onCancel={() => setInputModal({ isOpen: false, type: 'createFile' })}
         isLoading={isOperationInProgress}
+      />
+
+      {/* 主题选择模态框 */}
+      <ThemeSelectorModal
+        isOpen={themeSelectorModal.isOpen}
+        currentThemeId={themeSelectorModal.currentThemeId}
+        onSelect={handleThemeSelect}
+        onClose={() => setThemeSelectorModal({ isOpen: false, directoryPath: null })}
       />
 
       {/* 删除确认对话框 */}

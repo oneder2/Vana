@@ -229,6 +229,68 @@ export async function deleteDirectory(path: string): Promise<void> {
 }
 
 /**
+ * 删除文件并同步到 Git（原子操作）
+ * 
+ * 此函数会：
+ * 1. 执行文件删除
+ * 2. 执行 git add -A（自动处理删除）
+ * 3. 执行 git commit
+ * 4. 执行 git push（如果配置了远程仓库和 PAT）
+ * 
+ * @param workspacePath 工作区路径
+ * @param path 文件路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param branchName 分支名称（默认 "main"）
+ * @param patToken PAT Token（可选）
+ */
+export async function deleteFileWithGitSync(
+  workspacePath: string,
+  path: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main',
+  patToken?: string | null
+): Promise<void> {
+  return await invoke<void>('delete_file_with_git_sync_command', {
+    workspacePath,
+    path,
+    remoteName,
+    branchName,
+    patToken: patToken || null,
+  });
+}
+
+/**
+ * 删除目录并同步到 Git（原子操作）
+ * 
+ * 此函数会：
+ * 1. 执行目录删除
+ * 2. 执行 git add -A（自动处理删除）
+ * 3. 执行 git commit
+ * 4. 执行 git push（如果配置了远程仓库和 PAT）
+ * 
+ * @param workspacePath 工作区路径
+ * @param path 目录路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param branchName 分支名称（默认 "main"）
+ * @param patToken PAT Token（可选）
+ */
+export async function deleteDirectoryWithGitSync(
+  workspacePath: string,
+  path: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main',
+  patToken?: string | null
+): Promise<void> {
+  return await invoke<void>('delete_directory_with_git_sync_command', {
+    workspacePath,
+    path,
+    remoteName,
+    branchName,
+    patToken: patToken || null,
+  });
+}
+
+/**
  * 重命名文件或目录
  * @param oldPath 旧路径
  * @param newPath 新路径
@@ -470,5 +532,31 @@ export async function getCurrentBranch(path: string): Promise<string> {
  */
 export async function switchToBranch(path: string, branch: string): Promise<void> {
   return await invoke<void>('switch_to_branch_command', { path, branch });
+}
+
+// 搜索结果接口
+export interface SearchMatch {
+  line: number;
+  column: number;
+  context: string;
+}
+
+export interface SearchResult {
+  file_path: string;
+  matches: SearchMatch[];
+}
+
+/**
+ * 搜索文档内容
+ * 
+ * @param workspacePath 工作区路径
+ * @param query 搜索关键词
+ * @returns 搜索结果列表
+ */
+export async function searchFiles(workspacePath: string, query: string): Promise<SearchResult[]> {
+  return await invoke<SearchResult[]>('search_files_command', {
+    workspacePath,
+    query,
+  });
 }
 

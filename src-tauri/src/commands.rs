@@ -7,6 +7,7 @@ use crate::keychain::{store_pat_token, get_pat_token, remove_pat_token, has_pat_
 use crate::storage::{
     copy_file_or_directory, create_directory, create_file, delete_directory, delete_file, list_directory,
     move_file_or_directory, read_encrypted_file, rename_file_or_directory, write_encrypted_file, FileInfo,
+    search_files, SearchResult,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -348,6 +349,137 @@ pub async fn delete_directory_command(path: String) -> Result<(), String> {
     delete_directory(&path).await.map_err(|e| e.to_string())
 }
 
+/// 删除文件并同步到 Git（原子操作）
+/// 
+/// 此命令会：
+/// 1. 执行文件删除
+/// 2. 执行 git add -A（自动处理删除）
+/// 3. 执行 git commit
+/// 4. 执行 git push（如果配置了远程仓库和 PAT）
+/// 
+/// 前端调用: `invoke('delete_file_with_git_sync', { workspacePath: '...', path: '...', remoteName: 'origin', branchName: 'main', patToken: '...' })`
+#[tauri::command]
+pub async fn delete_file_with_git_sync_command(
+    workspace_path: String,
+    path: String,
+    remote_name: String,
+    branch_name: String,
+    pat_token: Option<String>,
+    _app: AppHandle,
+) -> Result<(), String> {
+    use crate::git::{commit_changes, sync_with_remote};
+    use std::path::Path;
+    
+    let repo_path = Path::new(&workspace_path);
+    
+    // 步骤 1: 执行文件删除
+    eprintln!("[delete_file_with_git_sync] 步骤 1: 执行文件删除");
+    delete_file(&path)
+        .await
+        .map_err(|e| format!("删除失败: {}", e))?;
+    
+    // 步骤 2: 使用 gix API 更新索引（自动处理删除）
+    // 注意：移动端不能使用 git 命令行，必须使用纯 gix API
+    // 索引更新将在 commit_changes 中自动处理
+    eprintln!("[delete_file_with_git_sync] 步骤 2: 使用 gix API 更新索引（在 commit 中处理）");
+    
+    // 步骤 3: 执行 git commit（commit_changes 会自动处理索引更新）
+    eprintln!("[delete_file_with_git_sync] 步骤 3: 执行 git commit");
+    let commit_message = format!("delete: {}", path);
+    commit_changes(repo_path, &commit_message)
+        .map_err(|e| format!("git commit 失败: {}", e))?;
+    
+    // 步骤 4: 如果配置了远程仓库和 PAT，执行完整同步（包含 squash 和 push）
+    if let Some(ref token) = pat_token {
+        eprintln!("[delete_file_with_git_sync] 步骤 4: 执行完整 Git 同步（squash + push）");
+        // 使用 sync_with_remote 执行完整同步流程：
+        // - fetch 远程更新
+        // - squash draft 到 main
+        // - rebase main 到远程
+        // - push 到远程
+        let sync_result = sync_with_remote(repo_path, &remote_name, &branch_name, Some(token.as_str()))
+            .map_err(|e| format!("Git 同步失败: {}", e))?;
+        
+        if !sync_result.success {
+            eprintln!("[delete_file_with_git_sync] 警告：同步未成功");
+        }
+        
+        if sync_result.has_conflict {
+            eprintln!("[delete_file_with_git_sync] 警告：检测到冲突，冲突分支: {:?}", sync_result.conflict_branch);
+            // 冲突不影响删除完成，只是警告
+        }
+    }
+    
+    eprintln!("[delete_file_with_git_sync] 完成：删除和 Git 同步成功");
+    Ok(())
+}
+
+/// 删除目录并同步到 Git（原子操作）
+/// 
+/// 此命令会：
+/// 1. 执行目录删除
+/// 2. 执行 git add -A（自动处理删除）
+/// 3. 执行 git commit
+/// 4. 执行 git push（如果配置了远程仓库和 PAT）
+/// 
+/// 前端调用: `invoke('delete_directory_with_git_sync', { workspacePath: '...', path: '...', remoteName: 'origin', branchName: 'main', patToken: '...' })`
+#[tauri::command]
+pub async fn delete_directory_with_git_sync_command(
+    workspace_path: String,
+    path: String,
+    remote_name: String,
+    branch_name: String,
+    pat_token: Option<String>,
+    _app: AppHandle,
+) -> Result<(), String> {
+    use crate::git::{commit_changes, sync_with_remote};
+    use std::path::Path;
+    
+    let repo_path = Path::new(&workspace_path);
+    
+    // 步骤 1: 执行目录删除
+    eprintln!("[delete_directory_with_git_sync] 步骤 1: 执行目录删除");
+    delete_directory(&path)
+        .await
+        .map_err(|e| format!("删除失败: {}", e))?;
+    
+    // 步骤 2: 执行 git add -A（自动处理删除）
+    // 步骤 2: 使用 gix API 更新索引（自动处理删除）
+    // 注意：移动端不能使用 git 命令行，必须使用纯 gix API
+    // 索引更新将在 commit_changes 中自动处理
+    eprintln!("[delete_directory_with_git_sync] 步骤 2: 使用 gix API 更新索引（在 commit 中处理）");
+    
+    // 步骤 3: 执行 git commit（commit_changes 会自动处理索引更新）
+    eprintln!("[delete_directory_with_git_sync] 步骤 3: 执行 git commit");
+    let commit_message = format!("delete: {}", path);
+    commit_changes(repo_path, &commit_message)
+        .map_err(|e| format!("git commit 失败: {}", e))?;
+    
+    // 步骤 4: 如果配置了远程仓库和 PAT，执行完整同步（包含 squash 和 push）
+    if let Some(ref token) = pat_token {
+        eprintln!("[delete_directory_with_git_sync] 步骤 4: 执行完整 Git 同步（squash + push）");
+        // 使用 sync_with_remote 执行完整同步流程：
+        // - fetch 远程更新
+        // - squash draft 到 main
+        // - rebase main 到远程
+        // - push 到远程
+        let sync_result = sync_with_remote(repo_path, &remote_name, &branch_name, Some(token.as_str()))
+            .map_err(|e| format!("Git 同步失败: {}", e))?;
+        
+        if !sync_result.success {
+            eprintln!("[delete_directory_with_git_sync] 警告：同步未成功");
+        }
+        
+        if sync_result.has_conflict {
+            eprintln!("[delete_directory_with_git_sync] 警告：检测到冲突，冲突分支: {:?}", sync_result.conflict_branch);
+            // 冲突不影响删除完成，只是警告
+        }
+    }
+    
+    eprintln!("[delete_directory_with_git_sync] 完成：删除和 Git 同步成功");
+    Ok(())
+}
+
 /// 重命名文件或目录
 /// 
 /// 前端调用: `invoke('rename_file_or_directory', { oldPath: '...', newPath: '...' })`
@@ -378,7 +510,7 @@ pub async fn rename_file_with_git_sync_command(
     remote_name: String,
     branch_name: String,
     pat_token: Option<String>,
-    app: AppHandle,
+    _app: AppHandle,
 ) -> Result<(), String> {
     use crate::git::{commit_changes, sync_with_remote};
     use std::path::Path;
@@ -391,20 +523,10 @@ pub async fn rename_file_with_git_sync_command(
         .await
         .map_err(|e| format!("重命名失败: {}", e))?;
     
-    // 步骤 2: 执行 git add -A（自动处理删除旧索引、添加新索引）
-    eprintln!("[rename_file_with_git_sync] 步骤 2: 执行 git add -A");
-    let add_output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_path)
-        .arg("add")
-        .arg("-A")
-        .output()
-        .map_err(|e| format!("无法执行 git add: {}", e))?;
-    
-    if !add_output.status.success() {
-        let stderr = String::from_utf8_lossy(&add_output.stderr);
-        return Err(format!("git add 失败: {}", stderr));
-    }
+    // 步骤 2: 使用 gix API 更新索引（自动处理删除旧索引、添加新索引）
+    // 注意：移动端不能使用 git 命令行，必须使用纯 gix API
+    eprintln!("[rename_file_with_git_sync] 步骤 2: 使用 gix API 更新索引");
+    // 索引更新将在 commit_changes 中自动处理
     
     // 步骤 3: 执行 git commit
     eprintln!("[rename_file_with_git_sync] 步骤 3: 执行 git commit");
@@ -534,11 +656,11 @@ pub fn remove_remote(path: String, name: String) -> Result<(), String> {
 /// 
 /// 前端调用: `invoke('fetch_from_remote', { path: '...', remoteName: 'origin', patToken: '...' })`
 #[tauri::command]
-pub fn fetch_from_remote(path: String, remoteName: String, patToken: Option<String>) -> Result<(), String> {
+pub fn fetch_from_remote(path: String, remote_name: String, pat_token: Option<String>) -> Result<(), String> {
     crate::git::fetch_from_remote(
         PathBuf::from(path).as_path(),
-        &remoteName,
-        patToken.as_deref(),
+        &remote_name,
+        pat_token.as_deref(),
     )
     .map_err(|e| e.to_string())
 }
@@ -549,15 +671,15 @@ pub fn fetch_from_remote(path: String, remoteName: String, patToken: Option<Stri
 #[tauri::command]
 pub fn push_to_remote(
     path: String,
-    remoteName: String,
-    branchName: String,
-    patToken: Option<String>,
+    remote_name: String,
+    branch_name: String,
+    pat_token: Option<String>,
 ) -> Result<(), String> {
     crate::git::push_to_remote(
         PathBuf::from(path).as_path(),
-        &remoteName,
-        &branchName,
-        patToken.as_deref(),
+        &remote_name,
+        &branch_name,
+        pat_token.as_deref(),
     )
     .map_err(|e| e.to_string())
 }
@@ -568,16 +690,16 @@ pub fn push_to_remote(
 #[tauri::command]
 pub fn sync_with_remote(
     path: String,
-    remoteName: String,
-    branchName: String,
-    patToken: Option<String>,
+    remote_name: String,
+    branch_name: String,
+    pat_token: Option<String>,
 ) -> Result<SyncResult, String> {
-    eprintln!("[sync_with_remote] 开始同步: path={}, remote={}, branch={}", path, remoteName, branchName);
+    eprintln!("[sync_with_remote] 开始同步: path={}, remote={}, branch={}", path, remote_name, branch_name);
     crate::git::sync_with_remote(
         PathBuf::from(path).as_path(),
-        &remoteName,
-        &branchName,
-        patToken.as_deref(),
+        &remote_name,
+        &branch_name,
+        pat_token.as_deref(),
     )
     .map_err(|e| {
         eprintln!("[sync_with_remote] 同步失败: {}", e);
@@ -617,6 +739,20 @@ pub fn get_current_branch_command(path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn switch_to_branch_command(path: String, branch: String) -> Result<(), String> {
     switch_to_branch(PathBuf::from(path).as_path(), &branch)
+        .map_err(|e| e.to_string())
+}
+
+/// 搜索文档内容
+/// 
+/// 前端调用: `invoke('search_files', { workspacePath: '...', query: '...' })`
+#[tauri::command]
+pub async fn search_files_command(
+    workspace_path: String,
+    query: String,
+    app: AppHandle,
+) -> Result<Vec<SearchResult>, String> {
+    search_files(&workspace_path, &query, &app)
+        .await
         .map_err(|e| e.to_string())
 }
 

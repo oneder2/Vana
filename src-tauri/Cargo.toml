@@ -16,7 +16,7 @@ rand = "0.8"
 base64 = { version = "0.22", default-features = false, features = ["alloc", "std"] }
 
 # Git 操作
-gix = "0.66"
+gix = { version = "0.66", features = ["blocking-network-client", "blocking-http-transport-curl"] }
 walkdir = "2.5"
 
 # 文件系统操作

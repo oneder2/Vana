@@ -411,3 +411,159 @@ pub struct FileInfo {
     pub is_file: bool,
 }
 
+/// 搜索结果匹配项
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchMatch {
+    /// 匹配的行号（从1开始）
+    pub line: usize,
+    /// 匹配的列号（从0开始）
+    pub column: usize,
+    /// 匹配行的内容（前后各包含一些上下文）
+    pub context: String,
+}
+
+/// 搜索结果
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchResult {
+    /// 文件路径
+    pub file_path: String,
+    /// 匹配项列表
+    pub matches: Vec<SearchMatch>,
+}
+
+/// 在指定目录中搜索关键词
+/// 
+/// # 参数
+/// - `workspace_path`: 工作区根目录路径
+/// - `query`: 搜索关键词
+/// - `app`: Tauri 应用句柄，用于解密文件
+/// 
+/// # 返回
+/// 返回搜索结果列表
+pub async fn search_files(
+    workspace_path: &str,
+    query: &str,
+    app: &AppHandle,
+) -> Result<Vec<SearchResult>> {
+    let workspace = Path::new(workspace_path);
+    
+    if !workspace.exists() || !workspace.is_dir() {
+        return Ok(Vec::new());
+    }
+    
+    let query_lower = query.to_lowercase();
+    let mut results = Vec::new();
+    
+    // 递归搜索目录
+    search_directory_recursive(workspace, workspace, &query_lower, app, &mut results).await?;
+    
+    Ok(results)
+}
+
+/// 递归搜索目录
+fn search_directory_recursive<'a>(
+    workspace_root: &'a Path,
+    current_dir: &'a Path,
+    query: &'a str,
+    app: &'a AppHandle,
+    results: &'a mut Vec<SearchResult>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut entries = fs::read_dir(current_dir)
+            .await
+            .with_context(|| format!("无法读取目录: {}", current_dir.display()))?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            
+            // 跳过隐藏文件和 .git 目录
+            if name.starts_with('.') {
+                continue;
+            }
+            
+            let metadata = entry.metadata().await?;
+            
+            if metadata.is_dir() {
+                // 递归搜索子目录
+                search_directory_recursive(workspace_root, &path, query, app, results).await?;
+            } else if metadata.is_file() && name.ends_with(".enc") {
+                // 搜索加密文件
+                if let Ok(matches) = search_file_content(&path, query, app).await {
+                    if !matches.is_empty() {
+                        // 将路径转换为相对于工作区根目录的路径
+                        let relative_path = path
+                            .strip_prefix(workspace_root)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .to_string();
+                        
+                        results.push(SearchResult {
+                            file_path: relative_path,
+                            matches,
+                        });
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    })
+}
+
+/// 在单个文件中搜索关键词
+async fn search_file_content(
+    file_path: &Path,
+    query: &str,
+    app: &AppHandle,
+) -> Result<Vec<SearchMatch>> {
+    // 读取并解密文件
+    let content = read_encrypted_file(
+        file_path.to_string_lossy().as_ref(),
+        app,
+    ).await?;
+    
+    let mut matches = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    // 搜索每一行
+    for (line_idx, line) in lines.iter().enumerate() {
+        let line_lower = line.to_lowercase();
+        
+        // 查找所有匹配位置
+        let mut search_start = 0;
+        while let Some(pos) = line_lower[search_start..].find(query) {
+            let column = search_start + pos;
+            
+            // 构建上下文（当前行前后各一行）
+            let context_start = if line_idx > 0 { line_idx - 1 } else { 0 };
+            let context_end = (line_idx + 2).min(lines.len());
+            let context: String = lines[context_start..context_end]
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if context_start + i == line_idx {
+                        format!("> {}", l)
+                    } else {
+                        format!("  {}", l)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            
+            matches.push(SearchMatch {
+                line: line_idx + 1, // 行号从1开始
+                column,
+                context,
+            });
+            
+            search_start = column + query.len();
+        }
+    }
+    
+    Ok(matches)
+}
+
