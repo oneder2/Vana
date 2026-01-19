@@ -25,6 +25,7 @@ import { handleEditorShortcut } from '@/lib/editor-shortcuts';
 import { ContextMenu } from './ContextMenu';
 import { BlockTypeSelector } from './BlockTypeSelector';
 import { Breadcrumb } from './Breadcrumb';
+import { EditorSkeleton } from './Skeleton';
 import { Plus } from 'lucide-react';
 import { getThemeAccentColor, getThemeSurfaceColor, getThemeBorderColor } from '@/lib/themeStyles';
 import { saveFileState, loadFileState } from '@/lib/cache';
@@ -42,13 +43,14 @@ interface EditorProps {
   workspacePath?: string;
   onEditorReady?: (editor: TiptapEditor | null, triggerCommit?: () => Promise<void>) => void;
   layout?: EditorLayout; // 布局类型
+  onUnsavedChangesChange?: (hasChanges: boolean) => void; // 未保存更改状态变化回调
 }
 
 /**
  * 主编辑器组件
  * 使用 Tiptap 实现块式编辑和防抖保存
  */
-export function Editor({ filePath, initialContent, onContentChange, workspacePath, onEditorReady }: EditorProps) {
+export function Editor({ filePath, initialContent, onContentChange, workspacePath, onEditorReady, onUnsavedChangesChange }: EditorProps) {
   const { theme } = useTheme();
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const tier2IntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -108,6 +110,8 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
           console.log('文件已保存:', filePath);
           hasUnsavedChangesRef.current = true;
           console.log('[Tier 1] hasUnsavedChangesRef 已设置为 true');
+          // 通知父组件未保存更改状态
+          onUnsavedChangesChange?.(true);
           
           // 如果生成了新的 UUID，更新编辑器内容（但不会触发 onUpdate）
           if (editorRef.current && JSON.stringify(jsonWithUUIDs) !== JSON.stringify(json)) {
@@ -168,6 +172,9 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   const editorProps = useMemo(() => ({
     attributes: {
       class: `tiptap-editor theme-${theme.id}`,
+      role: 'textbox',
+      'aria-label': '文档编辑器',
+      'aria-multiline': 'true',
     },
     handleKeyDown: (view: any, event: Event) => {
       const currentEditor = editorRef.current;
@@ -536,10 +543,12 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     }
   }, [editor, initialContent, getEditorDOM]);
 
-  // 当文件路径改变时，重置初始加载标志
+  // 当文件路径改变时，重置初始加载标志和未保存状态
   useEffect(() => {
     isInitialLoadRef.current = true;
-  }, [filePath]);
+    hasUnsavedChangesRef.current = false;
+    onUnsavedChangesChange?.(false);
+  }, [filePath, onUnsavedChangesChange]);
 
   // 保存滚动位置（防抖）
   const saveScrollPosition = useCallback(() => {
@@ -711,12 +720,14 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       if (!status.has_changes) {
         console.log('[triggerTier2Commit] 提前返回：工作区无任何变更，无需提交');
         hasUnsavedChangesRef.current = false;
+        onUnsavedChangesChange?.(false);
         return;
       }
 
       await commitChanges(commitPath, 'auto_snapshot');
       console.log('Tier 2: Git 提交成功（在 draft 分支上）');
       hasUnsavedChangesRef.current = false;
+      onUnsavedChangesChange?.(false);
       
       // 双层分支模型：不再每次 commit 后都自动同步
       // Commit 会在 draft 分支上累积，只在手动同步或特定场景（应用关闭前）才同步
@@ -1122,9 +1133,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   if (!isMounted) {
     return (
       <main className="flex-1 overflow-y-auto relative">
-        <div className="max-w-4xl mx-auto px-8 py-20 min-h-full">
-          <div className="text-sm opacity-50">加载编辑器...</div>
-        </div>
+        <EditorSkeleton />
       </main>
     );
   }
@@ -1133,9 +1142,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
   if (!editor) {
     return (
       <main className="flex-1 overflow-y-auto relative">
-        <div className="max-w-4xl mx-auto px-8 py-20 min-h-full">
-          <div className="text-sm opacity-50">初始化编辑器...</div>
-        </div>
+        <EditorSkeleton />
       </main>
     );
   }

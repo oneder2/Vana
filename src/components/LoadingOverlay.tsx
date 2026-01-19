@@ -34,6 +34,9 @@ export function LoadingOverlay({ isVisible, message = '正在同步...' }: Loadi
       style={{
         backgroundColor: 'rgba(0, 0, 0, 0.5)', // 半透明黑色背景
       }}
+      role="status"
+      aria-live="polite"
+      aria-label={message}
     >
       <div
         className="px-6 py-4 rounded-lg flex items-center gap-3 shadow-lg"

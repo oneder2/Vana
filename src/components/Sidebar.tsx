@@ -15,6 +15,12 @@ import type { JSONContent } from '@tiptap/core';
 import { ContextMenu } from './ContextMenu';
 import { saveTreeExpandedState, loadTreeExpandedState } from '@/lib/cache';
 import { LoadingOverlay } from './LoadingOverlay';
+import { useToast } from './ToastProvider';
+import { Modal } from './Modal';
+import { InputModal } from './InputModal';
+import { validateFileName } from '@/lib/fileValidator';
+import { removeEncSuffix, ensureEncSuffix } from '@/lib/fileNameUtils';
+import { FileTreeSkeleton } from './Skeleton';
 
 // 侧边栏属性
 interface SidebarProps {
@@ -39,6 +45,7 @@ function FolderItem({
   onToggleExpand,
   onDrop,
   onClearRootDragOver,
+  focusedItemPath,
 }: {
   item: FileInfo;
   level?: number;
@@ -50,6 +57,7 @@ function FolderItem({
   onToggleExpand: (path: string) => void;
   onDrop?: (sourcePath: string, destPath: string) => void;
   onClearRootDragOver?: () => void;
+  focusedItemPath?: string | null;
 }) {
   // 从expandedPaths恢复展开状态
   const [isExpanded, setIsExpanded] = useState(expandedPaths.has(item.path));
@@ -107,13 +115,21 @@ function FolderItem({
   const handleDragStart = (e: React.DragEvent) => {
     setIsDragging(true);
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', item.path);
-    // 设置拖拽图像
-    if (e.dataTransfer.setDragImage) {
-      const dragImage = document.createElement('div');
-      dragImage.textContent = item.name;
+      e.dataTransfer.setData('text/plain', item.path);
+      // 设置拖拽图像（半透明预览）
+      if (e.dataTransfer.setDragImage) {
+        const dragImage = document.createElement('div');
+        dragImage.textContent = removeEncSuffix(item.name);
       dragImage.style.position = 'absolute';
       dragImage.style.top = '-1000px';
+      dragImage.style.padding = '4px 8px';
+      dragImage.style.borderRadius = '4px';
+      dragImage.style.backgroundColor = getThemeSurfaceColor(theme);
+      dragImage.style.color = getThemeAccentColor(theme);
+      dragImage.style.border = `1px solid ${getThemeBorderColor(theme)}`;
+      dragImage.style.opacity = '0.8';
+      dragImage.style.fontSize = '12px';
+      dragImage.style.whiteSpace = 'nowrap';
       document.body.appendChild(dragImage);
       e.dataTransfer.setDragImage(dragImage, 0, 0);
       setTimeout(() => document.body.removeChild(dragImage), 0);
@@ -159,7 +175,7 @@ function FolderItem({
     // 防止拖拽到自己的子目录：检查目标目录是否是源目录的子目录
     // 如果源路径是目标路径的前缀，说明目标目录在源目录内部
     if (item.path.startsWith(sourcePath + '/')) {
-      alert('不能将目录移动到其自身或子目录中');
+      // 使用toast显示错误，但不阻止操作（已通过return阻止）
       return;
     }
     
@@ -191,18 +207,26 @@ function FolderItem({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors ${
+        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-all duration-200 ${
           item.is_directory
             ? 'hover:bg-stone-800/20'
             : 'opacity-50 hover:opacity-100'
-        } ${isDragging ? 'opacity-50' : ''} ${isDragOver ? 'bg-stone-800/40' : ''}`}
+        } ${isDragging ? 'opacity-30 scale-95' : ''} ${isDragOver ? 'bg-stone-800/40 scale-[1.02]' : ''}`}
         style={{ 
           paddingLeft: `${level * 1 + 0.5}rem`,
           ...(isDragOver ? { 
             outline: `2px solid ${getThemeAccentColor(theme)}`,
             outlineOffset: '2px',
+            backgroundColor: getThemeAccentBgColor(theme) + '60',
+          } : focusedItemPath === item.path ? {
+            outline: `1px solid ${getThemeAccentColor(theme)}`,
+            outlineOffset: '-1px',
+            backgroundColor: getThemeAccentBgColor(theme) + '40',
           } : {}),
         }}
+        role={item.is_directory ? 'treeitem' : 'listitem'}
+        aria-label={item.is_directory ? `文件夹 ${removeEncSuffix(item.name)}` : `文件 ${removeEncSuffix(item.name)}`}
+        aria-expanded={item.is_directory ? isExpanded : undefined}
       >
         {item.is_directory ? (
           <>
@@ -218,7 +242,7 @@ function FolderItem({
             <FileText size={16} />
           </>
         )}
-        <span className="text-xs truncate">{item.name}</span>
+        <span className="text-xs truncate">{removeEncSuffix(item.name)}</span>
       </div>
       {isExpanded && item.is_directory && (
         <div>
@@ -235,6 +259,7 @@ function FolderItem({
               onToggleExpand={onToggleExpand}
               onDrop={onDrop}
               onClearRootDragOver={onClearRootDragOver}
+              focusedItemPath={focusedItemPath}
             />
           ))}
         </div>
@@ -254,10 +279,18 @@ export function Sidebar({
   onToggle,
 }: SidebarProps) {
   const { theme } = useTheme();
+  const toast = useToast();
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: FileInfo | null } | null>(null);
   const [isRenaming, setIsRenaming] = useState(false); // 重命名操作进行中标志
+  const [isOperationInProgress, setIsOperationInProgress] = useState(false); // 文件操作进行中标志
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; item: FileInfo | null }>({ isOpen: false, item: null });
+  const [inputModal, setInputModal] = useState<{ 
+    isOpen: boolean; 
+    type: 'createFile' | 'createDirectory' | 'rename';
+    defaultValue?: string;
+  }>({ isOpen: false, type: 'createFile' });
   
   // 剪贴板状态管理
   const [clipboard, setClipboard] = useState<{ type: 'copy' | 'cut'; item: FileInfo } | null>(null);
@@ -268,6 +301,10 @@ export function Sidebar({
   // 使用useRef维护展开状态，避免重新渲染时丢失
   const expandedPathsRef = useRef<Set<string>>(new Set());
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  
+  // 键盘导航：跟踪当前聚焦的项
+  const [focusedItemPath, setFocusedItemPath] = useState<string | null>(null);
+  const focusedItemRef = useRef<string | null>(null);
 
   // 从缓存加载展开状态
   useEffect(() => {
@@ -276,6 +313,83 @@ export function Sidebar({
     expandedPathsRef.current = pathsSet;
     setExpandedPaths(pathsSet);
   }, []);
+
+  // 键盘导航支持（仅在侧边栏打开时生效，支持顶层文件项导航）
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 如果焦点在输入框或其他可编辑元素上，不处理
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      // 如果右键菜单或Modal打开，不处理
+      if (contextMenu || deleteModal.isOpen || inputModal.isOpen) {
+        return;
+      }
+
+      // 只在顶层文件项中导航（简化实现）
+      if (files.length === 0) return;
+
+      let currentIndex = -1;
+      if (focusedItemRef.current) {
+        currentIndex = files.findIndex((item) => item.path === focusedItemRef.current);
+      }
+
+      switch (e.key) {
+        case 'ArrowDown': {
+          e.preventDefault();
+          const nextIndex = currentIndex < files.length - 1 ? currentIndex + 1 : 0;
+          const nextItem = files[nextIndex];
+          if (nextItem) {
+            focusedItemRef.current = nextItem.path;
+            setFocusedItemPath(nextItem.path);
+          }
+          break;
+        }
+        case 'ArrowUp': {
+          e.preventDefault();
+          const prevIndex = currentIndex > 0 ? currentIndex - 1 : files.length - 1;
+          const prevItem = files[prevIndex];
+          if (prevItem) {
+            focusedItemRef.current = prevItem.path;
+            setFocusedItemPath(prevItem.path);
+          }
+          break;
+        }
+        case 'Enter': {
+          e.preventDefault();
+          if (focusedItemRef.current) {
+            const item = files.find((item) => item.path === focusedItemRef.current);
+            if (item) {
+              if (item.is_directory) {
+                handleToggleExpand(item.path);
+              } else {
+                onFileSelect?.(item.path);
+              }
+            }
+          }
+          break;
+        }
+        case 'Escape': {
+          // ESC关闭右键菜单
+          if (contextMenu) {
+            setContextMenu(null);
+          }
+          focusedItemRef.current = null;
+          setFocusedItemPath(null);
+          break;
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, files, contextMenu, deleteModal.isOpen, inputModal.isOpen, onFileSelect]);
 
   // 切换展开状态
   const handleToggleExpand = (path: string) => {
@@ -304,7 +418,7 @@ export function Sidebar({
       // 检查目标路径的父目录是否是源路径的子目录
       const destParent = destPath.substring(0, destPath.lastIndexOf('/'));
       if (destParent.startsWith(sourcePath + '/')) {
-        alert('不能将目录移动到其自身或子目录中');
+        toast.error('不能将目录移动到其自身或子目录中');
         return;
       }
       
@@ -316,11 +430,11 @@ export function Sidebar({
       
       // 提供更友好的错误信息
       if (errorMessage.includes('目标路径已存在')) {
-        alert('目标位置已存在同名文件或目录');
+        toast.error('目标位置已存在同名文件或目录');
       } else if (errorMessage.includes('不能将目录移动到其自身或子目录')) {
-        alert('不能将目录移动到其自身或子目录中');
+        toast.error('不能将目录移动到其自身或子目录中');
       } else {
-        alert(`移动文件失败: ${errorMessage}`);
+        toast.error(`移动文件失败: ${errorMessage}`);
       }
     }
   };
@@ -421,51 +535,13 @@ export function Sidebar({
     try {
       switch (action) {
         case 'createFile': {
-          const fileName = prompt('请输入文件名（不含扩展名）:');
-          if (fileName) {
-            let filePath: string;
-            if (isRootMenu) {
-              // 根目录右键菜单
-              filePath = `${workspacePath}/${fileName}`;
-            } else if (item) {
-              filePath = item.is_directory
-                ? `${item.path}/${fileName}`
-                : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${fileName}`;
-            } else {
-              return;
-            }
-            // 创建新文件时使用默认的 Tiptap JSON 格式
-            const defaultContent: JSONContent = { type: 'doc', content: [] };
-            await createFile(filePath, JSON.stringify(defaultContent, null, 2));
-            await refreshFiles();
-            // 如果是根目录右键菜单，关闭菜单
-            if (isRootMenu) {
-              setContextMenu(null);
-            }
-          }
+          if (isOperationInProgress) break;
+          setInputModal({ isOpen: true, type: 'createFile' });
           break;
         }
         case 'createDirectory': {
-          const dirName = prompt('请输入目录名:');
-          if (dirName) {
-            let dirPath: string;
-            if (isRootMenu) {
-              // 根目录右键菜单
-              dirPath = `${workspacePath}/${dirName}`;
-            } else if (item) {
-              dirPath = item.is_directory
-                ? `${item.path}/${dirName}`
-                : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${dirName}`;
-            } else {
-              return;
-            }
-            await createDirectory(dirPath);
-            await refreshFiles();
-            // 如果是根目录右键菜单，关闭菜单
-            if (isRootMenu) {
-              setContextMenu(null);
-            }
-          }
+          if (isOperationInProgress) break;
+          setInputModal({ isOpen: true, type: 'createDirectory' });
           break;
         }
         case 'copy': {
@@ -481,28 +557,30 @@ export function Sidebar({
           break;
         }
         case 'paste': {
+          if (isOperationInProgress) break;
           // 粘贴文件
           if (!clipboard) {
-            alert('剪贴板为空');
+            toast.error('剪贴板为空');
             break;
           }
           
-          // 确定目标目录
-          let targetDir: string;
-          if (item && item.is_directory) {
-            targetDir = item.path;
-          } else if (item) {
-            // 如果点击的是文件，粘贴到其父目录
-            targetDir = item.path.substring(0, item.path.lastIndexOf('/'));
-          } else {
-            // 如果没有选中项，粘贴到工作区根目录
-            targetDir = workspacePath;
-          }
-          
-          const sourcePath = clipboard.item.path;
-          const destPath = `${targetDir}/${clipboard.item.name}`;
-          
+          setIsOperationInProgress(true);
           try {
+            // 确定目标目录
+            let targetDir: string;
+            if (item && item.is_directory) {
+              targetDir = item.path;
+            } else if (item) {
+              // 如果点击的是文件，粘贴到其父目录
+              targetDir = item.path.substring(0, item.path.lastIndexOf('/'));
+            } else {
+              // 如果没有选中项，粘贴到工作区根目录
+              targetDir = workspacePath;
+            }
+            
+            const sourcePath = clipboard.item.path;
+            const destPath = `${targetDir}/${clipboard.item.name}`;
+            
             if (clipboard.type === 'copy') {
               // 复制文件
               await copyFileOrDirectory(sourcePath, destPath);
@@ -515,71 +593,157 @@ export function Sidebar({
             await refreshFiles();
           } catch (error) {
             console.error('粘贴失败:', error);
-            alert(`粘贴失败: ${error}`);
+            toast.error(`粘贴失败: ${error instanceof Error ? error.message : String(error)}`);
+          } finally {
+            setIsOperationInProgress(false);
           }
           break;
         }
         case 'rename': {
-          if (!item) break;
-          const newName = prompt('请输入新名称:', item.name);
-          if (newName && newName !== item.name) {
-            const newPath = item.path.replace(item.name, newName);
-            
-            // 显示加载覆盖层
-            setIsRenaming(true);
-            
-            try {
-              // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
-              const patToken = await getPatToken();
-              const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
-              
-              // 如果配置了远程仓库和 PAT，使用带 Git 同步的重命名
-              if (remoteUrl && patToken) {
-                console.log('[重命名] 使用 Git 同步重命名');
-                await renameFileWithGitSync(
-                  workspacePath,
-                  item.path,
-                  newPath,
-                  'origin',
-                  'main',
-                  patToken
-                );
-              } else {
-                // 否则只执行重命名（不推送）
-                console.log('[重命名] 仅执行重命名（未配置远程仓库或 PAT）');
-                await renameFileOrDirectory(item.path, newPath);
-                // 仍然执行 commit（但不 push）
-                // 注意：这里需要先导入 commitChanges
-                // await commitChanges(workspacePath, `rename: ${item.path} -> ${newPath}`);
-              }
-              
-              await refreshFiles();
-            } catch (error) {
-              console.error('[重命名] 操作失败:', error);
-              alert(`重命名失败: ${error instanceof Error ? error.message : String(error)}`);
-            } finally {
-              // 隐藏加载覆盖层
-              setIsRenaming(false);
-            }
-          }
+          if (!item || isOperationInProgress) break;
+          setInputModal({ isOpen: true, type: 'rename', defaultValue: removeEncSuffix(item.name) });
           break;
         }
         case 'delete': {
           if (!item) break;
-          if (confirm(`确定要删除 "${item.name}" 吗？`)) {
-            if (item.is_directory) {
-              await deleteDirectory(item.path);
-            } else {
-              await deleteFile(item.path);
-            }
-            await refreshFiles();
-          }
+          // 显示删除确认对话框
+          setDeleteModal({ isOpen: true, item });
           break;
         }
       }
     } catch (error) {
       console.error('操作失败:', error);
-      alert(`操作失败: ${error}`);
+      toast.error(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  // 处理删除确认
+  const handleDeleteConfirm = async () => {
+    const item = deleteModal.item;
+    if (!item || isOperationInProgress) return;
+
+    setIsOperationInProgress(true);
+    try {
+      if (item.is_directory) {
+        await deleteDirectory(item.path);
+      } else {
+        await deleteFile(item.path);
+      }
+      await refreshFiles();
+      setDeleteModal({ isOpen: false, item: null });
+      setContextMenu(null);
+    } catch (error) {
+      console.error('删除失败:', error);
+      toast.error(`删除失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsOperationInProgress(false);
+    }
+  };
+
+  // 处理输入确认
+  const handleInputConfirm = async (value: string) => {
+    if (isOperationInProgress) return;
+
+    const isRootMenu = !contextMenu?.item;
+    const item = contextMenu?.item;
+
+    setIsOperationInProgress(true);
+    try {
+      switch (inputModal.type) {
+        case 'createFile': {
+          // 确保文件名包含 .enc 后缀
+          const fileName = ensureEncSuffix(value, false);
+          
+          let filePath: string;
+          if (isRootMenu) {
+            filePath = `${workspacePath}/${fileName}`;
+          } else if (item) {
+            filePath = item.is_directory
+              ? `${item.path}/${fileName}`
+              : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${fileName}`;
+          } else {
+            return;
+          }
+          // 创建新文件时使用默认的 Tiptap JSON 格式
+          const defaultContent: JSONContent = { type: 'doc', content: [] };
+          await createFile(filePath, JSON.stringify(defaultContent, null, 2));
+          await refreshFiles();
+          if (isRootMenu) {
+            setContextMenu(null);
+          }
+          break;
+        }
+        case 'createDirectory': {
+          let dirPath: string;
+          if (isRootMenu) {
+            dirPath = `${workspacePath}/${value}`;
+          } else if (item) {
+            dirPath = item.is_directory
+              ? `${item.path}/${value}`
+              : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${value}`;
+          } else {
+            return;
+          }
+          await createDirectory(dirPath);
+          await refreshFiles();
+          if (isRootMenu) {
+            setContextMenu(null);
+          }
+          break;
+        }
+        case 'rename': {
+          if (!item) return;
+          
+          // 比较时也需要去掉 .enc 后缀
+          const displayName = removeEncSuffix(item.name);
+          if (value === displayName) return;
+
+          // 确保新文件名包含 .enc 后缀（如果是文件）
+          const newFileName = ensureEncSuffix(value, item.is_directory);
+          
+          // 构建新路径：获取原路径的目录部分 + 新文件名
+          const pathParts = item.path.split('/');
+          pathParts[pathParts.length - 1] = newFileName;
+          const newPath = pathParts.join('/');
+          
+          // 显示加载覆盖层
+          setIsRenaming(true);
+          
+          try {
+            // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
+            const patToken = await getPatToken();
+            const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
+            
+            // 如果配置了远程仓库和 PAT，使用带 Git 同步的重命名
+            if (remoteUrl && patToken) {
+              console.log('[重命名] 使用 Git 同步重命名');
+              await renameFileWithGitSync(
+                workspacePath,
+                item.path,
+                newPath,
+                'origin',
+                'main',
+                patToken
+              );
+            } else {
+              // 否则只执行重命名（不推送）
+              console.log('[重命名] 仅执行重命名（未配置远程仓库或 PAT）');
+              await renameFileOrDirectory(item.path, newPath);
+            }
+            
+            await refreshFiles();
+          } finally {
+            setIsRenaming(false);
+          }
+          break;
+        }
+      }
+      setInputModal({ isOpen: false, type: 'createFile' });
+    } catch (error) {
+      console.error('操作失败:', error);
+      toast.error(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsOperationInProgress(false);
     }
   };
 
@@ -654,7 +818,7 @@ export function Sidebar({
           </button>
         </div>
         {loading ? (
-          <div className="text-xs opacity-50">加载中...</div>
+          <FileTreeSkeleton />
         ) : files.length === 0 ? (
           <div className="text-xs opacity-50">
             <div className="mb-2">目录为空</div>
@@ -674,6 +838,7 @@ export function Sidebar({
                 onToggleExpand={handleToggleExpand}
                 onDrop={handleDrop}
                 onClearRootDragOver={() => setIsRootDragOver(false)}
+                focusedItemPath={focusedItemPath}
               />
             ))}
           </div>
@@ -694,11 +859,55 @@ export function Sidebar({
         />
       )}
       
-      {/* 加载覆盖层：重命名操作进行中时显示 */}
+      {/* 加载覆盖层：文件操作进行中时显示 */}
       <LoadingOverlay 
-        isVisible={isRenaming} 
-        message="正在重命名并同步到云端..." 
+        isVisible={isRenaming || isOperationInProgress} 
+        message={isRenaming ? "正在重命名并同步到云端..." : "正在处理文件操作..."} 
       />
+
+      {/* 输入对话框 */}
+      <InputModal
+        isOpen={inputModal.isOpen}
+        title={
+          inputModal.type === 'createFile'
+            ? '创建文件'
+            : inputModal.type === 'createDirectory'
+            ? '创建目录'
+            : '重命名'
+        }
+        placeholder={
+          inputModal.type === 'createFile'
+            ? '请输入文件名（不含扩展名）'
+            : inputModal.type === 'createDirectory'
+            ? '请输入目录名'
+            : '请输入新名称'
+        }
+        defaultValue={inputModal.defaultValue || ''}
+        confirmText="确认"
+        cancelText="取消"
+        validator={validateFileName}
+        onConfirm={handleInputConfirm}
+        onCancel={() => setInputModal({ isOpen: false, type: 'createFile' })}
+        isLoading={isOperationInProgress}
+      />
+
+      {/* 删除确认对话框 */}
+      {deleteModal.item && (
+        <Modal
+          isOpen={deleteModal.isOpen}
+          title={deleteModal.item.is_directory ? '删除目录' : '删除文件'}
+          message={
+            deleteModal.item.is_directory
+              ? `确定要删除目录 "${removeEncSuffix(deleteModal.item.name)}" 吗？\n\n这将删除目录及其所有内容，此操作无法撤销。`
+              : `确定要删除文件 "${removeEncSuffix(deleteModal.item.name)}" 吗？\n\n此操作无法撤销。`
+          }
+          confirmText="删除"
+          cancelText="取消"
+          type="danger"
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteModal({ isOpen: false, item: null })}
+        />
+      )}
     </aside>
   );
 }

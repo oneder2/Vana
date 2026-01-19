@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { TextSelection } from 'prosemirror-state';
 import { useTheme } from '@/components/ThemeProvider';
+import { useToast } from '@/components/ToastProvider';
+import { Modal } from '@/components/Modal';
 import { Sidebar } from '@/components/Sidebar';
 import { Editor } from '@/components/Editor';
 import { RadialMenu } from '@/components/RadialMenu';
@@ -26,6 +28,7 @@ import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAcc
 import { readFile, getWorkspacePath, ensureWorkspaceInitialized, fetchFromRemote, getRemoteUrl, getPatToken, commitChanges, readWorkspaceConfig } from '@/lib/api';
 import { retryFailedPushTasks, getQueueSize } from '@/lib/syncQueue';
 import { loadAtmosphereConfig } from '@/lib/atmosphere';
+import { loadWindowState, saveWindowState } from '@/lib/windowState';
 import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit } from 'lucide-react';
 import Link from 'next/link';
 import type { Editor as TiptapEditor } from '@tiptap/react';
@@ -55,6 +58,7 @@ function countWords(content: JSONContent): number {
 // 主应用组件（需要在 ThemeProvider 内部）
 function MainApp() {
   const { theme, setTheme } = useTheme();
+  const toast = useToast();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showRadial, setShowRadial] = useState(false);
   const [radialPos, setRadialPos] = useState({ x: 0, y: 0 });
@@ -66,6 +70,46 @@ function MainApp() {
   const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
   const [editorLayout, setEditorLayout] = useState<EditorLayout>('center');
   const [editorTriggerCommit, setEditorTriggerCommit] = useState<(() => Promise<void>) | undefined>(undefined);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [pendingFileSelect, setPendingFileSelect] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [syncMessage, setSyncMessage] = useState<string>('');
+
+  // 窗口状态记忆（基础框架，实际窗口操作需要Tauri命令支持）
+  useEffect(() => {
+    // 尝试从缓存恢复窗口状态
+    // TODO: 集成Tauri窗口API以实际恢复窗口大小和位置
+    const savedState = loadWindowState();
+    if (savedState) {
+      console.log('[windowState] 恢复窗口状态:', savedState);
+      // 注意：实际窗口恢复需要在Tauri层面实现
+    }
+  }, []);
+
+  // 保存窗口状态（在窗口大小改变时）
+  useEffect(() => {
+    const handleResize = () => {
+      const state = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        // x, y 和 maximized 需要从Tauri窗口API获取
+      };
+      saveWindowState(state);
+    };
+
+    // 防抖保存
+    let timeoutId: NodeJS.Timeout;
+    const debouncedSave = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleResize, 500);
+    };
+
+    window.addEventListener('resize', debouncedSave);
+    return () => {
+      window.removeEventListener('resize', debouncedSave);
+      clearTimeout(timeoutId);
+    };
+  }, []);
 
   // 初始化工作区
   useEffect(() => {
@@ -196,6 +240,17 @@ function MainApp() {
 
   // 加载文件
   const handleFileSelect = async (path: string) => {
+    // 如果有未保存的更改，显示确认对话框
+    if (hasUnsavedChanges && currentFilePath && currentFilePath !== path) {
+      setPendingFileSelect(path);
+      return;
+    }
+
+    await performFileSelect(path);
+  };
+
+  // 执行文件选择（实际加载文件）
+  const performFileSelect = async (path: string) => {
     try {
       // 关闭旧文件时触发 Tier 2 提交（如果有旧文件）
       if (currentFilePath && currentFilePath !== path && editorTriggerCommit) {
@@ -255,7 +310,41 @@ function MainApp() {
       setCurrentFilePath(path);
     } catch (error) {
       console.error('加载文件失败:', error);
+      toast.error(`加载文件失败: ${error instanceof Error ? error.message : String(error)}`);
     }
+  };
+
+  // 处理未保存更改确认 - 保存并切换
+  const handleUnsavedChangesSave = async () => {
+    if (!pendingFileSelect) return;
+
+    // 保存并切换
+    if (editorTriggerCommit) {
+      try {
+        await editorTriggerCommit();
+      } catch (error) {
+        console.error('保存失败:', error);
+        toast.error(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+    }
+
+    // 执行文件切换
+    setHasUnsavedChanges(false);
+    const targetPath = pendingFileSelect;
+    setPendingFileSelect(null);
+    await performFileSelect(targetPath);
+  };
+
+  // 处理未保存更改确认 - 不保存直接切换
+  const handleUnsavedChangesDiscard = async () => {
+    if (!pendingFileSelect) return;
+
+    // 不保存，直接切换
+    setHasUnsavedChanges(false);
+    const targetPath = pendingFileSelect;
+    setPendingFileSelect(null);
+    await performFileSelect(targetPath);
   };
 
   // 处理块点击（显示环形菜单）
@@ -375,15 +464,19 @@ function MainApp() {
             </button>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" title={syncMessage || '同步状态'}>
             <span
               className={`text-[9px] ${theme.uiFont} opacity-40 hidden sm:block`}
             >
-              SYNC_STABLE
+              {syncStatus === 'syncing' ? '同步中...' : syncStatus === 'error' ? '同步失败' : 'SYNC_STABLE'}
             </span>
             <div
               className={`w-1.5 h-1.5 rounded-full ${
-                theme.accent === 'text-stone-800' ? 'bg-green-600' : 'bg-emerald-500'
+                syncStatus === 'syncing' 
+                  ? 'bg-yellow-500'
+                  : syncStatus === 'error'
+                  ? 'bg-red-500'
+                  : theme.accent === 'text-stone-800' ? 'bg-green-600' : 'bg-emerald-500'
               } ${theme.glow}`}
             ></div>
           </div>
@@ -395,7 +488,7 @@ function MainApp() {
                 try {
                   if (!workspacePath) {
                     console.error('[Debug Commit] workspacePath 为空');
-                    alert('工作区路径为空');
+                    toast.error('工作区路径为空');
                     return;
                   }
                   
@@ -410,10 +503,10 @@ function MainApp() {
                   // 强制触发提交（不检查 hasUnsavedChanges）
                   await commitChanges(commitPath, 'manual_debug_commit');
                   console.log('[Debug Commit] 提交成功');
-                  alert('提交成功！请查看控制台日志。');
+                  toast.success('提交成功！请查看控制台日志。');
                 } catch (error) {
                   console.error('[Debug Commit] 提交失败:', error);
-                  alert(`提交失败: ${error instanceof Error ? error.message : String(error)}`);
+                  toast.error(`提交失败: ${error instanceof Error ? error.message : String(error)}`);
                 }
               }}
               className="p-1.5 border rounded hover:opacity-80 transition-opacity"
@@ -568,6 +661,7 @@ function MainApp() {
                 setEditorInstance(editor);
                 setEditorTriggerCommit(() => triggerCommit);
               }}
+              onUnsavedChangesChange={setHasUnsavedChanges}
             />
           </div>
         </div>
@@ -654,6 +748,21 @@ function MainApp() {
           editor={editorInstance}
           onClose={() => setShowBlockSelector(false)}
           mode="mobile"
+        />
+      )}
+
+      {/* 未保存更改确认对话框 */}
+      {pendingFileSelect && (
+        <Modal
+          isOpen={true}
+          title="未保存的更改"
+          message="当前文件有未保存的更改。是否保存后再切换文件？"
+          confirmText="保存并切换"
+          cancelText="不保存"
+          type="warning"
+          onConfirm={handleUnsavedChangesSave}
+          onCancel={handleUnsavedChangesDiscard}
+          closeOnOverlayClick={false}
         />
       )}
     </div>

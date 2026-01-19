@@ -155,6 +155,7 @@ export function ContextMenu({
             style={{
               color: getThemeAccentColor(theme),
             }}
+            aria-label={item.label}
           >
             <Icon size={16} />
             <span>{item.label}</span>
