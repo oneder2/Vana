@@ -18,7 +18,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import { TextSelection } from 'prosemirror-state';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
-import { writeFile, commitChanges, readWorkspaceConfig, syncWithRemote, getPatToken, getRemoteUrl, fetchFromRemote, getRepositoryStatus, getCurrentBranch, switchToBranch } from '@/lib/api';
+import { writeFile, commitChanges, readWorkspaceConfig, syncWithRemote, getPatToken, getRemoteUrl, fetchFromRemote, getRepositoryStatus } from '@/lib/api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { addFailedPushTask } from '@/lib/syncQueue';
 import { addBlockUUIDs } from '@/lib/smart-slice';
@@ -705,23 +705,11 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       
       console.log('[triggerTier2Commit] 提交路径:', commitPath);
 
-      // 分支检查和自动纠错：确保当前在 draft 分支
-      try {
-        const currentBranch = await getCurrentBranch(commitPath);
-        console.log('[triggerTier2Commit] 当前分支:', currentBranch);
-        
-        if (currentBranch !== 'draft') {
-          console.warn('[triggerTier2Commit] 检测到当前分支不是 draft，自动切换到 draft 分支');
-          await switchToBranch(commitPath, 'draft');
-          console.log('[triggerTier2Commit] 已切换到 draft 分支');
-        }
-      } catch (branchError) {
-        console.error('[triggerTier2Commit] 分支检查失败，继续执行 commit（commit_changes 会处理分支切换）:', branchError);
-        // 分支检查失败不影响 commit，因为 commit_changes 内部也会确保分支正确
-      }
+      // 单分支模型：所有提交都在 main 分支上
+      // commit_changes 内部会确保 HEAD 指向 main 分支，无需手动切换
 
       // 不再只依赖 hasUnsavedChangesRef（它只反映当前文档落盘状态）
-      // 以 git status 为准：确保“全局变更（创建/删除/移动/其它文件更新）”也能触发 commit
+      // 以 git status 为准：确保"全局变更（创建/删除/移动/其它文件更新）"也能触发 commit
       const status = await getRepositoryStatus(commitPath);
       console.log('[triggerTier2Commit] git status:', status);
 
@@ -733,13 +721,13 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       }
 
       await commitChanges(commitPath, 'auto_snapshot');
-      console.log('Tier 2: Git 提交成功（在 draft 分支上）');
+      console.log('Tier 2: Git 提交成功（在 main 分支上）');
       hasUnsavedChangesRef.current = false;
       onUnsavedChangesChange?.(false);
       
-      // 双层分支模型：不再每次 commit 后都自动同步
-      // Commit 会在 draft 分支上累积，只在手动同步或特定场景（应用关闭前）才同步
-      // 这样可以减少 push 频率，提高性能
+      // 单分支模型：提交直接在 main 分支上
+      // 不再每次 commit 后都自动同步，减少 push 频率，提高性能
+      // 同步会在手动触发或应用关闭前执行
     } catch (error) {
       console.error('Tier 2: Git 提交失败:', error);
     }
@@ -867,7 +855,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
           console.log('[窗口关闭] 无未保存更改，跳过 commit');
         }
         
-        // 清仓同步：将 draft 分支的所有 commit 压缩并推送到远程
+        // 清仓同步：将 main 分支的本地提交推送到远程
         // 注意：beforeunload 中的异步操作可能被浏览器终止
         // 使用非阻塞方式触发同步（不等待完成）
         if (!workspacePath) {

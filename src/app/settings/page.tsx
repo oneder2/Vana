@@ -17,9 +17,13 @@ import {
   hasPatToken,
   addRemote,
   getRemoteUrl,
-  syncWithRemote,
+  beginSync,
+  continueSync,
+  abortSync,
+  resolveConflict,
   getWorkspacePath,
 } from '@/lib/api';
+import { ConflictModal, type ConflictChoice } from '@/components/ConflictModal';
 import { QRCodeDisplay } from '@/components/QRCodeDisplay';
 import { QRCodeScanner } from '@/components/QRCodeScanner';
 import { isMobile } from '@/lib/platform';
@@ -50,6 +54,8 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const [syncConflict, setSyncConflict] = useState<import('@/lib/api').SyncConflict | null>(null);
   
   // 默认远程仓库URL
   const DEFAULT_REMOTE_URL = 'https://github.com/oneder2/Erlang-Writing.git';
@@ -206,14 +212,13 @@ export default function SettingsPage() {
       const pat = await getPatToken();
       
       // 执行同步
-      const result = await syncWithRemote(workspacePath, 'origin', 'main', pat || undefined);
+      const result = await beginSync(workspacePath, 'origin', 'main', pat || undefined);
       
       if (result.success) {
         if (result.has_conflict) {
-          setSyncStatus({
-            success: true,
-            message: `检测到其他位面的干预，已为您创建一份副本存入冲突分支: ${result.conflict_branch}`,
-          });
+          setSyncConflict(result.conflict ?? null);
+          setConflictOpen(true);
+          setSyncStatus({ success: true, message: '检测到冲突：请选择如何处理后继续同步' });
         } else {
           setSyncStatus({ success: true, message: '同步成功' });
           setLastSyncTime(new Date().toLocaleString());
@@ -228,6 +233,27 @@ export default function SettingsPage() {
     }
   };
 
+  const handleResolveConflictAll = async (choice: ConflictChoice) => {
+    if (!workspacePath || !syncConflict) return;
+    try {
+      const items = syncConflict.files.map((f) => ({ path: f.path, choice }));
+      await resolveConflict(workspacePath, items);
+      const result = await continueSync(workspacePath, 'main');
+      if (result.has_conflict) {
+        setSyncConflict(result.conflict ?? null);
+        setConflictOpen(true);
+        setSyncStatus({ success: true, message: '仍存在冲突：请继续选择处理方式' });
+      } else {
+        setConflictOpen(false);
+        setSyncConflict(null);
+        setSyncStatus({ success: true, message: '冲突已处理并同步完成' });
+        setLastSyncTime(new Date().toLocaleString());
+      }
+    } catch (error) {
+      setSyncStatus({ success: false, message: `冲突处理失败: ${error}` });
+    }
+  };
+
   return (
     <div
       className={`fixed inset-0 flex flex-col transition-colors duration-700 ${theme.font} ${
@@ -237,6 +263,20 @@ export default function SettingsPage() {
         backgroundColor: getThemeBgColor(theme),
       }}
     >
+      <ConflictModal
+        open={conflictOpen}
+        conflict={syncConflict}
+        onResolveAll={handleResolveConflictAll}
+        onClose={async () => {
+          try {
+            await abortSync(workspacePath);
+          } catch {
+            // ignore
+          }
+          setConflictOpen(false);
+          setSyncConflict(null);
+        }}
+      />
       {/* 顶部导航栏 */}
       <header
         className={`h-14 flex items-center justify-between px-4 z-50 border-b transition-transform duration-300`}

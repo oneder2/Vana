@@ -59,6 +59,10 @@ fn main() {
             commands::push_to_remote,
             commands::sync_with_remote,
             commands::handle_sync_conflict,
+            commands::begin_sync,
+            commands::continue_sync_command,
+            commands::abort_sync_command,
+            commands::resolve_conflict_command,
             // 分支管理命令
             commands::get_current_branch_command,
             commands::switch_to_branch_command,

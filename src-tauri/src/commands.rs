@@ -2,7 +2,11 @@
 // 将所有 Rust 功能暴露给前端 JavaScript/TypeScript
 // 每个命令都对应一个可以被前端调用的函数
 
-use crate::git::{commit_changes, get_repository_status, git_gc, init_repository, verify_repository, get_commit_history, SyncResult, get_current_branch, switch_to_branch};
+use crate::git::{
+    abort_sync, commit_changes, continue_sync, get_commit_history, get_current_branch,
+    get_repository_status, git_gc, init_repository, resolve_conflict, switch_to_branch,
+    verify_repository, ConflictResolutionItem, SyncResult,
+};
 use crate::keychain::{store_pat_token, get_pat_token, remove_pat_token, has_pat_token};
 use crate::storage::{
     copy_file_or_directory, create_directory, create_file, delete_directory, delete_file, list_directory,
@@ -367,7 +371,7 @@ pub async fn delete_file_with_git_sync_command(
     pat_token: Option<String>,
     _app: AppHandle,
 ) -> Result<(), String> {
-    use crate::git::{commit_changes, sync_with_remote};
+    use crate::git::commit_changes;
     use std::path::Path;
     
     let repo_path = Path::new(&workspace_path);
@@ -389,23 +393,22 @@ pub async fn delete_file_with_git_sync_command(
         .map_err(|e| format!("git commit 失败: {}", e))?;
     
     // 步骤 4: 如果配置了远程仓库和 PAT，执行完整同步（包含 squash 和 push）
+    // 重要：本地删除 + commit 成功后，应视为"删除成功"（Local-first）。
+    // 同步失败不应回滚/不应让前端认为删除失败，否则会造成 UI 与文件系统状态不一致。
+    // 
+    // 注意：删除/重命名操作后立即同步可能导致 fast-forward 覆盖工作区。
+    // 因此这里只执行 push（如果本地领先），不执行 fetch/rebase，避免覆盖刚删除/重命名的文件。
     if let Some(ref token) = pat_token {
-        eprintln!("[delete_file_with_git_sync] 步骤 4: 执行完整 Git 同步（squash + push）");
-        // 使用 sync_with_remote 执行完整同步流程：
-        // - fetch 远程更新
-        // - squash draft 到 main
-        // - rebase main 到远程
-        // - push 到远程
-        let sync_result = sync_with_remote(repo_path, &remote_name, &branch_name, Some(token.as_str()))
-            .map_err(|e| format!("Git 同步失败: {}", e))?;
-        
-        if !sync_result.success {
-            eprintln!("[delete_file_with_git_sync] 警告：同步未成功");
-        }
-        
-        if sync_result.has_conflict {
-            eprintln!("[delete_file_with_git_sync] 警告：检测到冲突，冲突分支: {:?}", sync_result.conflict_branch);
-            // 冲突不影响删除完成，只是警告
+        eprintln!("[delete_file_with_git_sync] 步骤 4: 尝试 push（不执行 fetch/rebase，避免覆盖工作区）");
+        // 只 push，不 fetch/rebase，避免 fast-forward 覆盖刚删除的文件
+        match crate::git::push_to_remote(repo_path, &remote_name, &branch_name, Some(token.as_str())) {
+            Ok(_) => {
+                eprintln!("[delete_file_with_git_sync] push 成功");
+            }
+            Err(e) => {
+                eprintln!("[delete_file_with_git_sync] 警告：push 失败（不影响本地删除完成）: {}", e);
+                eprintln!("[delete_file_with_git_sync] 建议：稍后手动同步或下次启动自动同步");
+            }
         }
     }
     
@@ -431,7 +434,7 @@ pub async fn delete_directory_with_git_sync_command(
     pat_token: Option<String>,
     _app: AppHandle,
 ) -> Result<(), String> {
-    use crate::git::{commit_changes, sync_with_remote};
+    use crate::git::commit_changes;
     use std::path::Path;
     
     let repo_path = Path::new(&workspace_path);
@@ -454,23 +457,22 @@ pub async fn delete_directory_with_git_sync_command(
         .map_err(|e| format!("git commit 失败: {}", e))?;
     
     // 步骤 4: 如果配置了远程仓库和 PAT，执行完整同步（包含 squash 和 push）
+    // 重要：本地删除 + commit 成功后，应视为"删除成功"（Local-first）。
+    // 同步失败不应回滚/不应让前端认为删除失败，否则会造成 UI 与文件系统状态不一致。
+    //
+    // 注意：删除/重命名操作后立即同步可能导致 fast-forward 覆盖工作区。
+    // 因此这里只执行 push（如果本地领先），不执行 fetch/rebase，避免覆盖刚删除/重命名的文件。
     if let Some(ref token) = pat_token {
-        eprintln!("[delete_directory_with_git_sync] 步骤 4: 执行完整 Git 同步（squash + push）");
-        // 使用 sync_with_remote 执行完整同步流程：
-        // - fetch 远程更新
-        // - squash draft 到 main
-        // - rebase main 到远程
-        // - push 到远程
-        let sync_result = sync_with_remote(repo_path, &remote_name, &branch_name, Some(token.as_str()))
-            .map_err(|e| format!("Git 同步失败: {}", e))?;
-        
-        if !sync_result.success {
-            eprintln!("[delete_directory_with_git_sync] 警告：同步未成功");
-        }
-        
-        if sync_result.has_conflict {
-            eprintln!("[delete_directory_with_git_sync] 警告：检测到冲突，冲突分支: {:?}", sync_result.conflict_branch);
-            // 冲突不影响删除完成，只是警告
+        eprintln!("[delete_directory_with_git_sync] 步骤 4: 尝试 push（不执行 fetch/rebase，避免覆盖工作区）");
+        // 只 push，不 fetch/rebase，避免 fast-forward 覆盖刚删除的目录
+        match crate::git::push_to_remote(repo_path, &remote_name, &branch_name, Some(token.as_str())) {
+            Ok(_) => {
+                eprintln!("[delete_directory_with_git_sync] push 成功");
+            }
+            Err(e) => {
+                eprintln!("[delete_directory_with_git_sync] 警告：push 失败（不影响本地删除完成）: {}", e);
+                eprintln!("[delete_directory_with_git_sync] 建议：稍后手动同步或下次启动自动同步");
+            }
         }
     }
     
@@ -510,7 +512,7 @@ pub async fn rename_file_with_git_sync_command(
     pat_token: Option<String>,
     _app: AppHandle,
 ) -> Result<(), String> {
-    use crate::git::{commit_changes, sync_with_remote};
+    use crate::git::commit_changes;
     use std::path::Path;
     
     let repo_path = Path::new(&workspace_path);
@@ -532,23 +534,22 @@ pub async fn rename_file_with_git_sync_command(
         .map_err(|e| format!("git commit 失败: {}", e))?;
     
     // 步骤 4: 如果配置了远程仓库和 PAT，执行完整同步（包含 squash 和 push）
+    // 重要：本地重命名 + commit 成功后，应视为"重命名成功"（Local-first）。
+    // 同步失败不应回滚/不应让前端认为重命名失败，否则会出现"文件已改名但 UI 仍认为失败 -> 下次用旧路径报不存在"。
+    //
+    // 注意：删除/重命名操作后立即同步可能导致 fast-forward 覆盖工作区。
+    // 因此这里只执行 push（如果本地领先），不执行 fetch/rebase，避免覆盖刚删除/重命名的文件。
     if let Some(ref token) = pat_token {
-        eprintln!("[rename_file_with_git_sync] 步骤 4: 执行完整 Git 同步（squash + push）");
-        // 使用 sync_with_remote 执行完整同步流程：
-        // - fetch 远程更新
-        // - squash draft 到 main
-        // - rebase main 到远程
-        // - push 到远程
-        let sync_result = sync_with_remote(repo_path, &remote_name, &branch_name, Some(token.as_str()))
-            .map_err(|e| format!("Git 同步失败: {}", e))?;
-        
-        if !sync_result.success {
-            eprintln!("[rename_file_with_git_sync] 警告：同步未成功");
-        }
-        
-        if sync_result.has_conflict {
-            eprintln!("[rename_file_with_git_sync] 警告：检测到冲突，冲突分支: {:?}", sync_result.conflict_branch);
-            // 冲突不影响重命名完成，只是警告
+        eprintln!("[rename_file_with_git_sync] 步骤 4: 尝试 push（不执行 fetch/rebase，避免覆盖工作区）");
+        // 只 push，不 fetch/rebase，避免 fast-forward 覆盖刚重命名的文件
+        match crate::git::push_to_remote(repo_path, &remote_name, &branch_name, Some(token.as_str())) {
+            Ok(_) => {
+                eprintln!("[rename_file_with_git_sync] push 成功");
+            }
+            Err(e) => {
+                eprintln!("[rename_file_with_git_sync] 警告：push 失败（不影响本地重命名完成）: {}", e);
+                eprintln!("[rename_file_with_git_sync] 建议：刷新文件列表并稍后手动同步");
+            }
         }
     }
     
@@ -704,6 +705,49 @@ pub fn sync_with_remote(
     })
 }
 
+/// 启动同步（fetch + fast-forward/rebase），如遇冲突返回结构化冲突信息
+///
+/// 前端调用: `invoke('begin_sync', { path: '...', remoteName: 'origin', branchName: 'main', patToken: '...' })`
+#[tauri::command]
+pub fn begin_sync(
+    path: String,
+    remote_name: String,
+    branch_name: String,
+    pat_token: Option<String>,
+) -> Result<SyncResult, String> {
+    crate::git::sync_with_remote(
+        PathBuf::from(path).as_path(),
+        &remote_name,
+        &branch_name,
+        pat_token.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 继续同步（继续进行中的 rebase）
+///
+/// 前端调用: `invoke('continue_sync', { path: '...', branchName: 'main' })`
+#[tauri::command]
+pub fn continue_sync_command(path: String, branch_name: String) -> Result<SyncResult, String> {
+    continue_sync(PathBuf::from(path).as_path(), &branch_name).map_err(|e| e.to_string())
+}
+
+/// 放弃同步（abort 当前 rebase）
+///
+/// 前端调用: `invoke('abort_sync', { path: '...' })`
+#[tauri::command]
+pub fn abort_sync_command(path: String) -> Result<(), String> {
+    abort_sync(PathBuf::from(path).as_path()).map_err(|e| e.to_string())
+}
+
+/// 解决冲突（写入工作区 + stage），随后应调用 `continue_sync`
+///
+/// 前端调用: `invoke('resolve_conflict', { path: '...', items: [{ path: 'a.md', choice: 'CopyBoth' }] })`
+#[tauri::command]
+pub fn resolve_conflict_command(path: String, items: Vec<ConflictResolutionItem>) -> Result<(), String> {
+    resolve_conflict(PathBuf::from(path).as_path(), items).map_err(|e| e.to_string())
+}
+
 /// 处理同步冲突
 /// 
 /// 前端调用: `invoke('handle_sync_conflict', { path: '...', remoteName: 'origin', branchName: 'main' })`
@@ -732,7 +776,7 @@ pub fn get_current_branch_command(path: String) -> Result<String, String> {
 
 /// 切换到指定分支
 /// 
-/// 前端调用: `invoke('switch_to_branch', { path: '...', branch: 'draft' })`
+/// 前端调用: `invoke('switch_to_branch', { path: '...', branch: 'main' })`
 #[tauri::command]
 pub fn switch_to_branch_command(path: String, branch: String) -> Result<(), String> {
     switch_to_branch(PathBuf::from(path).as_path(), &branch)

@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use git2::{Repository, Signature, Commit, ResetType};
+use git2::{Commit, Repository, ResetType, Signature};
 
 /// 验证模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -48,17 +48,21 @@ pub fn init_repository(path: &Path) -> Result<()> {
 
 /// 提交所有更改（全局提交）
 pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
-    eprintln!("[GitOperation] commit_changes: 开始提交，使用 draft 分支");
-    
-    // 确保 draft 分支存在并切换到 draft 分支
-    ensure_draft_branch(repo_path)
-        .context("无法确保 draft 分支存在")?;
-    switch_to_branch(repo_path, "draft")
-        .context("无法切换到 draft 分支")?;
+    eprintln!("[GitOperation] commit_changes: 开始提交（main 单分支）");
+
+    // 如果还未初始化（没有 .git），先初始化仓库
+    if !repo_path.join(".git").exists() {
+        eprintln!("[GitOperation] commit_changes: 检测到未初始化仓库，先 init_repository");
+        init_repository(repo_path)?;
+    }
     
     // 打开仓库
-    let repo = Repository::open(repo_path)
-        .context("无法打开 Git 仓库")?;
+    let repo = Repository::open(repo_path).context("无法打开 Git 仓库")?;
+
+    // 确保 HEAD 指向 main（包括 unborn HEAD / detached HEAD 场景）
+    // 使用符号引用强制 HEAD -> refs/heads/main（即使 main 分支尚未创建）
+    repo.reference_symbolic("HEAD", "refs/heads/main", true, "set HEAD to main")
+        .context("无法将 HEAD 指向 main")?;
     
     // 清理索引锁文件
     cleanup_index_lock(repo_path)?;
@@ -67,14 +71,16 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
     let mut index = repo.index()
         .context("无法获取索引")?;
     
-    // 添加所有文件到索引
+    // 优化顺序：先移除已删除的文件，再添加新文件
+    // 这样可以确保索引状态更准确，避免已删除的文件在索引中残留
+    eprintln!("[GitOperation] commit_changes: 更新索引（移除已删除的文件）");
+    index.update_all(&["*"], None)
+        .context("无法更新索引（移除已删除）")?;
+    
+    // 然后添加所有文件到索引（包括新文件和已修改的文件）
     eprintln!("[GitOperation] commit_changes: 添加所有文件到索引");
     index.add_all(&["*"], git2::IndexAddOption::DEFAULT, None)
         .context("无法添加文件到索引")?;
-    
-    // 移除已删除的文件
-    index.update_all(&["*"], None)
-        .context("无法更新索引")?;
     
     // 写入索引
     index.write()
@@ -89,8 +95,13 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
     // 获取用户签名
     let sig = repo.signature()
         .unwrap_or_else(|_| {
+            // 如果仓库没有配置 user.name 和 user.email，使用默认值
             Signature::now("No Visitors User", "no-visitors@localhost")
-                .expect("无法创建签名")
+                .unwrap_or_else(|_| {
+                    // 如果默认签名创建也失败（极不可能），使用当前时间戳
+                    Signature::now("User", "user@localhost")
+                        .expect("无法创建 Git 签名（这是系统级错误）")
+                })
         });
     
     // 获取父提交（HEAD）
@@ -100,16 +111,35 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
     
     let parents: Vec<&Commit> = parent_commit.iter().collect();
     
-    // 创建提交
-    let commit_oid = repo.commit(
-        Some("refs/heads/draft"),
+    // 创建提交（提交到 HEAD 指向的 main 分支）
+    let commit_oid = repo
+        .commit(
+        Some("HEAD"),
         &sig,
         &sig,
         message,
         &tree,
         &parents,
     )
-    .context("无法创建提交")?;
+    .map_err(|e| {
+        // 让前端能看到更具体的原因（例如：unborn HEAD / invalid name / config 等）
+        anyhow::anyhow!(
+            "无法创建提交: git2 error (class={:?}, code={:?}): {}",
+            e.class(),
+            e.code(),
+            e.message()
+        )
+    })?;
+
+    // 确保 HEAD 指向 main（避免出现 detached HEAD 或落在其它分支）
+    // 注意：不要在 commit 后强制 checkout_head(force)，因为：
+    // 1. commit 已经更新了索引和工作区状态
+    // 2. 强制 checkout 会覆盖用户的工作区，导致"删除/重命名后又恢复"的问题
+    // 3. 如果 HEAD 已经是 detached 或指向错误分支，只需要 set_head 即可（不强制 checkout）
+    repo.set_head("refs/heads/main")
+        .context("无法设置 HEAD 到 main 分支")?;
+    // 移除 checkout_head(force)：commit 已经更新了索引，工作区状态应该与索引一致
+    // 如果工作区有未暂存的更改，那是用户的工作，不应该被强制覆盖
     
     eprintln!("[GitOperation] commit_changes: 提交成功: {}", commit_oid);
     
@@ -173,52 +203,37 @@ fn cleanup_index_lock(repo_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 确保 draft 分支存在
-pub fn ensure_draft_branch(repo_path: &Path) -> Result<()> {
-    eprintln!("[GitOperation] ensure_draft_branch: 检查 draft 分支是否存在");
-    
-    let repo = Repository::open(repo_path)
-        .context("无法打开 Git 仓库")?;
-    
-    // 检查 draft 分支是否存在
-    if repo.find_branch("draft", git2::BranchType::Local).is_ok() {
-        eprintln!("[GitOperation] ensure_draft_branch: draft 分支已存在");
-        return Ok(());
+/// 为“空远端仓库”的首次 push 准备最小文件集合，避免推送空仓库导致 main 无法建立
+fn seed_initial_files(repo_path: &Path) -> Result<()> {
+    let gitignore_path = repo_path.join(".gitignore");
+    if !gitignore_path.exists() {
+        let content = r#"# Vana / No Visitors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.tmp
+*.log
+"#;
+        std::fs::write(&gitignore_path, content)
+            .with_context(|| format!("无法写入 .gitignore: {}", gitignore_path.display()))?;
     }
-    
-    eprintln!("[GitOperation] ensure_draft_branch: draft 分支不存在，开始创建");
-    
-    // 尝试从 main 分支创建 draft 分支
-    if let Ok(main_branch) = repo.find_branch("main", git2::BranchType::Local) {
-        let commit = main_branch.get().peel_to_commit()
-            .context("无法获取 main 分支提交")?;
-        
-        repo.branch("draft", &commit, false)
-            .context("无法创建 draft 分支")?;
-        
-        eprintln!("[GitOperation] ensure_draft_branch: 从 main 分支创建 draft 分支成功");
-        return Ok(());
+
+    let readme_path = repo_path.join("README.md");
+    if !readme_path.exists() {
+        let content = "# Workspace\n\nThis repository is managed by Vana (No Visitors).\n";
+        std::fs::write(&readme_path, content)
+            .with_context(|| format!("无法写入 README.md: {}", readme_path.display()))?;
     }
-    
-    // 如果 main 分支不存在，尝试从 HEAD 创建
-    if let Ok(head) = repo.head() {
-        let commit = head.peel_to_commit()
-            .context("无法获取 HEAD 提交")?;
-        
-        repo.branch("draft", &commit, false)
-            .context("无法创建 draft 分支")?;
-        
-        eprintln!("[GitOperation] ensure_draft_branch: 从 HEAD 创建 draft 分支成功");
-        return Ok(());
-    }
-    
-    // 如果既没有 main 分支也没有 HEAD，说明是空仓库
-    // 这种情况下，draft 分支会在首次提交时自动创建
-    eprintln!("[GitOperation] ensure_draft_branch: 仓库为空，draft 分支将在首次提交时创建");
+
     Ok(())
 }
 
 /// 切换到指定分支
+/// 
+/// 注意：此函数会强制 checkout，可能覆盖工作区的未提交更改。
+/// 调用前应确保工作区干净，或已保存所有重要更改。
 pub fn switch_to_branch(repo_path: &Path, branch: &str) -> Result<()> {
     let repo = Repository::open(repo_path)
         .context("无法打开 Git 仓库")?;
@@ -227,9 +242,22 @@ pub fn switch_to_branch(repo_path: &Path, branch: &str) -> Result<()> {
     cleanup_index_lock(repo_path)?;
     
     let refname = format!("refs/heads/{}", branch);
+    
+    // 检查是否已经在目标分支上
+    if let Ok(head) = repo.head() {
+        if let Some(head_name) = head.name() {
+            if head_name == refname {
+                eprintln!("[GitOperation] switch_to_branch: 已在分支 {} 上，无需切换", branch);
+                return Ok(());
+            }
+        }
+    }
+    
     let obj = repo.revparse_single(&refname)
         .context(format!("无法找到分支: {}", branch))?;
     
+    // 注意：这里使用 force checkout，会覆盖工作区的未提交更改
+    // 调用者应确保工作区干净或已保存重要更改
     repo.checkout_tree(&obj, Some(git2::build::CheckoutBuilder::new().force()))
         .context(format!("无法切换到分支: {}", branch))?;
     
@@ -309,7 +337,9 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
     let mut fetch_options = git2::FetchOptions::new();
     fetch_options.remote_callbacks(callbacks);
     
-    remote.fetch(&["refs/heads/*:refs/remotes/origin/*"], Some(&mut fetch_options), None)
+    // 将所有远端分支抓取到 refs/remotes/<remote_name>/*
+    let refspec = format!("refs/heads/*:refs/remotes/{}/*", remote_name);
+    remote.fetch(&[&refspec], Some(&mut fetch_options), None)
         .context("fetch 失败")?;
     
     eprintln!("[GitOperation] fetch_from_remote: fetch 完成（使用 git2-rs API）");
@@ -373,6 +403,35 @@ pub struct SyncResult {
     pub success: bool,
     pub has_conflict: bool,
     pub conflict_branch: Option<String>,
+    pub conflict: Option<SyncConflict>,
+}
+
+/// 同步冲突信息（用于前端弹窗展示）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncConflict {
+    pub files: Vec<SyncConflictFile>,
+}
+
+/// 冲突文件（最小必要信息：路径 + 是否二进制）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SyncConflictFile {
+    pub path: String,
+    pub is_binary: bool,
+}
+
+/// 冲突解决策略（ours/theirs/copyBoth）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ConflictResolutionChoice {
+    Ours,
+    Theirs,
+    CopyBoth,
+}
+
+/// 冲突解决请求（按文件粒度）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConflictResolutionItem {
+    pub path: String,
+    pub choice: ConflictResolutionChoice,
 }
 
 /// 与远程同步
@@ -425,10 +484,6 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
                 
                 eprintln!("[GitOperation] sync_with_remote: 远程内容已拉取到本地");
                 
-                // 创建 draft 分支
-                ensure_draft_branch(repo_path)
-                    .context("无法创建 draft 分支")?;
-                
                 // 最终清理索引锁文件
                 cleanup_index_lock(repo_path)?;
                 
@@ -436,15 +491,25 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
                     success: true,
                     has_conflict: false,
                     conflict_branch: None,
+                    conflict: None,
                 });
             }
             Err(_) => {
-                eprintln!("[GitOperation] sync_with_remote: 远程分支不存在，保持空仓库状态");
-                // 远程分支不存在，保持空仓库状态
+                eprintln!("[GitOperation] sync_with_remote: 远程分支不存在（可能是空远端仓库），执行本地初始化并尝试 push 建立 main");
+
+                seed_initial_files(repo_path)?;
+                let _ = commit_changes(repo_path, "chore: initial commit");
+
+                if let Some(pat) = pat_token {
+                    push_to_remote(repo_path, remote_name, branch_name, Some(pat))
+                        .context("initial push 失败")?;
+                }
+
                 return Ok(SyncResult {
                     success: true,
                     has_conflict: false,
                     conflict_branch: None,
+                    conflict: None,
                 });
             }
         }
@@ -457,92 +522,551 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
     switch_to_branch(repo_path, branch_name)
         .context(format!("无法切换到 {} 分支", branch_name))?;
     
-    // 清理索引和工作区（确保干净状态）
-    let head = repo.head()
-        .context("无法获取 HEAD")?;
-    let head_oid = head.target()
-        .context("无法获取 HEAD OID")?;
-    let head_commit = repo.find_commit(head_oid)
-        .context("无法获取 HEAD 提交")?;
-    
-    repo.reset(&head_commit.as_object(), ResetType::Hard, None)
-        .context("无法重置到 HEAD")?;
-    
-    // 清理索引锁文件（reset 后可能留下锁文件）
+    // 清理索引锁文件（不执行 hard reset，避免覆盖用户的工作区更改）
     cleanup_index_lock(repo_path)?;
+
+    // === 关键修复：规范化 HEAD/分支指针，避免“本地已提交但 ahead/behind 算出来为 ahead==0” ===
+    //
+    // 典型触发链条：
+    // - 用户/程序在 detached HEAD 上产生了提交（或 main 分支指针未更新到最新提交）
+    // - sync 里用 refs/heads/main 的 tip 去算 ahead/behind => 得到 ahead==0, behind>0
+    // - 进入 fast-forward + checkout_head(force) => 工作区被覆盖回远端文件树，表现为“删除/重命名恢复原样”
+    //
+    // 解决：在计算 ahead/behind 前，确保：
+    // - HEAD 指向 refs/heads/{branch_name}（或至少把该分支快进到 HEAD commit，如果 HEAD 比分支更新且可快进）
+    let local_branch_refname = format!("refs/heads/{}", branch_name);
+    {
+        let head = repo.head().context("无法获取 HEAD")?;
+        // 注意：head.name() 可能为 None（detached / unborn / direct OID）
+        let head_name = head.name().unwrap_or("<none>").to_string();
+        let head_detached = repo.head_detached().unwrap_or(false);
+        let head_commit = head.peel_to_commit().ok();
+
+        // 如果 HEAD 是 detached，但 HEAD commit 比分支 tip 更新（且是分支 tip 的后代），则快进分支到 HEAD
+        if head_detached {
+            if let (Ok(mut branch_ref), Some(hc)) = (repo.find_reference(&local_branch_refname), head_commit.as_ref()) {
+                if let (Some(branch_oid), Some(head_oid)) = (branch_ref.target(), Some(hc.id())) {
+                    if branch_oid != head_oid {
+                        // 若 head_oid 是 branch_oid 的后代，则可安全 fast-forward 分支
+                        if repo
+                            .graph_descendant_of(head_oid, branch_oid)
+                            .unwrap_or(false)
+                        {
+                            eprintln!(
+                                "[GitOperation] sync_with_remote: HEAD 为 detached 且更新，快进 {} 到 HEAD（{} -> {}）",
+                                local_branch_refname,
+                                branch_oid,
+                                head_oid
+                            );
+                            branch_ref
+                                .set_target(head_oid, "ff branch to detached HEAD")
+                                .context("无法快进本地分支到 HEAD")?;
+                        } else {
+                            eprintln!(
+                                "[GitOperation] sync_with_remote: 警告：HEAD 为 detached 且无法快进到 {}（head={}, head_ref={}）",
+                                local_branch_refname,
+                                hc.id(),
+                                head_name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 若 HEAD 不是指向目标分支，则把 HEAD 指向目标分支（避免后续操作继续落在别的 ref）
+        if head_name != local_branch_refname {
+            eprintln!(
+                "[GitOperation] sync_with_remote: 规范化 HEAD 指向 {}（原 head_ref={}，detached={}）",
+                local_branch_refname,
+                head_name,
+                head_detached
+            );
+            // 安全策略：仅设置 HEAD（不强制 checkout 覆盖工作区）
+            repo.set_head(&local_branch_refname)
+                .context("无法设置 HEAD 到目标分支")?;
+        }
+    }
     
-    // Rebase 或 merge
-    let remote_commit = repo.find_reference(&remote_ref);
-    
-    if let Ok(remote_ref) = remote_commit {
-        let remote_commit_obj = remote_ref.peel_to_commit()
-            .context("无法获取远程提交")?;
+    // 单分支 rebase 流：判断 ahead/behind
+    // 如果远端 main 不存在：若本地有提交则尝试 push；若本地无提交已在上面处理
+    let remote_ref_obj = match repo.find_reference(&remote_ref) {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("[GitOperation] sync_with_remote: 远端分支不存在，尝试 push 本地分支建立远端基准");
+            if let Some(pat) = pat_token {
+                push_to_remote(repo_path, remote_name, branch_name, Some(pat))
+                    .context("push 建立远端分支失败")?;
+            }
+            cleanup_index_lock(repo_path)?;
+            return Ok(SyncResult {
+                success: true,
+                has_conflict: false,
+                conflict_branch: None,
+                conflict: None,
+            });
+        }
+    };
+    let remote_oid = remote_ref_obj
+        .target()
+        .ok_or_else(|| anyhow::anyhow!("远程分支引用没有 target"))?;
+
+    let local_ref_obj = repo
+        .find_reference(&local_branch_refname)
+        .context(format!("无法找到本地分支引用: {}", local_branch_refname))?;
+    let local_oid = local_ref_obj
+        .target()
+        .ok_or_else(|| anyhow::anyhow!("本地分支引用没有 target"))?;
+
+    let (ahead, behind) = repo
+        .graph_ahead_behind(local_oid, remote_oid)
+        .context("无法计算 ahead/behind")?;
+
+    eprintln!(
+        "[GitOperation] sync_with_remote: 计算 ahead/behind 结果: ahead={}, behind={}, local_oid={:?}, remote_oid={:?}",
+        ahead, behind, local_oid, remote_oid
+    );
+
+    if ahead == 0 && behind == 0 {
+        eprintln!("[GitOperation] sync_with_remote: 已是最新，无需同步");
+        cleanup_index_lock(repo_path)?;
+        return Ok(SyncResult {
+            success: true,
+            has_conflict: false,
+            conflict_branch: None,
+            conflict: None,
+        });
+    }
+
+    // 仅本地领先：直接 push（不需要 rebase/fast-forward）
+    if ahead > 0 && behind == 0 {
+        eprintln!(
+            "[GitOperation] sync_with_remote: 仅本地领先（ahead={}），直接 push",
+            ahead
+        );
+        if let Some(pat) = pat_token {
+            push_to_remote(repo_path, remote_name, branch_name, Some(pat))
+                .context("push 失败")?;
+            eprintln!("[GitOperation] sync_with_remote: push 成功");
+        } else {
+            eprintln!("[GitOperation] sync_with_remote: 未提供 PAT token，跳过 push");
+        }
+        cleanup_index_lock(repo_path)?;
+        return Ok(SyncResult {
+            success: true,
+            has_conflict: false,
+            conflict_branch: None,
+            conflict: None,
+        });
+    }
+
+    // 仅落后：fast-forward
+    if ahead == 0 && behind > 0 {
+        eprintln!(
+            "[GitOperation] sync_with_remote: 仅落后（behind={}），执行 fast-forward",
+            behind
+        );
+
+        // 安全检查：避免在工作区有改动时强制 checkout 覆盖用户内容
+        let statuses = repo
+            .statuses(Some(git2::StatusOptions::new().include_untracked(true)))
+            .context("无法获取仓库状态（fast-forward 前检查）")?;
+        if statuses.len() > 0 {
+            return Err(anyhow::anyhow!(
+                "工作区存在未提交变更（{} 项），为避免覆盖本地内容，已阻止 fast-forward。请先提交/还原后再同步。",
+                statuses.len()
+            ));
+        }
+
+        // 关键修复：在 fast-forward 前，检查 HEAD 是否指向最新的提交
+        // 如果 HEAD commit 比 local_oid 更新，说明有未纳入分支的提交，不应该 fast-forward
+        let head_commit_oid = repo.head()
+            .ok()
+            .and_then(|r| r.peel_to_commit().ok())
+            .map(|c| c.id());
         
-        // 重新获取 HEAD commit（因为之前的 reset 可能改变了状态）
-        let head_commit_for_merge = repo.find_commit(head_oid)
-            .context("无法获取 HEAD 提交用于合并")?;
+        if let Some(head_oid) = head_commit_oid {
+            if head_oid != local_oid {
+                // HEAD 指向的提交与分支 tip 不同，可能有未纳入分支的提交
+                // 检查 HEAD 是否比 local_oid 更新
+                if repo.graph_descendant_of(head_oid, local_oid).unwrap_or(false) {
+                    eprintln!(
+                        "[GitOperation] sync_with_remote: 警告：HEAD ({:?}) 比分支 tip ({:?}) 更新，可能存在未纳入分支的提交。跳过 fast-forward 以避免覆盖工作区。",
+                        head_oid, local_oid
+                    );
+                    return Err(anyhow::anyhow!(
+                        "HEAD 指向的提交比分支 tip 更新，可能存在未纳入分支的提交。为避免覆盖工作区，已阻止 fast-forward。请先确保所有提交都已纳入分支。"
+                    ));
+                }
+            }
+        }
+
+        let mut local_ref = repo.find_reference(&local_branch_refname)?;
+        local_ref.set_target(remote_oid, "fast-forward")?;
+        repo.set_head(&local_branch_refname)?;
+        // fast-forward 只移动分支指针，仍需更新工作区；这里可以 force（因为上面已保证工作区干净且 HEAD 与分支一致）
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
+        cleanup_index_lock(repo_path)?;
         
-        // 尝试 rebase
-        // 注意：git2-rs 不直接支持 rebase，需要使用命令行或实现 rebase 逻辑
-        // 这里简化处理：直接 merge
-        let mut index = repo.merge_commits(&head_commit_for_merge, &remote_commit_obj, None)
-            .context("无法合并提交")?;
+        // fast-forward 成功后，如果有本地提交需要推送，执行 push
+        // 注意：fast-forward 后 ahead 应该变为 0，但如果之前有未推送的提交，可能需要 push
+        // 这里检查 fast-forward 后的 ahead/behind 状态
+        let updated_local_oid = repo.find_reference(&local_branch_refname)?
+            .target()
+            .ok_or_else(|| anyhow::anyhow!("本地分支引用没有 target"))?;
+        let (updated_ahead, _) = repo
+            .graph_ahead_behind(updated_local_oid, remote_oid)
+            .context("无法计算 fast-forward 后的 ahead/behind")?;
         
-        if index.has_conflicts() {
-            // 有冲突，创建冲突分支
-            let conflict_branch = format!("conflict_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
-            
-            // 切换到远程状态
-            repo.reset(&remote_commit_obj.as_object(), ResetType::Hard, None)
-                .context("无法重置到远程状态")?;
-            
+        if updated_ahead > 0 {
+            eprintln!(
+                "[GitOperation] sync_with_remote: fast-forward 后仍有 {} 个本地提交未推送，执行 push",
+                updated_ahead
+            );
+            if let Some(pat) = pat_token {
+                push_to_remote(repo_path, remote_name, branch_name, Some(pat))
+                    .context("fast-forward 后 push 失败")?;
+                eprintln!("[GitOperation] sync_with_remote: fast-forward 后 push 成功");
+            }
+        }
+        
+        return Ok(SyncResult {
+            success: true,
+            has_conflict: false,
+            conflict_branch: None,
+            conflict: None,
+        });
+    }
+
+    // 有本地提交且远端也更新：rebase
+    eprintln!(
+        "[GitOperation] sync_with_remote: 分叉（ahead={}, behind={}），开始 rebase",
+        ahead, behind
+    );
+    eprintln!(
+        "[GitOperation] sync_with_remote: 本地提交 OID: {:?}, 远端提交 OID: {:?}",
+        local_oid, remote_oid
+    );
+
+    // 如果上一次 rebase 异常中断（例如进程被杀/commit 失败未清理），这里会导致后续所有操作持续失败。
+    // 发现进行中的 rebase 时，先 best-effort abort，恢复到可继续工作的状态。
+    if let Ok(mut existing) = repo.open_rebase(None) {
+        eprintln!("[GitOperation] sync_with_remote: 检测到未完成的 rebase，先 abort 清理状态");
+        let _ = existing.abort();
+        cleanup_index_lock(repo_path)?;
+    }
+
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| {
+            Signature::now("No Visitors User", "no-visitors@localhost")
+                .unwrap_or_else(|_| {
+                    Signature::now("User", "user@localhost")
+                        .expect("无法创建 Git 签名（这是系统级错误）")
+                })
+        });
+
+    let local_annotated = repo
+        .find_annotated_commit(local_oid)
+        .context("无法创建本地 annotated commit")?;
+    let upstream_annotated = repo
+        .find_annotated_commit(remote_oid)
+        .context("无法创建远端 annotated commit")?;
+
+    let mut rebase_opts = git2::RebaseOptions::new();
+    // 需要开启 in-memory 才能通过 rebase.inmemory_index() 读取冲突索引
+    rebase_opts.inmemory(true);
+    let mut rebase = repo
+        .rebase(
+            Some(&local_annotated),
+            Some(&upstream_annotated),
+            None,
+            Some(&mut rebase_opts),
+        )
+        .context("无法开始 rebase")?;
+
+    let mut rebase_op_count = 0;
+    while let Some(op_res) = rebase.next() {
+        rebase_op_count += 1;
+        let op = op_res.context("rebase next 失败")?;
+        eprintln!(
+            "[GitOperation] sync_with_remote: rebase operation #{}: {:?}",
+            rebase_op_count, op
+        );
+
+        // 使用 rebase 的 in-memory index 检查冲突
+        // 如果因历史状态/环境导致拿不到 in-memory index，则回退到 repo.index()
+        let idx = rebase
+            .inmemory_index()
+            .or_else(|_| repo.index())
+            .context("无法获取 rebase index")?;
+        
+        let has_conflicts = idx.has_conflicts();
+        eprintln!(
+            "[GitOperation] sync_with_remote: rebase operation #{} 冲突检查: has_conflicts={}",
+            rebase_op_count, has_conflicts
+        );
+        
+        if has_conflicts {
+            let mut files: Vec<SyncConflictFile> = Vec::new();
+            let mut conflicts = idx.conflicts().context("无法读取冲突列表")?;
+
+            while let Some(conflict_res) = conflicts.next() {
+                let c = conflict_res.context("读取冲突项失败")?;
+                let path_bytes = c
+                    .our
+                    .as_ref()
+                    .map(|e| e.path.as_ref())
+                    .or_else(|| c.their.as_ref().map(|e| e.path.as_ref()))
+                    .or_else(|| c.ancestor.as_ref().map(|e| e.path.as_ref()))
+                    .ok_or_else(|| anyhow::anyhow!("冲突项缺少 path"))?;
+
+                let path = String::from_utf8_lossy(path_bytes).to_string();
+
+                // 简单二进制判断（后续可升级为基于 blob/内容探测）
+                let is_binary = !path.ends_with(".md")
+                    && !path.ends_with(".txt")
+                    && !path.ends_with(".json")
+                    && !path.ends_with(".vnode.json");
+
+                files.push(SyncConflictFile { path, is_binary });
+            }
+
+            eprintln!(
+                "[GitOperation] sync_with_remote: rebase 冲突，文件数={}",
+                files.len()
+            );
+
             return Ok(SyncResult {
                 success: true,
                 has_conflict: true,
-                conflict_branch: Some(conflict_branch),
+                conflict_branch: None,
+                conflict: Some(SyncConflict { files }),
             });
         }
-        
-        // 提交 merge
-        let tree_id = repo.find_tree(index.write_tree_to(&repo)?)?
-            .id();
-        let tree = repo.find_tree(tree_id)?;
-        let sig = repo.signature()
-            .unwrap_or_else(|_| Signature::now("No Visitors User", "no-visitors@localhost").unwrap());
-        
-        let head_commit_for_commit = repo.find_commit(head_oid)
-            .context("无法获取 HEAD 提交用于提交")?;
-        repo.commit(
-            Some(&format!("refs/heads/{}", branch_name)),
-            &sig,
-            &sig,
-            &format!("Merge {}/{}", remote_name, branch_name),
-            &tree,
-            &[&head_commit_for_commit, &remote_commit_obj],
-        )
-        .context("无法创建 merge 提交")?;
+
+        // 无冲突：提交本次 rebase 变更
+        if let Err(e) = rebase.commit(None, &sig, None) {
+            // libgit2: GIT_EAPPLIED / ErrorCode::Applied
+            // 语义：该 patch 已经在当前分支上存在，应当跳过本次 operation，而不是让整个同步失败。
+            if e.code() == git2::ErrorCode::Applied {
+                // libgit2 语义：该 patch 已经被应用，直接进入下一个 operation 即可
+                eprintln!("[GitOperation] sync_with_remote: rebase commit 返回 Applied（patch 已应用），跳过本次并继续");
+                continue;
+            }
+
+            // 其它错误：commit 失败时必须 abort，否则仓库会一直处于 rebase 状态，后续 delete/rename/sync 都会持续失败
+            let _ = rebase.abort();
+            cleanup_index_lock(repo_path)?;
+            return Err(anyhow::anyhow!("rebase commit 失败: {}", e));
+        }
     }
-    
-    // 确保 draft 分支重置到 main
-    switch_to_branch(repo_path, "draft")
-        .context("无法切换到 draft 分支")?;
-    
-    let main_commit = repo.find_branch(branch_name, git2::BranchType::Local)?
-        .get()
-        .peel_to_commit()
-        .context("无法获取 main 提交")?;
-    
-    repo.reset(&main_commit.as_object(), ResetType::Hard, None)
-        .context("无法重置 draft 到 main")?;
+
+    rebase.finish(Some(&sig)).context("rebase finish 失败")?;
+    repo.set_head(&local_branch_refname)?;
+    // 不要在 rebase.finish 后强制 checkout_head(force)：
+    // - libgit2 的 rebase 流程已经在应用每个操作时更新工作区
+    // - 强制 checkout 会把“刚做的删除/重命名/移动”覆盖回旧状态，造成文件“恢复原样”的错觉
     
     // 最终清理索引锁文件
     cleanup_index_lock(repo_path)?;
+    
+    // rebase 成功后，推送本地提交到远端
+    if let Some(pat) = pat_token {
+        eprintln!("[GitOperation] sync_with_remote: rebase 完成，执行 push");
+        push_to_remote(repo_path, remote_name, branch_name, Some(pat))
+            .context("rebase 后 push 失败")?;
+        eprintln!("[GitOperation] sync_with_remote: rebase 后 push 成功");
+    } else {
+        eprintln!("[GitOperation] sync_with_remote: rebase 完成，但未提供 PAT token，跳过 push");
+    }
     
     Ok(SyncResult {
         success: true,
         has_conflict: false,
         conflict_branch: None,
+        conflict: None,
     })
+}
+
+/// 继续进行一个已经开始且暂停的 rebase（通常在冲突解决后调用）
+pub fn continue_sync(repo_path: &Path, branch_name: &str) -> Result<SyncResult> {
+    let repo = Repository::open(repo_path).context("无法打开 Git 仓库")?;
+
+    let sig = repo
+        .signature()
+        .unwrap_or_else(|_| {
+            Signature::now("No Visitors User", "no-visitors@localhost")
+                .unwrap_or_else(|_| {
+                    Signature::now("User", "user@localhost")
+                        .expect("无法创建 Git 签名（这是系统级错误）")
+                })
+        });
+
+    let mut rebase = repo
+        .open_rebase(None)
+        .context("没有进行中的 rebase，无法 continue")?;
+
+    while let Some(op_res) = rebase.next() {
+        let _op = op_res.context("rebase next 失败")?;
+
+        // 优先使用 rebase 的 in-memory index（若不可用则回退到 repo.index）
+        let idx = rebase
+            .inmemory_index()
+            .or_else(|_| repo.index())
+            .context("无法获取 rebase index")?;
+        if idx.has_conflicts() {
+            let mut files: Vec<SyncConflictFile> = Vec::new();
+            let mut conflicts = idx.conflicts().context("无法读取冲突列表")?;
+            while let Some(conflict_res) = conflicts.next() {
+                let c = conflict_res.context("读取冲突项失败")?;
+                let path_bytes = c
+                    .our
+                    .as_ref()
+                    .map(|e| e.path.as_ref())
+                    .or_else(|| c.their.as_ref().map(|e| e.path.as_ref()))
+                    .or_else(|| c.ancestor.as_ref().map(|e| e.path.as_ref()))
+                    .ok_or_else(|| anyhow::anyhow!("冲突项缺少 path"))?;
+                let path = String::from_utf8_lossy(path_bytes).to_string();
+                let is_binary = !path.ends_with(".md")
+                    && !path.ends_with(".txt")
+                    && !path.ends_with(".json")
+                    && !path.ends_with(".vnode.json");
+                files.push(SyncConflictFile { path, is_binary });
+            }
+
+            return Ok(SyncResult {
+                success: true,
+                has_conflict: true,
+                conflict_branch: None,
+                conflict: Some(SyncConflict { files }),
+            });
+        }
+
+        if let Err(e) = rebase.commit(None, &sig, None) {
+            if e.code() == git2::ErrorCode::Applied {
+                eprintln!("[GitOperation] continue_sync: rebase commit 返回 Applied（patch 已应用），跳过本次并继续");
+                continue;
+            }
+
+            let _ = rebase.abort();
+            cleanup_index_lock(repo_path)?;
+            return Err(anyhow::anyhow!("rebase commit 失败: {}", e));
+        }
+    }
+
+    rebase.finish(Some(&sig)).context("rebase finish 失败")?;
+
+    let local_branch_refname = format!("refs/heads/{}", branch_name);
+    repo.set_head(&local_branch_refname)?;
+    // 同 sync_with_remote：finish 后不再强制 checkout_head(force)，避免覆盖工作区
+
+    cleanup_index_lock(repo_path)?;
+
+    Ok(SyncResult {
+        success: true,
+        has_conflict: false,
+        conflict_branch: None,
+        conflict: None,
+    })
+}
+
+/// 放弃当前进行中的 rebase（恢复到 rebase 之前状态）
+pub fn abort_sync(repo_path: &Path) -> Result<()> {
+    let repo = Repository::open(repo_path).context("无法打开 Git 仓库")?;
+    let mut rebase = repo
+        .open_rebase(None)
+        .context("没有进行中的 rebase，无法 abort")?;
+    rebase.abort().context("rebase abort 失败")?;
+    cleanup_index_lock(repo_path)?;
+    Ok(())
+}
+
+fn conflict_copy_filename(original: &str) -> String {
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    if let Some(dot) = original.rfind('.') {
+        format!("{}_conflict_{}.{}", &original[..dot], ts, &original[dot + 1..])
+    } else {
+        format!("{}_conflict_{}", original, ts)
+    }
+}
+
+fn write_blob_to_workdir(repo: &Repository, repo_path: &Path, rel_path: &str, oid: git2::Oid) -> Result<()> {
+    let blob = repo.find_blob(oid).context("无法读取 blob")?;
+    let abs = repo_path.join(rel_path);
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&abs, blob.content()).with_context(|| format!("无法写入文件: {}", abs.display()))?;
+    Ok(())
+}
+
+/// 解决冲突：根据用户选择将 ours/theirs 写入工作区并 stage
+pub fn resolve_conflict(repo_path: &Path, items: Vec<ConflictResolutionItem>) -> Result<()> {
+    let repo = Repository::open(repo_path).context("无法打开 Git 仓库")?;
+
+    // index 中应包含 conflict entries
+    let mut index = repo.index().context("无法获取索引")?;
+    if !index.has_conflicts() {
+        return Ok(());
+    }
+
+    for item in items {
+        let (ours_oid, theirs_oid) = {
+            let mut conflicts = index.conflicts().context("无法读取冲突列表")?;
+            let mut ours_oid: Option<git2::Oid> = None;
+            let mut theirs_oid: Option<git2::Oid> = None;
+
+            while let Some(conflict_res) = conflicts.next() {
+                let c = conflict_res.context("读取冲突项失败")?;
+                let path_bytes = c
+                    .our
+                    .as_ref()
+                    .map(|e| e.path.as_ref())
+                    .or_else(|| c.their.as_ref().map(|e| e.path.as_ref()))
+                    .or_else(|| c.ancestor.as_ref().map(|e| e.path.as_ref()))
+                    .ok_or_else(|| anyhow::anyhow!("冲突项缺少 path"))?;
+                let path = String::from_utf8_lossy(path_bytes).to_string();
+
+                if path != item.path {
+                    continue;
+                }
+
+                ours_oid = c.our.as_ref().map(|e| e.id);
+                theirs_oid = c.their.as_ref().map(|e| e.id);
+                break;
+            }
+
+            (ours_oid, theirs_oid)
+        };
+
+        match item.choice {
+            ConflictResolutionChoice::Ours => {
+                let oid = ours_oid.ok_or_else(|| anyhow::anyhow!("ours 版本不存在: {}", item.path))?;
+                write_blob_to_workdir(&repo, repo_path, &item.path, oid)?;
+                index.add_path(Path::new(&item.path))?;
+            }
+            ConflictResolutionChoice::Theirs => {
+                let oid = theirs_oid.ok_or_else(|| anyhow::anyhow!("theirs 版本不存在: {}", item.path))?;
+                write_blob_to_workdir(&repo, repo_path, &item.path, oid)?;
+                index.add_path(Path::new(&item.path))?;
+            }
+            ConflictResolutionChoice::CopyBoth => {
+                let ours = ours_oid.ok_or_else(|| anyhow::anyhow!("ours 版本不存在: {}", item.path))?;
+                let theirs = theirs_oid.ok_or_else(|| anyhow::anyhow!("theirs 版本不存在: {}", item.path))?;
+
+                let copy_path = conflict_copy_filename(&item.path);
+                write_blob_to_workdir(&repo, repo_path, &copy_path, ours)?;
+                write_blob_to_workdir(&repo, repo_path, &item.path, theirs)?;
+
+                index.add_path(Path::new(&copy_path))?;
+                index.add_path(Path::new(&item.path))?;
+            }
+        }
+    }
+
+    index.write().context("无法写入索引")?;
+    Ok(())
 }
 
 /// 仓库验证信息
@@ -760,44 +1284,6 @@ pub fn remove_remote(repo_path: &Path, name: &str) -> Result<()> {
     repo.remote_delete(name)?;
     
     Ok(())
-}
-
-/// 获取 draft 分支相对于 main 分支的 commit 数量
-#[allow(dead_code)]
-pub fn get_draft_commits_count(repo_path: &Path) -> Result<usize> {
-    let repo = Repository::open(repo_path)
-        .context("无法打开 Git 仓库")?;
-    
-    let draft_branch = repo.find_branch("draft", git2::BranchType::Local)?;
-    let main_branch = repo.find_branch("main", git2::BranchType::Local)?;
-    
-    let draft_commit = draft_branch.get().peel_to_commit()?;
-    let main_commit = main_branch.get().peel_to_commit()?;
-    
-    if draft_commit.id() == main_commit.id() {
-        return Ok(0);
-    }
-    
-    let mut count = 0;
-    let mut current = Some(draft_commit.id());
-    
-    while let Some(commit_id) = current {
-        if commit_id == main_commit.id() {
-            break;
-        }
-        
-        count += 1;
-        
-        let commit_obj = repo.find_commit(commit_id)?;
-        current = commit_obj.parent(0).ok().map(|c| c.id());
-        
-        if count > 10000 {
-            eprintln!("警告：提交数量超过 10000");
-            break;
-        }
-    }
-    
-    Ok(count)
 }
 
 /// 处理同步冲突

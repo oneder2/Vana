@@ -430,10 +430,27 @@ export async function removeRemote(path: string, name: string = 'origin'): Promi
 }
 
 // 同步结果接口
+export interface SyncConflictFile {
+  path: string;
+  is_binary: boolean;
+}
+
+export interface SyncConflict {
+  files: SyncConflictFile[];
+}
+
+export type ConflictResolutionChoice = 'Ours' | 'Theirs' | 'CopyBoth';
+
+export interface ConflictResolutionItem {
+  path: string;
+  choice: ConflictResolutionChoice;
+}
+
 export interface SyncResult {
   success: boolean;
   has_conflict: boolean;
   conflict_branch: string | null;
+  conflict?: SyncConflict | null;
 }
 
 /**
@@ -495,6 +512,53 @@ export async function syncWithRemote(
     branchName,
     patToken,
   });
+}
+
+/**
+ * 启动同步（fetch + fast-forward/rebase），如遇冲突返回冲突详情
+ */
+export async function beginSync(
+  path: string,
+  remoteName: string = 'origin',
+  branchName: string = 'main',
+  patToken?: string
+): Promise<SyncResult> {
+  return await invoke<SyncResult>('begin_sync', {
+    path,
+    remoteName,
+    branchName,
+    patToken,
+  });
+}
+
+/**
+ * 继续同步（继续进行中的 rebase）
+ */
+export async function continueSync(
+  path: string,
+  branchName: string = 'main'
+): Promise<SyncResult> {
+  return await invoke<SyncResult>('continue_sync', {
+    path,
+    branchName,
+  });
+}
+
+/**
+ * 放弃同步（abort rebase）
+ */
+export async function abortSync(path: string): Promise<void> {
+  return await invoke<void>('abort_sync', { path });
+}
+
+/**
+ * 解决冲突（写入工作区 + stage），随后应调用 continueSync
+ */
+export async function resolveConflict(
+  path: string,
+  items: ConflictResolutionItem[]
+): Promise<void> {
+  return await invoke<void>('resolve_conflict', { path, items });
 }
 
 /**
