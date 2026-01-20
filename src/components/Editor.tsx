@@ -825,18 +825,20 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
         const appWindow = getCurrentWindow();
         
         // 监听窗口失焦（进入后台）
-        const blurCleanup = await appWindow.onBlur(() => {
+        // Tauri v2 使用 listen 方法监听事件
+        const { listen } = await import('@tauri-apps/api/event');
+        const blurUnlisten = await listen('tauri://blur', () => {
           console.log('[Tier 2] Tauri window blur 触发：窗口失焦（移动端/桌面端后台语义）');
           triggerTier2Commit();
         });
-        tauriBlurListenerCleanup = blurCleanup;
+        tauriBlurListenerCleanup = blurUnlisten;
         
         // 监听窗口聚焦（恢复前台）
-        const focusCleanup = await appWindow.onFocus(() => {
+        const focusUnlisten = await listen('tauri://focus', () => {
           console.log('[Tier 2] Tauri window focus 触发：窗口聚焦（移动端/桌面端前台语义）');
           triggerForegroundFetch();
         });
-        tauriFocusListenerCleanup = focusCleanup;
+        tauriFocusListenerCleanup = focusUnlisten;
         
         console.log('[Tier 2] Tauri 窗口事件监听已注册');
       } catch (error) {

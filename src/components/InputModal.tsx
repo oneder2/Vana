@@ -264,13 +264,40 @@ export function InputModal({
           </button>
           <button
             ref={confirmButtonRef}
-            onClick={handleConfirm}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleConfirm();
+            }}
             disabled={isLoading}
-            className="px-4 py-2 rounded border text-sm transition-opacity hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            className="px-4 py-2 rounded border text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
-              backgroundColor: getThemeAccentBgColor(theme),
+              backgroundColor: isLoading ? getThemeBgColor(theme) : getThemeAccentBgColor(theme),
               borderColor: getThemeBorderColor(theme),
               color: getThemeAccentColor(theme),
+              opacity: isLoading ? 0.5 : 1,
+              cursor: isLoading ? 'not-allowed' : 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              if (!isLoading) {
+                e.currentTarget.style.opacity = '0.8';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isLoading) {
+                e.currentTarget.style.opacity = '1';
+              }
+            }}
+            onMouseDown={(e) => {
+              if (!isLoading) {
+                e.currentTarget.style.opacity = '0.6';
+              }
+            }}
+            onMouseUp={(e) => {
+              if (!isLoading) {
+                e.currentTarget.style.opacity = '0.8';
+              }
             }}
           >
             {isLoading ? '处理中...' : confirmText}

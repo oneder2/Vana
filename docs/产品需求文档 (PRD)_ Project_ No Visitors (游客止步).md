@@ -84,7 +84,7 @@
    * 搭建 Tauri v2 环境。  
    * **核心:** 在 Rust 侧实现加密的文件读写 API (read\_encrypted, write\_encrypted)。  
 2. **Phase 2: Git 自动化组件**  
-   * 集成 Rust 层的 gix 绑定。  
+   * 集成 Rust 层的 git2-rs 绑定（libgit2 的 Rust 绑定）。  
    * 实现双层保存逻辑（缓存写入 vs Git 提交）。  
 3. **Phase 3: 授权与云端**  
    * 对接 GitHub OAuth/PAT 流程。  

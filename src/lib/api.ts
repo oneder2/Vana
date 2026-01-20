@@ -229,11 +229,26 @@ export async function deleteDirectory(path: string): Promise<void> {
 }
 
 /**
+ * 重命名文件或目录
+ * @param oldPath 旧路径
+ * @param newPath 新路径
+ */
+export async function renameFileOrDirectory(
+  oldPath: string,
+  newPath: string
+): Promise<void> {
+  return await invoke<void>('rename_file_or_directory_command', {
+    oldPath: oldPath,
+    newPath: newPath,
+  });
+}
+
+/**
  * 删除文件并同步到 Git（原子操作）
  * 
  * 此函数会：
  * 1. 执行文件删除
- * 2. 执行 git add -A（自动处理删除）
+ * 2. 执行 git add -A（自动删除索引）
  * 3. 执行 git commit
  * 4. 执行 git push（如果配置了远程仓库和 PAT）
  * 
@@ -264,7 +279,7 @@ export async function deleteFileWithGitSync(
  * 
  * 此函数会：
  * 1. 执行目录删除
- * 2. 执行 git add -A（自动处理删除）
+ * 2. 执行 git add -A（自动删除索引）
  * 3. 执行 git commit
  * 4. 执行 git push（如果配置了远程仓库和 PAT）
  * 
@@ -287,21 +302,6 @@ export async function deleteDirectoryWithGitSync(
     remoteName,
     branchName,
     patToken: patToken || null,
-  });
-}
-
-/**
- * 重命名文件或目录
- * @param oldPath 旧路径
- * @param newPath 新路径
- */
-export async function renameFileOrDirectory(
-  oldPath: string,
-  newPath: string
-): Promise<void> {
-  return await invoke<void>('rename_file_or_directory_command', {
-    oldPath: oldPath,
-    newPath: newPath,
   });
 }
 
@@ -449,8 +449,8 @@ export async function fetchFromRemote(
 ): Promise<void> {
   return await invoke<void>('fetch_from_remote', { 
     path, 
-    remoteName: remoteName, 
-    patToken: patToken 
+    remoteName,
+    patToken,
   });
 }
 

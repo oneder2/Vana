@@ -166,8 +166,6 @@ pub async fn has_pat_token(app: &AppHandle) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // 注意：这些测试需要实际的 Tauri 应用上下文，在单元测试中可能无法运行
     // 实际测试应该在集成测试中进行
 }

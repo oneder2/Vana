@@ -16,8 +16,9 @@ rand = "0.8"
 base64 = { version = "0.22", default-features = false, features = ["alloc", "std"] }
 
 # Git 操作
-gix = { version = "0.66", features = ["blocking-network-client", "blocking-http-transport-curl"] }
+git2 = { version = "0.18", features = ["https", "ssh"] }
 walkdir = "2.5"
+chrono = "0.4"
 
 # 文件系统操作
 tokio = { version = "1.0", features = ["full"] }
@@ -27,3 +28,4 @@ dirs = "5.0"
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
+

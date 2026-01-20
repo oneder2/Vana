@@ -93,21 +93,17 @@ function MainApp() {
         
         // 恢复窗口大小
         if (savedState.width && savedState.height) {
-          await appWindow.setSize({
-            type: 'Logical',
-            width: savedState.width,
-            height: savedState.height,
-          });
+          // Tauri v2 使用 LogicalSize 类型
+          const { LogicalSize } = await import('@tauri-apps/api/window');
+          await appWindow.setSize(new LogicalSize(savedState.width, savedState.height));
           console.log('[windowState] 窗口大小已恢复:', savedState.width, 'x', savedState.height);
         }
         
         // 恢复窗口位置
         if (savedState.x !== undefined && savedState.y !== undefined) {
-          await appWindow.setPosition({
-            type: 'Logical',
-            x: savedState.x,
-            y: savedState.y,
-          });
+          // Tauri v2 使用 LogicalPosition 类型
+          const { LogicalPosition } = await import('@tauri-apps/api/window');
+          await appWindow.setPosition(new LogicalPosition(savedState.x, savedState.y));
           console.log('[windowState] 窗口位置已恢复:', savedState.x, ',', savedState.y);
         }
         

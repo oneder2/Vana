@@ -378,10 +378,9 @@ pub async fn delete_file_with_git_sync_command(
         .await
         .map_err(|e| format!("删除失败: {}", e))?;
     
-    // 步骤 2: 使用 gix API 更新索引（自动处理删除）
-    // 注意：移动端不能使用 git 命令行，必须使用纯 gix API
+    // 步骤 2: 使用 git2-rs API 更新索引（自动处理删除）
     // 索引更新将在 commit_changes 中自动处理
-    eprintln!("[delete_file_with_git_sync] 步骤 2: 使用 gix API 更新索引（在 commit 中处理）");
+    eprintln!("[delete_file_with_git_sync] 步骤 2: 使用 git2-rs API 更新索引（在 commit 中处理）");
     
     // 步骤 3: 执行 git commit（commit_changes 会自动处理索引更新）
     eprintln!("[delete_file_with_git_sync] 步骤 3: 执行 git commit");
@@ -444,10 +443,9 @@ pub async fn delete_directory_with_git_sync_command(
         .map_err(|e| format!("删除失败: {}", e))?;
     
     // 步骤 2: 执行 git add -A（自动处理删除）
-    // 步骤 2: 使用 gix API 更新索引（自动处理删除）
-    // 注意：移动端不能使用 git 命令行，必须使用纯 gix API
+    // 步骤 2: 使用 git2-rs API 更新索引（自动处理删除）
     // 索引更新将在 commit_changes 中自动处理
-    eprintln!("[delete_directory_with_git_sync] 步骤 2: 使用 gix API 更新索引（在 commit 中处理）");
+    eprintln!("[delete_directory_with_git_sync] 步骤 2: 使用 git2-rs API 更新索引（在 commit 中处理）");
     
     // 步骤 3: 执行 git commit（commit_changes 会自动处理索引更新）
     eprintln!("[delete_directory_with_git_sync] 步骤 3: 执行 git commit");
@@ -523,9 +521,8 @@ pub async fn rename_file_with_git_sync_command(
         .await
         .map_err(|e| format!("重命名失败: {}", e))?;
     
-    // 步骤 2: 使用 gix API 更新索引（自动处理删除旧索引、添加新索引）
-    // 注意：移动端不能使用 git 命令行，必须使用纯 gix API
-    eprintln!("[rename_file_with_git_sync] 步骤 2: 使用 gix API 更新索引");
+    // 步骤 2: 使用 git2-rs API 更新索引（自动处理删除旧索引、添加新索引）
+    eprintln!("[rename_file_with_git_sync] 步骤 2: 使用 git2-rs API 更新索引");
     // 索引更新将在 commit_changes 中自动处理
     
     // 步骤 3: 执行 git commit

@@ -90,8 +90,10 @@ function FolderItem({
   }, [item.path, item.is_directory, itemThemeId]);
 
   // 如果已展开但还没有加载子项，则加载
+  // 或者当 item.path 改变时（重命名后），重新加载
   useEffect(() => {
-    if (isExpanded && item.is_directory && children.length === 0) {
+    if (isExpanded && item.is_directory) {
+      // 每次展开或路径改变时都重新加载，确保显示最新内容
       listDirectory(item.path)
         .then((items) => {
           setChildren(items);
@@ -99,8 +101,11 @@ function FolderItem({
         .catch((error) => {
           console.error('加载目录失败:', error);
         });
+    } else if (!isExpanded) {
+      // 收起时清空子项，下次展开时重新加载
+      setChildren([]);
     }
-  }, [isExpanded, item.path, item.is_directory, children.length]);
+  }, [isExpanded, item.path, item.is_directory]);
 
   const handleClick = async () => {
     if (item.is_directory) {
@@ -331,6 +336,7 @@ export function Sidebar({
     isOpen: boolean; 
     type: 'createFile' | 'createDirectory' | 'rename';
     defaultValue?: string;
+    item?: FileInfo | null; // 保存要重命名的项目（避免 contextMenu 关闭后丢失）
   }>({ isOpen: false, type: 'createFile' });
   
   // 主题选择模态框状态
@@ -671,7 +677,12 @@ export function Sidebar({
         }
         case 'rename': {
           if (!item || isOperationInProgress) break;
-          setInputModal({ isOpen: true, type: 'rename', defaultValue: removeEncSuffix(item.name) });
+          setInputModal({ 
+            isOpen: true, 
+            type: 'rename', 
+            defaultValue: removeEncSuffix(item.name),
+            item: item // 保存 item 到 inputModal state 中
+          });
           break;
         }
         case 'setTheme': {
@@ -799,8 +810,12 @@ export function Sidebar({
   const handleInputConfirm = async (value: string) => {
     if (isOperationInProgress) return;
 
-    const isRootMenu = !contextMenu?.item;
-    const item = contextMenu?.item;
+    // 对于 rename 操作，从 inputModal.item 获取 item（因为 contextMenu 可能已关闭）
+    // 对于其他操作，仍然从 contextMenu 获取
+    const item = inputModal.type === 'rename' 
+      ? inputModal.item 
+      : contextMenu?.item;
+    const isRootMenu = !item;
 
     setIsOperationInProgress(true);
     try {
@@ -817,6 +832,7 @@ export function Sidebar({
               ? `${item.path}/${fileName}`
               : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${fileName}`;
           } else {
+            setInputModal({ isOpen: false, type: 'createFile', item: null });
             return;
           }
           // 创建新文件时使用默认的 Tiptap JSON 格式
@@ -826,6 +842,8 @@ export function Sidebar({
           if (isRootMenu) {
             setContextMenu(null);
           }
+          // 关闭 modal
+          setInputModal({ isOpen: false, type: 'createFile', item: null });
           break;
         }
         case 'createDirectory': {
@@ -837,6 +855,7 @@ export function Sidebar({
               ? `${item.path}/${value}`
               : `${item.path.substring(0, item.path.lastIndexOf('/'))}/${value}`;
           } else {
+            setInputModal({ isOpen: false, type: 'createFile', item: null });
             return;
           }
           await createDirectory(dirPath);
@@ -844,22 +863,45 @@ export function Sidebar({
           if (isRootMenu) {
             setContextMenu(null);
           }
+          // 关闭 modal
+          setInputModal({ isOpen: false, type: 'createFile', item: null });
           break;
         }
         case 'rename': {
-          if (!item) return;
+          if (!item) {
+            console.error('[重命名] 错误：item 为空');
+            setInputModal({ isOpen: false, type: 'createFile', item: null });
+            return;
+          }
+          
+          console.log('[重命名] 开始重命名，item:', item.name, 'value:', value);
           
           // 比较时也需要去掉 .enc 后缀
           const displayName = removeEncSuffix(item.name);
-          if (value === displayName) return;
+          console.log('[重命名] displayName:', displayName, 'value:', value);
+          
+          if (value === displayName) {
+            // 名称相同，直接关闭 modal
+            console.log('[重命名] 名称相同，取消重命名');
+            setInputModal({ isOpen: false, type: 'createFile', item: null });
+            return;
+          }
 
           // 确保新文件名包含 .enc 后缀（如果是文件）
           const newFileName = ensureEncSuffix(value, item.is_directory);
+          console.log('[重命名] newFileName:', newFileName);
           
           // 构建新路径：获取原路径的目录部分 + 新文件名
           const pathParts = item.path.split('/');
           pathParts[pathParts.length - 1] = newFileName;
           const newPath = pathParts.join('/');
+          
+          // 获取父目录路径（用于刷新）
+          const parentDir = pathParts.slice(0, -1).join('/') || workspacePath;
+          
+          console.log('[重命名] 旧路径:', item.path);
+          console.log('[重命名] 新路径:', newPath);
+          console.log('[重命名] 父目录:', parentDir);
           
           // 显示加载覆盖层
           setIsRenaming(true);
@@ -880,23 +922,59 @@ export function Sidebar({
                 'main',
                 patToken
               );
+              console.log('[重命名] Git 同步重命名完成');
             } else {
               // 否则只执行重命名（不推送）
               console.log('[重命名] 仅执行重命名（未配置远程仓库或 PAT）');
               await renameFileOrDirectory(item.path, newPath);
+              console.log('[重命名] 重命名完成');
             }
             
+            console.log('[重命名] 开始刷新文件列表');
+            // 如果重命名的文件在根目录，刷新根目录
+            // 如果在子目录，需要刷新父目录（但 refreshFiles 只刷新根目录）
+            // 所以我们需要强制刷新整个文件树
             await refreshFiles();
+            
+            // 如果父目录不是根目录，需要更新展开状态以触发子目录刷新
+            if (parentDir !== workspacePath) {
+              // 触发父目录的重新加载
+              // 通过更新 expandedPaths 来触发 FolderItem 的重新加载
+              const newExpandedPaths = new Set(expandedPaths);
+              if (newExpandedPaths.has(parentDir)) {
+                // 先移除再添加，触发重新加载
+                newExpandedPaths.delete(parentDir);
+                setExpandedPaths(newExpandedPaths);
+                setTimeout(() => {
+                  newExpandedPaths.add(parentDir);
+                  setExpandedPaths(new Set(newExpandedPaths));
+                }, 100);
+              }
+            }
+            
+            console.log('[重命名] 文件列表刷新完成');
+            
+            // 关闭 modal
+            setInputModal({ isOpen: false, type: 'createFile', item: null });
+            console.log('[重命名] Modal 已关闭');
+          } catch (error) {
+            console.error('[重命名] 重命名失败:', error);
+            toast.error(`重命名失败: ${error instanceof Error ? error.message : String(error)}`);
+            // 发生错误时也关闭 modal
+            setInputModal({ isOpen: false, type: 'createFile', item: null });
           } finally {
             setIsRenaming(false);
           }
           break;
         }
       }
-      setInputModal({ isOpen: false, type: 'createFile' });
+      // 注意：每个 case 都应该自己负责关闭 modal
+      // 这里不再统一关闭，避免重复关闭
     } catch (error) {
       console.error('操作失败:', error);
       toast.error(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
+      // 发生错误时关闭 modal
+      setInputModal({ isOpen: false, type: 'createFile', item: null });
     } finally {
       setIsOperationInProgress(false);
     }
@@ -1044,8 +1122,8 @@ export function Sidebar({
         cancelText="取消"
         validator={validateFileName}
         onConfirm={handleInputConfirm}
-        onCancel={() => setInputModal({ isOpen: false, type: 'createFile' })}
-        isLoading={isOperationInProgress}
+        onCancel={() => setInputModal({ isOpen: false, type: 'createFile', item: null })}
+        isLoading={isRenaming || isOperationInProgress}
       />
 
       {/* 主题选择模态框 */}
