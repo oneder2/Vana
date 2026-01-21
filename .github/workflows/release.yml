@@ -200,8 +200,10 @@ jobs:
       - name: Build Android APK
         run: |
           echo "🔨 Building Android release APK..."
-          # Use npx to ensure tauri CLI is available
-          npx tauri android build --release --apk --verbose
+          # Tauri android build defaults to release mode
+          # Use --verbose for detailed output
+          # Note: --apk and --release flags are not needed (default behavior)
+          npx tauri android build --verbose
           
           echo "✅ Build completed, checking outputs..."
 
