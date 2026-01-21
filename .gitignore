@@ -20,7 +20,7 @@ yarn-error.log*
 
 # Tauri
 src-tauri/target/
-src-tauri/Cargo.lock
+# NOTE: for application/binary projects, Cargo.lock should be committed for reproducible builds
 
 # IDE
 .vscode/

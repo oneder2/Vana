@@ -562,25 +562,6 @@ export async function resolveConflict(
 }
 
 /**
- * 处理同步冲突
- * @param path 仓库路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param branchName 分支名称（默认 "main"）
- * @returns 冲突分支名称
- */
-export async function handleSyncConflict(
-  path: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main'
-): Promise<string> {
-  return await invoke<string>('handle_sync_conflict', {
-    path,
-    remoteName: remoteName,
-    branchName: branchName,
-  });
-}
-
-/**
  * 获取当前分支名
  * @param path 仓库路径
  * @returns 当前分支名

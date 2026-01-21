@@ -1225,7 +1225,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     >
       {/* 同步状态指示器 */}
       {workspacePath && (
-        <div className="fixed top-4 right-4 z-50">
+        <div className="fixed top-24 right-4 md:top-12 md:right-4 z-50">
           <div
             className="w-3 h-3 rounded-full transition-all duration-300"
             style={{
@@ -1241,6 +1241,15 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
             }}
             title={syncMessage || (
               syncStatus === 'syncing' ? '正在同步...' :
+              syncStatus === 'success' ? '同步成功' :
+              syncStatus === 'error' ? '同步失败' :
+              syncStatus === 'conflict' ? '存在冲突' :
+              '已是最新'
+            )}
+            role="status"
+            aria-live="polite"
+            aria-label={syncMessage || (
+              syncStatus === 'syncing' ? '正在同步' :
               syncStatus === 'success' ? '同步成功' :
               syncStatus === 'error' ? '同步失败' :
               syncStatus === 'conflict' ? '存在冲突' :

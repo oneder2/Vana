@@ -1,6 +1,6 @@
 {
   "name": "vana",
-  "version": "1.0.0",
+  "version": "0.5.2-beta.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -36,6 +36,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
     "@types/qrcode.react": "^1.0.5",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.23",

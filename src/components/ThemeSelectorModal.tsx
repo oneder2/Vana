@@ -135,7 +135,6 @@ export function ThemeSelectorModal({
                     className="flex-shrink-0 text-xs"
                     style={{ color: getThemeAccentColor(theme) }}
                   >
-                    已选择
                   </div>
                 )}
               </button>

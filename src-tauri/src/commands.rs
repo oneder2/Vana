@@ -404,7 +404,7 @@ pub async fn delete_file_with_git_sync_command(
         match crate::git::push_to_remote(repo_path, &remote_name, &branch_name, Some(token.as_str())) {
             Ok(_) => {
                 eprintln!("[delete_file_with_git_sync] push 成功");
-            }
+        }
             Err(e) => {
                 eprintln!("[delete_file_with_git_sync] 警告：push 失败（不影响本地删除完成）: {}", e);
                 eprintln!("[delete_file_with_git_sync] 建议：稍后手动同步或下次启动自动同步");
@@ -468,7 +468,7 @@ pub async fn delete_directory_with_git_sync_command(
         match crate::git::push_to_remote(repo_path, &remote_name, &branch_name, Some(token.as_str())) {
             Ok(_) => {
                 eprintln!("[delete_directory_with_git_sync] push 成功");
-            }
+        }
             Err(e) => {
                 eprintln!("[delete_directory_with_git_sync] 警告：push 失败（不影响本地删除完成）: {}", e);
                 eprintln!("[delete_directory_with_git_sync] 建议：稍后手动同步或下次启动自动同步");
@@ -545,7 +545,7 @@ pub async fn rename_file_with_git_sync_command(
         match crate::git::push_to_remote(repo_path, &remote_name, &branch_name, Some(token.as_str())) {
             Ok(_) => {
                 eprintln!("[rename_file_with_git_sync] push 成功");
-            }
+        }
             Err(e) => {
                 eprintln!("[rename_file_with_git_sync] 警告：push 失败（不影响本地重命名完成）: {}", e);
                 eprintln!("[rename_file_with_git_sync] 建议：刷新文件列表并稍后手动同步");
@@ -706,7 +706,7 @@ pub fn sync_with_remote(
 }
 
 /// 启动同步（fetch + fast-forward/rebase），如遇冲突返回结构化冲突信息
-///
+/// 
 /// 前端调用: `invoke('begin_sync', { path: '...', remoteName: 'origin', branchName: 'main', patToken: '...' })`
 #[tauri::command]
 pub fn begin_sync(
@@ -746,23 +746,6 @@ pub fn abort_sync_command(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn resolve_conflict_command(path: String, items: Vec<ConflictResolutionItem>) -> Result<(), String> {
     resolve_conflict(PathBuf::from(path).as_path(), items).map_err(|e| e.to_string())
-}
-
-/// 处理同步冲突
-/// 
-/// 前端调用: `invoke('handle_sync_conflict', { path: '...', remoteName: 'origin', branchName: 'main' })`
-#[tauri::command]
-pub fn handle_sync_conflict(
-    path: String,
-    remote_name: String,
-    branch_name: String,
-) -> Result<String, String> {
-    crate::git::handle_sync_conflict(
-        PathBuf::from(path).as_path(),
-        &remote_name,
-        &branch_name,
-    )
-    .map_err(|e| e.to_string())
 }
 
 /// 获取当前分支名

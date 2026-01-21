@@ -26,6 +26,7 @@ import {
 import { ConflictModal, type ConflictChoice } from '@/components/ConflictModal';
 import { QRCodeDisplay } from '@/components/QRCodeDisplay';
 import { QRCodeScanner } from '@/components/QRCodeScanner';
+import { TitleBar } from '@/components/TitleBar';
 import { isMobile } from '@/lib/platform';
 
 /**
@@ -256,13 +257,16 @@ export default function SettingsPage() {
 
   return (
     <div
-      className={`fixed inset-0 flex flex-col transition-colors duration-700 ${theme.font} ${
+      className={`flex flex-col h-screen transition-colors duration-700 ${theme.font} ${
         theme.id === 'vellum' ? 'text-stone-800' : 'text-stone-300'
       }`}
       style={{
         backgroundColor: getThemeBgColor(theme),
       }}
     >
+      {/* 自定义标题栏 */}
+      <TitleBar />
+      
       <ConflictModal
         open={conflictOpen}
         conflict={syncConflict}
@@ -351,7 +355,7 @@ export default function SettingsPage() {
                         }}
                       >
                         <CheckCircle size={16} className="text-green-500" />
-                        <span className="text-sm">PAT Token 已配置</span>
+                        <span className="text-sm">PAT Token 已配置（已隐藏）</span>
                       </div>
                       <button
                         onClick={handleRemovePat}
@@ -545,14 +549,29 @@ export default function SettingsPage() {
                   </label>
                   {remoteUrl ? (
                     <div
-                      className="w-full px-4 py-2 rounded border"
+                      className="w-full px-4 py-2 rounded border break-words"
                       style={{
                         backgroundColor: getThemeBgColor(theme),
                         borderColor: getThemeBorderColor(theme),
                         color: theme.id === 'vellum' ? 'rgb(41, 37, 36)' : 'rgb(231, 229, 228)',
+                        wordBreak: 'break-all',
+                        overflowWrap: 'break-word',
+                        maxWidth: '100%',
                       }}
                     >
-                      {remoteUrl}
+                      {(() => {
+                        try {
+                          // 尝试解析URL并移除可能的PAT token
+                          const urlStr = remoteUrl.replace(/^https?:\/\//, 'https://');
+                          const url = new URL(urlStr);
+                          // 移除用户名和密码部分（可能包含PAT）
+                          const cleanUrl = `${url.protocol}//${url.host}${url.pathname}${url.search}`;
+                          return cleanUrl;
+                        } catch {
+                          // 如果URL解析失败，直接显示但移除可能的PAT token模式
+                          return remoteUrl.replace(/github_pat_[^@]+@/g, '');
+                        }
+                      })()}
                     </div>
                   ) : (
                     <div className="space-y-2">

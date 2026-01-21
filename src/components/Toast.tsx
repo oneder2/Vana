@@ -109,8 +109,10 @@ export function Toast() {
   return (
     <div
       className="fixed top-4 right-4 z-[10000] pointer-events-none"
+      role="region"
       aria-live="polite"
       aria-atomic="true"
+      aria-label="通知消息"
     >
       <div className="pointer-events-auto space-y-2">
         {toasts.map((toast) => (

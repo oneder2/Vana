@@ -139,11 +139,48 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
         };
       },
     }),
-    Heading.configure({
+    // NOTE: TipTap v3 的 addAttributes 需要通过 extend() 提供，不能放在 configure() 的 options 里（会导致 TS build 失败）
+    Heading.extend({
+      addAttributes() {
+        return {
+          ...this.parent?.(),
+          uuid: {
+            default: null,
+            parseHTML: element => element.getAttribute('data-uuid'),
+            renderHTML: attributes => {
+              if (!attributes.uuid) return {};
+              return { 'data-uuid': attributes.uuid };
+            },
+          },
+          createdAt: {
+            default: null,
+            parseHTML: element => {
+              const value = element.getAttribute('data-created-at');
+              return value ? parseInt(value, 10) : null;
+            },
+            renderHTML: attributes => {
+              if (!attributes.createdAt) return {};
+              return { 'data-created-at': attributes.createdAt.toString() };
+            },
+          },
+          updatedAt: {
+            default: null,
+            parseHTML: element => {
+              const value = element.getAttribute('data-updated-at');
+              return value ? parseInt(value, 10) : null;
+            },
+            renderHTML: attributes => {
+              if (!attributes.updatedAt) return {};
+              return { 'data-updated-at': attributes.updatedAt.toString() };
+            },
+          },
+        };
+      },
+    }).configure({
       levels: [1, 2, 3],
-      HTMLAttributes: {
-        class: `heading-${themeId}`,
-      },
+      HTMLAttributes: { class: `heading-${themeId}` },
+    }),
+    Blockquote.extend({
       addAttributes() {
         return {
           ...this.parent?.(),
@@ -151,12 +188,8 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
             default: null,
             parseHTML: element => element.getAttribute('data-uuid'),
             renderHTML: attributes => {
-              if (!attributes.uuid) {
-                return {};
-              }
-              return {
-                'data-uuid': attributes.uuid,
-              };
+              if (!attributes.uuid) return {};
+              return { 'data-uuid': attributes.uuid };
             },
           },
           createdAt: {
@@ -166,12 +199,8 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
               return value ? parseInt(value, 10) : null;
             },
             renderHTML: attributes => {
-              if (!attributes.createdAt) {
-                return {};
-              }
-              return {
-                'data-created-at': attributes.createdAt.toString(),
-              };
+              if (!attributes.createdAt) return {};
+              return { 'data-created-at': attributes.createdAt.toString() };
             },
           },
           updatedAt: {
@@ -181,21 +210,16 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
               return value ? parseInt(value, 10) : null;
             },
             renderHTML: attributes => {
-              if (!attributes.updatedAt) {
-                return {};
-              }
-              return {
-                'data-updated-at': attributes.updatedAt.toString(),
-              };
+              if (!attributes.updatedAt) return {};
+              return { 'data-updated-at': attributes.updatedAt.toString() };
             },
           },
         };
       },
+    }).configure({
+      HTMLAttributes: { class: `blockquote-${themeId}` },
     }),
-    Blockquote.configure({
-      HTMLAttributes: {
-        class: `blockquote-${themeId}`,
-      },
+    CodeBlock.extend({
       addAttributes() {
         return {
           ...this.parent?.(),
@@ -203,12 +227,8 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
             default: null,
             parseHTML: element => element.getAttribute('data-uuid'),
             renderHTML: attributes => {
-              if (!attributes.uuid) {
-                return {};
-              }
-              return {
-                'data-uuid': attributes.uuid,
-              };
+              if (!attributes.uuid) return {};
+              return { 'data-uuid': attributes.uuid };
             },
           },
           createdAt: {
@@ -218,12 +238,8 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
               return value ? parseInt(value, 10) : null;
             },
             renderHTML: attributes => {
-              if (!attributes.createdAt) {
-                return {};
-              }
-              return {
-                'data-created-at': attributes.createdAt.toString(),
-              };
+              if (!attributes.createdAt) return {};
+              return { 'data-created-at': attributes.createdAt.toString() };
             },
           },
           updatedAt: {
@@ -233,70 +249,16 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
               return value ? parseInt(value, 10) : null;
             },
             renderHTML: attributes => {
-              if (!attributes.updatedAt) {
-                return {};
-              }
-              return {
-                'data-updated-at': attributes.updatedAt.toString(),
-              };
+              if (!attributes.updatedAt) return {};
+              return { 'data-updated-at': attributes.updatedAt.toString() };
             },
           },
         };
       },
-    }),
-    CodeBlock.configure({
-      HTMLAttributes: {
-        class: `code-block-${themeId}`,
-      },
+    }).configure({
+      HTMLAttributes: { class: `code-block-${themeId}` },
       // 确保代码块可以编辑
       defaultLanguage: null,
-      addAttributes() {
-        return {
-          ...this.parent?.(),
-          uuid: {
-            default: null,
-            parseHTML: element => element.getAttribute('data-uuid'),
-            renderHTML: attributes => {
-              if (!attributes.uuid) {
-                return {};
-              }
-              return {
-                'data-uuid': attributes.uuid,
-              };
-            },
-          },
-          createdAt: {
-            default: null,
-            parseHTML: element => {
-              const value = element.getAttribute('data-created-at');
-              return value ? parseInt(value, 10) : null;
-            },
-            renderHTML: attributes => {
-              if (!attributes.createdAt) {
-                return {};
-              }
-              return {
-                'data-created-at': attributes.createdAt.toString(),
-              };
-            },
-          },
-          updatedAt: {
-            default: null,
-            parseHTML: element => {
-              const value = element.getAttribute('data-updated-at');
-              return value ? parseInt(value, 10) : null;
-            },
-            renderHTML: attributes => {
-              if (!attributes.updatedAt) {
-                return {};
-              }
-              return {
-                'data-updated-at': attributes.updatedAt.toString(),
-              };
-            },
-          },
-        };
-      },
     }),
     BulletList.configure({
       HTMLAttributes: {

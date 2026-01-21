@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use git2::{Commit, Repository, ResetType, Signature};
+use git2::{Commit, Repository, Signature};
 
 /// 验证模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -21,7 +21,7 @@ pub enum AuthMode {
 /// 初始化 Git 仓库
 pub fn init_repository(path: &Path) -> Result<()> {
     Repository::init(path)
-        .context("无法初始化 Git 仓库")?;
+    .context("无法初始化 Git 仓库")?;
 
     // 配置默认用户信息
     let git_config_path = path.join(".git/config");
@@ -81,13 +81,37 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
     eprintln!("[GitOperation] commit_changes: 添加所有文件到索引");
     index.add_all(&["*"], git2::IndexAddOption::DEFAULT, None)
         .context("无法添加文件到索引")?;
-    
+
     // 写入索引
     index.write()
         .context("无法写入索引")?;
-    
+
     let tree_id = index.write_tree()
         .context("无法从索引创建树对象")?;
+
+    // 获取父提交（HEAD）
+    let parent_commit = repo.head()
+                .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+    
+    // 检查是否有实际更改：比较新树和父提交的树
+    let should_commit = if let Some(ref parent) = parent_commit {
+        let parent_tree = parent.tree().context("无法获取父提交的树对象")?;
+        if parent_tree.id() == tree_id {
+            eprintln!("[GitOperation] commit_changes: 检测到没有文件更改，跳过提交");
+            // 返回父提交的 OID，表示没有新提交
+            return Ok(parent.id().to_string());
+        }
+        true
+        } else {
+        // 没有父提交（初始提交），需要提交
+        true
+    };
+    
+    if !should_commit {
+        // 这种情况不应该发生，但为了安全起见
+        return Err(anyhow::anyhow!("无法确定是否需要提交"));
+    }
     
     let tree = repo.find_tree(tree_id)
         .context("无法找到树对象")?;
@@ -103,11 +127,6 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
                         .expect("无法创建 Git 签名（这是系统级错误）")
                 })
         });
-    
-    // 获取父提交（HEAD）
-    let parent_commit = repo.head()
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok());
     
     let parents: Vec<&Commit> = parent_commit.iter().collect();
     
@@ -150,10 +169,10 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
 pub fn get_repository_status(repo_path: &Path) -> Result<GitStatus> {
     let repo = Repository::open(repo_path)
         .context("无法打开 Git 仓库")?;
-    
+
     // 清理索引锁文件
     cleanup_index_lock(repo_path)?;
-    
+
     // 重新读取索引（确保最新状态）
     let mut index = repo.index()
         .context("无法获取索引")?;
@@ -165,7 +184,7 @@ pub fn get_repository_status(repo_path: &Path) -> Result<GitStatus> {
         .context("无法获取仓库状态")?;
     
     let has_changes = statuses.len() > 0;
-    
+
     Ok(GitStatus {
         has_changes,
         is_clean: !has_changes,
@@ -320,18 +339,43 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
             
             eprintln!("[GitOperation] fetch_from_remote: 临时更新远程 URL 以包含 PAT 认证");
             // 先删除再创建以更新 URL
+            // 注意：删除重建会导致 fetch 配置累积，需要在重建后清理
             repo.remote_delete(remote_name)?;
             remote = repo.remote(remote_name, &authenticated_url)?;
+            
+            // 重建后，清理可能累积的 fetch 配置，只保留一个
+            // 这可以防止 multivar 错误
+            if let Ok(mut config) = repo.config() {
+                let fetch_key = format!("remote.{}.fetch", remote_name);
+                // 删除所有旧的 fetch 配置
+                let _ = config.remove_multivar(&fetch_key, ".*");
+                // 添加单个 fetch 配置
+                let _ = config.set_str(&fetch_key, &format!("+refs/heads/*:refs/remotes/{}/*", remote_name));
+                // 重新获取 remote 对象
+                remote = repo.find_remote(remote_name)
+                    .context(format!("无法重新获取远程仓库: {}", remote_name))?;
+            }
         }
     }
     
     // 执行 fetch
+    // 使用 snapshot() 来处理 multivar（重复配置项）问题
     let mut callbacks = git2::RemoteCallbacks::new();
-    {
-        let config = repo.config()?;
-        callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-            git2::Cred::credential_helper(&config, _url, username_from_url)
-        });
+    
+    // 尝试使用 snapshot() 来避免 multivar 错误
+    // 如果失败，则跳过 credential helper（依赖 URL 中的 PAT）
+    if let Ok(mut config) = repo.config() {
+        if let Ok(config_snapshot) = config.snapshot() {
+            callbacks.credentials(move |_url, username_from_url, _allowed_types| {
+                git2::Cred::credential_helper(&config_snapshot, _url, username_from_url)
+            });
+        } else {
+            eprintln!("[GitOperation] fetch_from_remote: 警告 - 无法创建配置快照（可能存在 multivar），将跳过 credential helper");
+            eprintln!("[GitOperation] fetch_from_remote: 依赖 URL 中的 PAT 认证");
+        }
+    } else {
+        eprintln!("[GitOperation] fetch_from_remote: 警告 - 无法读取 Git 配置（可能存在 multivar），将跳过 credential helper");
+        eprintln!("[GitOperation] fetch_from_remote: 依赖 URL 中的 PAT 认证");
     }
     
     let mut fetch_options = git2::FetchOptions::new();
@@ -372,8 +416,22 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
             
             eprintln!("[GitOperation] push_to_remote: 临时更新远程 URL 以包含 PAT 认证");
             // 先删除再创建以更新 URL
+            // 注意：删除重建会导致 fetch 配置累积，需要在重建后清理
             repo.remote_delete(remote_name)?;
             remote = repo.remote(remote_name, &authenticated_url)?;
+            
+            // 重建后，清理可能累积的 fetch 配置，只保留一个
+            // 这可以防止 multivar 错误
+            if let Ok(mut config) = repo.config() {
+                let fetch_key = format!("remote.{}.fetch", remote_name);
+                // 删除所有旧的 fetch 配置
+                let _ = config.remove_multivar(&fetch_key, ".*");
+                // 添加单个 fetch 配置
+                let _ = config.set_str(&fetch_key, &format!("+refs/heads/*:refs/remotes/{}/*", remote_name));
+                // 重新获取 remote 对象
+                remote = repo.find_remote(remote_name)
+                    .context(format!("无法重新获取远程仓库: {}", remote_name))?;
+            }
         }
     }
     
@@ -381,11 +439,24 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
     let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
     
     // 执行 push
+    // 使用 snapshot() 来处理 multivar（重复配置项）问题
     let mut callbacks = git2::RemoteCallbacks::new();
-    let config = repo.config()?;
-    callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-        git2::Cred::credential_helper(&config, _url, username_from_url)
-    });
+    
+    // 尝试使用 snapshot() 来避免 multivar 错误
+    // 如果失败，则跳过 credential helper（依赖 URL 中的 PAT）
+    if let Ok(mut config) = repo.config() {
+        if let Ok(config_snapshot) = config.snapshot() {
+            callbacks.credentials(move |_url, username_from_url, _allowed_types| {
+                git2::Cred::credential_helper(&config_snapshot, _url, username_from_url)
+            });
+        } else {
+            eprintln!("[GitOperation] push_to_remote: 警告 - 无法创建配置快照（可能存在 multivar），将跳过 credential helper");
+            eprintln!("[GitOperation] push_to_remote: 依赖 URL 中的 PAT 认证");
+        }
+    } else {
+        eprintln!("[GitOperation] push_to_remote: 警告 - 无法读取 Git 配置（可能存在 multivar），将跳过 credential helper");
+        eprintln!("[GitOperation] push_to_remote: 依赖 URL 中的 PAT 认证");
+    }
     
     let mut push_options = git2::PushOptions::new();
     push_options.remote_callbacks(callbacks);
@@ -487,8 +558,8 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
                 // 最终清理索引锁文件
                 cleanup_index_lock(repo_path)?;
                 
-                return Ok(SyncResult {
-                    success: true,
+                    return Ok(SyncResult {
+                        success: true,
                     has_conflict: false,
                     conflict_branch: None,
                     conflict: None,
@@ -652,10 +723,10 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
             eprintln!("[GitOperation] sync_with_remote: 未提供 PAT token，跳过 push");
         }
         cleanup_index_lock(repo_path)?;
-        return Ok(SyncResult {
-            success: true,
-            has_conflict: false,
-            conflict_branch: None,
+            return Ok(SyncResult {
+                success: true,
+                has_conflict: false,
+                conflict_branch: None,
             conflict: None,
         });
     }
@@ -837,9 +908,9 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
                 files.len()
             );
 
-            return Ok(SyncResult {
-                success: true,
-                has_conflict: true,
+                return Ok(SyncResult {
+                    success: true,
+                    has_conflict: true,
                 conflict_branch: None,
                 conflict: Some(SyncConflict { files }),
             });
@@ -1266,12 +1337,26 @@ pub fn add_remote(repo_path: &Path, name: &str, url: &str) -> Result<()> {
     let repo = Repository::open(repo_path)
         .context("无法打开 Git 仓库")?;
     
-    // 检查远程是否已存在，如果存在则先删除
-    if repo.find_remote(name).is_ok() {
+    // 检查远程是否已存在
+    if let Ok(existing_remote) = repo.find_remote(name) {
+        // 如果 URL 相同，无需更新
+        if existing_remote.url().map(|u| u == url).unwrap_or(false) {
+            eprintln!("[GitOperation] add_remote: 远程 {} 已存在且 URL 相同，跳过更新", name);
+            return Ok(());
+        }
+        // URL 不同，先删除
         repo.remote_delete(name)?;
     }
     // 创建新远程
     repo.remote(name, url)?;
+    
+    // 确保 fetch 配置只有一个，避免累积
+    let mut config = repo.config()?;
+    let fetch_key = format!("remote.{}.fetch", name);
+    // 删除所有旧的 fetch 配置
+    let _ = config.remove_multivar(&fetch_key, ".*");
+    // 添加单个 fetch 配置
+    config.set_str(&fetch_key, &format!("+refs/heads/*:refs/remotes/{}/*", name))?;
     
     Ok(())
 }
@@ -1286,28 +1371,7 @@ pub fn remove_remote(repo_path: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// 处理同步冲突
-pub fn handle_sync_conflict(repo_path: &Path, remote_name: &str, branch_name: &str) -> Result<String> {
-    let repo = Repository::open(repo_path)
-        .context("无法打开 Git 仓库")?;
-    
-    // 创建冲突分支
-    let conflict_branch = format!("conflict_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
-    
-    let head = repo.head()?;
-    let commit = head.peel_to_commit()?;
-    
-    repo.branch(&conflict_branch, &commit, false)
-        .context("无法创建冲突分支")?;
-    
-    // 重置到远程 main
-    let remote_ref = format!("refs/remotes/{}/{}", remote_name, branch_name);
-    let remote_ref_obj = repo.find_reference(&remote_ref)?;
-    let remote_commit = remote_ref_obj.peel_to_commit()?;
-    
-    repo.reset(&remote_commit.as_object(), ResetType::Hard, None)
-        .context("无法重置到远程状态")?;
-    
-    Ok(conflict_branch)
-}
+// NOTE:
+// 旧的 `handle_sync_conflict`（自动创建冲突分支 + hard reset）已废弃。
+// 当前冲突处理走 begin/resolve/continue 的交互式 rebase 流程（返回结构化冲突文件列表给前端弹窗）。
 

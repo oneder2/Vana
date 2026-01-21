@@ -8,11 +8,11 @@
  *   - CopyBoth：保留两者（将本地版本另存为 *_conflict_<timestamp>，原文件使用云端版本继续同步）
  *
  * 说明：
- * - 当前后端返回的是“冲突文件列表”，不包含具体 diff / 字数等统计；
+ * - 当前后端返回的是"冲突文件列表"，不包含具体 diff / 字数等统计；
  *   这些信息后续可通过扩展后端 API（例如返回 blob OID 或 diff）来增强展示。
  */
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   AlertTriangle,
   Copy,
@@ -33,6 +33,81 @@ export function ConflictModal(props: {
   onClose: () => void;
 }) {
   const { open, conflict, onResolveAll, onClose } = props;
+  const modalRef = useRef<HTMLDivElement>(null);
+  const recommendedButtonRef = useRef<HTMLButtonElement>(null);
+
+  // 阻止背景滚动
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [open]);
+
+  // 焦点陷阱：限制焦点在对话框内
+  useEffect(() => {
+    if (!open || !modalRef.current) return;
+
+    const modal = modalRef.current;
+    const focusableElements = modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    ) as NodeListOf<HTMLElement>;
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+
+    const handleTabKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+
+      if (e.shiftKey) {
+        if (document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement?.focus();
+        }
+      } else {
+        if (document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleTabKey);
+
+    // 初始焦点设置到推荐按钮
+    if (recommendedButtonRef.current) {
+      recommendedButtonRef.current.focus();
+    } else if (firstElement) {
+      firstElement.focus();
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleTabKey);
+    };
+  }, [open]);
+
+  // 键盘事件处理：Escape 关闭，Enter 确认推荐选项
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      } else if (e.key === 'Enter' && document.activeElement === recommendedButtonRef.current) {
+        e.preventDefault();
+        onResolveAll('CopyBoth');
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, onClose, onResolveAll]);
 
   if (!open || !conflict) return null;
 
@@ -40,22 +115,33 @@ export function ConflictModal(props: {
   const count = conflict.files.length;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+    <div 
+      className="fixed inset-0 z-[10002] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="conflict-modal-title"
+      aria-describedby="conflict-modal-description"
+    >
       <div
         className="absolute inset-0 bg-black/80 backdrop-blur-md"
         onClick={onClose}
+        aria-hidden="true"
       />
 
-      <div className="relative w-full max-w-lg bg-[#0c0a13] border border-red-900/50 rounded-xl shadow-[0_0_50px_rgba(220,38,38,0.2)] overflow-hidden font-sans animate-in zoom-in-95 duration-300">
+      <div 
+        ref={modalRef}
+        className="relative w-full max-w-lg bg-[#0c0a13] border border-red-900/50 rounded-xl shadow-[0_0_50px_rgba(220,38,38,0.2)] overflow-hidden font-sans animate-in zoom-in-95 duration-300"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="bg-red-950/30 border-b border-red-900/30 p-4 flex items-center gap-3">
           <div className="p-2 bg-red-500/10 rounded-full">
-            <AlertTriangle className="text-red-500 w-6 h-6" />
+            <AlertTriangle className="text-red-500 w-6 h-6" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="text-red-100 font-bold tracking-wider uppercase">
+            <h2 id="conflict-modal-title" className="text-red-100 font-bold tracking-wider uppercase">
               冲突警告 (Conflict)
             </h2>
-            <p className="text-red-400/60 text-xs">
+            <p id="conflict-modal-description" className="text-red-400/60 text-xs">
               检测到同一文件存在无法自动合并的变更（共 {count} 个文件）
             </p>
           </div>
@@ -101,8 +187,10 @@ export function ConflictModal(props: {
 
         <div className="p-6 space-y-3 bg-[#13111c]">
           <button
+            ref={recommendedButtonRef}
             onClick={() => onResolveAll('CopyBoth')}
-            className="w-full group relative flex items-center justify-between p-4 bg-white/5 hover:bg-white/10 border border-emerald-500/30 hover:border-emerald-500 rounded-lg transition-all"
+            className="w-full group relative flex items-center justify-between p-4 bg-white/5 hover:bg-white/10 border border-emerald-500/30 hover:border-emerald-500 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-[#13111c]"
+            aria-label="保留两者（创建副本）- 推荐选项"
           >
             <div className="flex items-center gap-3">
               <div className="p-2 bg-emerald-500/20 rounded text-emerald-400">
@@ -125,7 +213,8 @@ export function ConflictModal(props: {
           <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => onResolveAll('Ours')}
-              className="flex flex-col items-center justify-center gap-2 p-3 rounded-lg border border-white/5 hover:bg-red-900/20 hover:border-red-500/50 transition-colors group"
+              className="flex flex-col items-center justify-center gap-2 p-3 rounded-lg border border-white/5 hover:bg-red-900/20 hover:border-red-500/50 transition-colors group focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-[#13111c]"
+              aria-label="覆盖云端（保留本地）"
             >
               <span className="text-stone-400 group-hover:text-red-400 font-bold text-xs">
                 覆盖云端（保留本地）
@@ -137,7 +226,8 @@ export function ConflictModal(props: {
 
             <button
               onClick={() => onResolveAll('Theirs')}
-              className="flex flex-col items-center justify-center gap-2 p-3 rounded-lg border border-white/5 hover:bg-blue-900/20 hover:border-blue-500/50 transition-colors group"
+              className="flex flex-col items-center justify-center gap-2 p-3 rounded-lg border border-white/5 hover:bg-blue-900/20 hover:border-blue-500/50 transition-colors group focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#13111c]"
+              aria-label="接受云端（放弃本地）"
             >
               <span className="text-stone-400 group-hover:text-blue-400 font-bold text-xs">
                 接受云端（放弃本地）
@@ -154,11 +244,12 @@ export function ConflictModal(props: {
             CONFLICT_FILES: {count}
           </span>
           <button
-            className="text-[10px] text-stone-500 hover:text-stone-300 flex items-center gap-1"
+            className="text-[10px] text-stone-500 hover:text-stone-300 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2 focus:ring-offset-black/40 rounded"
             onClick={() => {
               // TODO: 后续接入纯文本 diff 展示（需要后端返回 blob OID 或 diff 文本）
             }}
             type="button"
+            aria-label="查看纯文本 Diff（高级选项）"
           >
             <FileDiff size={10} />
             查看纯文本 Diff (Advanced)

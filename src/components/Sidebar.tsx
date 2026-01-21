@@ -121,8 +121,8 @@ function FolderItem({
           console.error('加载目录失败:', error);
         }
       }
-      // 通知父组件目录切换，加载氛围协议
-      onDirectoryChange?.(item.path);
+      // 移除：点击文件夹不应该改变主题，只有点击文本文档时才改变主题
+      // onDirectoryChange?.(item.path);
     } else {
       onSelect?.(item.path);
     }
@@ -223,7 +223,19 @@ function FolderItem({
   };
 
   return (
-    <div>
+    <div className="relative">
+      {/* 树状结构竖线：显示层级关系 */}
+      {level > 0 && (
+        <div
+          className="absolute left-0 top-0 bottom-0 w-px"
+          style={{
+            backgroundColor: getThemeBorderColor(theme),
+            opacity: 0.3,
+            left: `${(level - 1) * 1 + 0.25}rem`,
+          }}
+        />
+      )}
+      
       <div
         onClick={handleClick}
         onContextMenu={handleContextMenuEvent}
@@ -233,7 +245,7 @@ function FolderItem({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-all duration-200 ${
+        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-all duration-200 relative ${
           item.is_directory
             ? 'hover:bg-stone-800/20'
             : 'opacity-50 hover:opacity-100'
@@ -254,6 +266,19 @@ function FolderItem({
         aria-label={item.is_directory ? `文件夹 ${removeEncSuffix(item.name)}` : `文件 ${removeEncSuffix(item.name)}`}
         aria-expanded={item.is_directory ? isExpanded : undefined}
       >
+        {/* 层级竖线连接点（在每个层级位置） */}
+        {Array.from({ length: level }).map((_, idx) => (
+          <div
+            key={idx}
+            className="absolute top-0 bottom-0 w-px"
+            style={{
+              backgroundColor: getThemeBorderColor(theme),
+              opacity: 0.3,
+              left: `${idx * 1 + 0.25}rem`,
+            }}
+          />
+        ))}
+        
         {item.is_directory ? (
           <>
             <ChevronRight
@@ -284,15 +309,27 @@ function FolderItem({
         )}
       </div>
       {isExpanded && item.is_directory && (
-        <div>
-          {children.map((child) => {
+        <div className="relative">
+          {children.map((child, childIndex) => {
             // 尝试从父组件传入的主题映射中获取子目录的主题
             // 这里需要父组件传递一个directoryThemesMap
             // 暂时使用null，让每个FolderItem自己加载（如果性能有问题再优化）
             const childThemeId = child.is_directory ? undefined : undefined;
+            const isLastChild = childIndex === children.length - 1;
             return (
+              <div key={child.path} className="relative">
+                {/* 连接父级和子级的竖线（仅在非最后一项时显示） */}
+                {!isLastChild && (
+                  <div
+                    className="absolute left-0 top-0 bottom-0 w-px"
+                    style={{
+                      backgroundColor: getThemeBorderColor(theme),
+                      opacity: 0.3,
+                      left: `${level * 1 + 0.25}rem`,
+                    }}
+                  />
+                )}
               <FolderItem
-                key={child.path}
                 item={child}
                 level={level + 1}
                 onSelect={onSelect}
@@ -306,6 +343,7 @@ function FolderItem({
                 focusedItemPath={focusedItemPath}
                 directoryThemeId={childThemeId}
               />
+              </div>
             );
           })}
         </div>
@@ -593,6 +631,8 @@ export function Sidebar({
   const handleContextMenu = (e: React.MouseEvent, item: FileInfo) => {
     e.preventDefault();
     e.stopPropagation();
+    // 直接使用 clientX/clientY，这是相对于视口的坐标，不受滚动或 transform 影响
+    // 确保菜单左上角精确对齐到点击位置
     setContextMenu({ x: e.clientX, y: e.clientY, item });
   };
 
@@ -612,12 +652,16 @@ export function Sidebar({
       switch (action) {
         case 'createFile': {
           if (isOperationInProgress) break;
-          setInputModal({ isOpen: true, type: 'createFile' });
+          // 保存当前右键的 item，以便在创建时知道父目录
+          setInputModal({ isOpen: true, type: 'createFile', item: contextMenu?.item || null });
+          setContextMenu(null); // 关闭右键菜单
           break;
         }
         case 'createDirectory': {
           if (isOperationInProgress) break;
-          setInputModal({ isOpen: true, type: 'createDirectory' });
+          // 保存当前右键的 item，以便在创建时知道父目录
+          setInputModal({ isOpen: true, type: 'createDirectory', item: contextMenu?.item || null });
+          setContextMenu(null); // 关闭右键菜单
           break;
         }
         case 'copy': {
@@ -810,12 +854,15 @@ export function Sidebar({
   const handleInputConfirm = async (value: string) => {
     if (isOperationInProgress) return;
 
-    // 对于 rename 操作，从 inputModal.item 获取 item（因为 contextMenu 可能已关闭）
-    // 对于其他操作，仍然从 contextMenu 获取
-    const item = inputModal.type === 'rename' 
-      ? inputModal.item 
-      : contextMenu?.item;
+    // 优先从 inputModal.item 获取 item（因为 contextMenu 可能在打开 modal 后已关闭）
+    // 这样可以确保在目录上右键创建文件/目录时，能正确获取父目录信息
+    const item = inputModal.item || contextMenu?.item;
     const isRootMenu = !item;
+    
+    // 调试日志：确认 item 是否正确传递
+    if (inputModal.type === 'createFile' || inputModal.type === 'createDirectory') {
+      console.log(`[创建${inputModal.type === 'createFile' ? '文件' : '目录'}] item:`, item, 'isRootMenu:', isRootMenu);
+    }
 
     setIsOperationInProgress(true);
     try {

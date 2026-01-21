@@ -24,6 +24,8 @@ import { Editor } from '@/components/Editor';
 import { RadialMenu } from '@/components/RadialMenu';
 import { BlockTypeSelector } from '@/components/BlockTypeSelector';
 import { SearchModal } from '@/components/SearchModal';
+import { AtmospherePreviewModal } from '@/components/AtmospherePreviewModal';
+import { TitleBar } from '@/components/TitleBar';
 import { getAllThemes, getThemeIcon } from '@/lib/themes';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
 import { readFile, getWorkspacePath, ensureWorkspaceInitialized, fetchFromRemote, getRemoteUrl, getPatToken, commitChanges, readWorkspaceConfig } from '@/lib/api';
@@ -73,10 +75,10 @@ function MainApp() {
   const [editorLayout, setEditorLayout] = useState<EditorLayout>('center');
   const [editorTriggerCommit, setEditorTriggerCommit] = useState<(() => Promise<void>) | undefined>(undefined);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [pendingFileSelect, setPendingFileSelect] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('');
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showAtmospherePreview, setShowAtmospherePreview] = useState(false);
 
   // 窗口状态记忆（集成 Tauri 窗口 API）
   useEffect(() => {
@@ -184,39 +186,64 @@ function MainApp() {
     };
   }, []);
 
-  // 初始化工作区
+  // 初始化工作区（仅执行一次）
   useEffect(() => {
+    let isMounted = true;
+    let hasInitialized = false;
+    
     const initWorkspace = async () => {
+      // 防止重复执行
+      if (hasInitialized) {
+        console.log('[initWorkspace] 已初始化，跳过重复执行');
+        return;
+      }
+      hasInitialized = true;
+      
       try {
         // 获取工作区路径
         const path = await getWorkspacePath();
+        if (!isMounted) return;
+        
         setWorkspacePath(path);
         
         // 确保工作区已初始化
         await ensureWorkspaceInitialized();
+        if (!isMounted) return;
         
         // 应用冷启动时执行 Fetch（根据 Sync Protocol.md）
         try {
           const remoteUrl = await getRemoteUrl(path, 'origin');
           const patToken = await getPatToken();
           
+          if (!isMounted) return;
+          
           if (remoteUrl && patToken) {
             console.log('[initWorkspace] 应用启动：执行 Fetch');
             await fetchFromRemote(path, 'origin', patToken);
-            console.log('[initWorkspace] Fetch 完成');
+            if (isMounted) {
+              console.log('[initWorkspace] Fetch 完成');
+            }
           } else {
             console.log('[initWorkspace] 未配置远程仓库或 PAT，跳过 Fetch');
           }
         } catch (fetchError) {
-          console.error('[initWorkspace] Fetch 失败:', fetchError);
-          // Fetch 失败不影响应用启动
+          if (isMounted) {
+            console.error('[initWorkspace] Fetch 失败:', fetchError);
+            // Fetch 失败不影响应用启动
+          }
         }
       } catch (error) {
-        console.error('初始化工作区失败:', error);
+        if (isMounted) {
+          console.error('初始化工作区失败:', error);
+        }
       }
     };
     
     initWorkspace();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // 快捷键支持：Ctrl+F / Cmd+F 打开搜索
@@ -331,26 +358,22 @@ function MainApp() {
 
   // 加载文件
   const handleFileSelect = async (path: string) => {
-    // 如果有未保存的更改，显示确认对话框
-    if (hasUnsavedChanges && currentFilePath && currentFilePath !== path) {
-      setPendingFileSelect(path);
-      return;
-    }
-
+    // 直接执行文件选择，自动保存当前文件（如果有未保存的更改）
     await performFileSelect(path);
   };
 
   // 执行文件选择（实际加载文件）
   const performFileSelect = async (path: string) => {
     try {
-      // 关闭旧文件时触发 Tier 2 提交（如果有旧文件）
-      if (currentFilePath && currentFilePath !== path && editorTriggerCommit) {
-        console.log('[handleFileSelect] 切换文件前触发 Commit');
+      // 关闭旧文件时自动触发 Tier 2 提交（如果有旧文件且存在未保存的更改）
+      if (currentFilePath && currentFilePath !== path && editorTriggerCommit && hasUnsavedChanges) {
+        console.log('[handleFileSelect] 切换文件前自动保存并提交');
         try {
           await editorTriggerCommit();
+          setHasUnsavedChanges(false); // 提交成功后清除未保存标记
         } catch (error) {
-          console.error('[handleFileSelect] 切换文件时的 Commit 失败:', error);
-          // 即使 Commit 失败，也继续切换文件
+          console.error('[handleFileSelect] 切换文件时的自动保存失败:', error);
+          // 即使 Commit 失败，也继续切换文件（不阻塞用户操作）
         }
       }
 
@@ -414,38 +437,6 @@ function MainApp() {
     }
   };
 
-  // 处理未保存更改确认 - 保存并切换
-  const handleUnsavedChangesSave = async () => {
-    if (!pendingFileSelect) return;
-
-    // 保存并切换
-    if (editorTriggerCommit) {
-      try {
-        await editorTriggerCommit();
-      } catch (error) {
-        console.error('保存失败:', error);
-        toast.error(`保存失败: ${error instanceof Error ? error.message : String(error)}`);
-        return;
-      }
-    }
-
-    // 执行文件切换
-    setHasUnsavedChanges(false);
-    const targetPath = pendingFileSelect;
-    setPendingFileSelect(null);
-    await performFileSelect(targetPath);
-  };
-
-  // 处理未保存更改确认 - 不保存直接切换
-  const handleUnsavedChangesDiscard = async () => {
-    if (!pendingFileSelect) return;
-
-    // 不保存，直接切换
-    setHasUnsavedChanges(false);
-    const targetPath = pendingFileSelect;
-    setPendingFileSelect(null);
-    await performFileSelect(targetPath);
-  };
 
   // 处理块点击（显示环形菜单）
   const handleBlockClick = (e: React.MouseEvent) => {
@@ -472,6 +463,9 @@ function MainApp() {
         backgroundColor: getThemeBgColor(theme),
       }}
     >
+      {/* 自定义标题栏（窗口控制） */}
+      <TitleBar />
+      
       {/* 顶部导航栏 (The Deck) */}
       <header
         className={`h-14 flex items-center justify-between px-4 z-50 border-b transition-transform duration-300`}
@@ -580,6 +574,32 @@ function MainApp() {
               } ${theme.glow}`}
             ></div>
           </div>
+          {/* 氛围协议预览按钮 */}
+          <button
+            onClick={() => setShowAtmospherePreview(true)}
+            className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
+            style={{ color: getThemeAccentColor(theme) }}
+            title="氛围协议预览"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {/* 氛围协议图标：多个重叠的圆形，表示氛围/环境 */}
+              <circle cx="12" cy="12" r="3" opacity="0.6" />
+              <circle cx="12" cy="12" r="6" opacity="0.4" />
+              <circle cx="12" cy="12" r="9" opacity="0.2" />
+              {/* 中心点表示核心 */}
+              <circle cx="12" cy="12" r="1" />
+            </svg>
+          </button>
+
           {/* 搜索按钮 */}
           <button
             onClick={() => setShowSearchModal(true)}
@@ -649,6 +669,15 @@ function MainApp() {
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
+        {/* 移动端遮罩层 */}
+        {isSidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 md:hidden transition-opacity duration-300"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+
         {/* 左侧资源管理器 - 固定位置，不受滚动影响 */}
         <Sidebar
           workspacePath={workspacePath}
@@ -860,36 +889,6 @@ function MainApp() {
           </button>
       </div>
 
-      {/* 氛围协议选择器（在侧边栏底部，这里简化显示） */}
-      <div 
-        className={`fixed bottom-20 left-4 z-50 border rounded p-2`}
-        style={{
-          backgroundColor: getThemeSurfaceColor(theme),
-          borderColor: getThemeBorderColor(theme),
-        }}
-      >
-        <div className={`text-[9px] ${theme.uiFont} mb-3 opacity-30 uppercase`}>
-          氛围协议
-        </div>
-        <div className="flex justify-between gap-2">
-          {getAllThemes().map((t) => {
-            const isActive = theme.id === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTheme(t.id)}
-                className="p-2 rounded transition-all"
-                style={{
-                  backgroundColor: isActive ? getThemeAccentBgColor(theme) : 'transparent',
-                  color: isActive ? getThemeAccentColor(theme) : '#78716c',
-                }}
-              >
-                {getThemeIcon(t)}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       {/* 移动端：块类型选择器（底部上拉框） */}
       {showBlockSelector && (
@@ -900,20 +899,6 @@ function MainApp() {
         />
       )}
 
-      {/* 未保存更改确认对话框 */}
-      {pendingFileSelect && (
-        <Modal
-          isOpen={true}
-          title="未保存的更改"
-          message="当前文件有未保存的更改。是否保存后再切换文件？"
-          confirmText="保存并切换"
-          cancelText="不保存"
-          type="warning"
-          onConfirm={handleUnsavedChangesSave}
-          onCancel={handleUnsavedChangesDiscard}
-          closeOnOverlayClick={false}
-        />
-      )}
 
       {/* 搜索模态框 */}
       <SearchModal
@@ -921,6 +906,12 @@ function MainApp() {
         onClose={() => setShowSearchModal(false)}
         workspacePath={workspacePath}
         onFileSelect={handleFileSelect}
+      />
+
+      {/* 氛围协议预览模态框 */}
+      <AtmospherePreviewModal
+        isOpen={showAtmospherePreview}
+        onClose={() => setShowAtmospherePreview(false)}
       />
     </div>
   );
