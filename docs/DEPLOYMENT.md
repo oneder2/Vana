@@ -6,7 +6,7 @@
 
 ### 版本对齐
 
-- **统一版本号**：`0.5.2.1`
+- **统一版本号**：`0.5.2`（语义化版本格式）
   - `src-tauri/tauri.conf.json`
   - `src-tauri/Cargo.toml`
   - `package.json`
@@ -39,8 +39,8 @@ npm run tauri:build
 推送以 `v` 开头的 tag 时自动触发构建和发布：
 
 ```bash
-git tag v0.5.2.1
-git push origin v0.5.2.1
+git tag v0.5.2
+git push origin v0.5.2
 ```
 
 ### 支持的平台
@@ -52,6 +52,11 @@ git push origin v0.5.2.1
 ### GitHub Secrets 配置
 
 在 GitHub 仓库设置中配置以下 Secrets（Settings → Secrets and variables → Actions）：
+
+#### 检查方法
+
+1. 前往 GitHub 仓库：`Settings` → `Secrets and variables` → `Actions`
+2. 检查以下 Secrets 是否存在
 
 #### Windows 签名证书
 
@@ -78,18 +83,20 @@ git push origin v0.5.2.1
 
 ### 发布流程
 
-1. **更新版本号**：确保 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 中的版本号一致
-2. **提交更改**：
+1. **更新版本号**：确保 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 中的版本号一致（当前为 `0.5.2`）
+2. **提交更改**（如有代码更改）：
    ```bash
    git add .
-   git commit -m "chore: bump version to 0.5.2.1"
+   git commit -m "chore: prepare for release v0.5.2"
    git push
    ```
 3. **创建并推送 tag**：
    ```bash
-   git tag v0.5.2.1
-   git push origin v0.5.2.1
+   git tag v0.5.2
+   git push origin v0.5.2
    ```
+   
+   > **注意**：版本号会自动从 tag 提取，无需在源代码中手动更新版本号。
 4. **等待构建完成**：在 GitHub Actions 页面查看构建进度
 5. **检查 Release**：构建完成后，在 GitHub Releases 页面查看并下载构建产物
 
@@ -111,6 +118,180 @@ git push origin v0.5.2.1
 - **Linux 构建失败**：检查依赖安装步骤，确保所有系统库已正确安装
 - **Windows 签名失败**：验证证书是否正确导入，检查 `WINDOWS_CERTIFICATE_THUMBPRINT` 是否匹配
 - **Android 构建失败**：确认 Android SDK、NDK 版本与项目配置匹配，检查 keystore 配置是否正确
+
+### Secrets 配置验证
+
+#### 验证 Base64 格式
+
+可以使用以下命令验证 Base64 编码是否正确：
+
+```bash
+# 验证 Windows 证书
+echo "$WINDOWS_CERTIFICATE" | base64 -d > test_cert.pfx
+file test_cert.pfx  # 应显示 "PKCS #7" 或类似
+
+# 验证 Android keystore
+echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > test_keystore.jks
+file test_keystore.jks  # 应显示 "Java KeyStore" 或类似
+```
+
+#### 测试构建
+
+创建一个测试 tag 来验证 Secrets 是否正确：
+
+```bash
+git tag v0.5.2-test
+git push origin v0.5.2-test
+```
+
+在 GitHub Actions 中观察构建日志，检查：
+- Windows 构建：证书导入是否成功
+- Android 构建：keystore 配置是否成功
+
+清理测试 tag：
+
+```bash
+git push origin --delete v0.5.2-test
+git tag -d v0.5.2-test
+```
+
+#### 常见问题
+
+- **Windows 证书导入失败**：Base64 编码错误或密码错误
+- **Android keystore 配置失败**：Base64 编码错误、密码错误或别名不存在
+- **证书/密钥泄露**：Secrets 一旦配置，不要在日志中输出
+
+## 工作流测试指南
+
+### 测试开发构建工作流
+
+#### 步骤 1：推送测试提交
+
+```bash
+# 创建一个空提交来触发构建
+git commit --allow-empty -m "test: trigger dev build workflow"
+git push origin main
+```
+
+#### 步骤 2：观察构建
+
+1. 前往 GitHub 仓库的 `Actions` 页面
+2. 查看 `Development Build` 工作流
+3. 验证：
+   - ✅ 构建成功
+   - ✅ Artifacts 上传成功
+   - ✅ 版本号格式正确（`0.5.2+build.XXX`）
+   - ✅ 通知发送成功（如果配置了 Slack Webhook）
+
+#### 步骤 3：检查 Artifacts
+
+1. 在构建完成后，点击 `Artifacts` 部分
+2. 下载并验证：
+   - Linux: `.deb`, `.AppImage`, `.rpm`
+   - Windows: `.exe`, `.msi`
+   - Android: `.apk`
+
+### 测试正式发布工作流
+
+#### 步骤 1：创建测试 tag
+
+```bash
+# 创建测试 tag
+git tag v0.5.2-test
+git push origin v0.5.2-test
+```
+
+#### 步骤 2：观察构建
+
+1. 前往 GitHub 仓库的 `Actions` 页面
+2. 查看 `Build and Release` 工作流
+3. 验证：
+   - ✅ 版本号提取正确（`0.5.2-test` → `0.5.2-test`）
+   - ✅ Windows MSI 版本号正确（`0.5.2-test.0`）
+   - ✅ 构建验证通过
+   - ✅ Draft Release 创建成功
+   - ✅ 通知发送成功
+
+#### 步骤 3：检查 Draft Release
+
+1. 前往 GitHub 仓库的 `Releases` 页面
+2. 找到 Draft Release `v0.5.2-test`
+3. 验证：
+   - ✅ 所有平台产物已上传
+   - ✅ 文件大小合理（> 1MB）
+   - ✅ Release 说明正确
+
+#### 步骤 4：清理测试 tag
+
+```bash
+# 删除远程 tag
+git push origin --delete v0.5.2-test
+
+# 删除本地 tag
+git tag -d v0.5.2-test
+```
+
+### 测试版本号检查工作流
+
+#### 步骤 1：创建测试 PR
+
+```bash
+# 创建一个新分支
+git checkout -b test/version-check
+
+# 修改版本号（故意不一致）
+# 编辑 package.json，将版本号改为 0.5.3
+# 编辑 src-tauri/Cargo.toml，保持版本号为 0.5.2
+
+# 提交并推送
+git add .
+git commit -m "test: version inconsistency"
+git push origin test/version-check
+
+# 创建 PR
+```
+
+#### 步骤 2：观察检查结果
+
+1. 在 PR 页面查看 `Version Check` 工作流
+2. 验证：
+   - ✅ 检测到版本不一致
+   - ✅ PR 评论已添加
+   - ✅ 工作流状态为失败
+
+#### 步骤 3：修复并验证
+
+```bash
+# 修复版本号
+# 确保三个文件版本号一致
+
+# 提交修复
+git add .
+git commit -m "fix: version consistency"
+git push origin test/version-check
+```
+
+### 测试预发布版本
+
+#### 步骤 1：创建 beta tag
+
+```bash
+git tag v0.5.2-beta.1
+git push origin v0.5.2-beta.1
+```
+
+#### 步骤 2：验证
+
+1. 检查版本号提取：
+   - 源代码版本：`0.5.2`
+   - Windows MSI 版本：`0.5.2.1`
+2. 检查 Release 类型：
+   - ✅ 应为 Pre-release
+3. 清理：
+   ```bash
+   git push origin --delete v0.5.2-beta.1
+   git tag -d v0.5.2-beta.1
+   ```
 
 ## Windows 下载与 SmartScreen 说明（重要）
 

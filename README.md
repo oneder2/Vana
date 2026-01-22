@@ -1,6 +1,6 @@
 # Vana - No Visitors: Git-based Arcane Archive
 
-**版本**: v0.5.2.1 (Beta Release)  
+**版本**: v0.5.2 (Beta Release)  
 **核心理念**: Git 为核 (Git as Engine)、零知识加密 (Zero-Knowledge Encryption)、氛围拟态 (Atmosphere Protocol)、Tauri 驱动。
 
 ## 项目概述
@@ -47,10 +47,10 @@ Vana 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档管理�
 
 ### 开发者文档
 
-- [开发指南](./docs/DEVELOPMENT.md) - 技术栈、项目结构、构建说明
-- [部署指南](./docs/DEPLOYMENT.md) - CI/CD、发布流程、Windows SmartScreen 说明
+- [开发指南](./docs/DEVELOPMENT.md) - 技术栈、项目结构、构建说明、Git 实现
+- [部署指南](./docs/DEPLOYMENT.md) - CI/CD、发布流程、Windows SmartScreen 说明、工作流测试
+- [版本号管理策略](./docs/VERSIONING.md) - 版本号格式和构建流程
 - [同步协议](./docs/Sync%20Protocol.md) - Git 自动化同步协议详细说明
-- [Git 命令迁移状态](./docs/Git命令迁移状态.md) - Git 库迁移记录
 
 ## 安全说明
 

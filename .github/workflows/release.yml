@@ -17,6 +17,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          # 移除 'v' 前缀，提取版本号
+          VERSION="${TAG_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Update version in source files
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "Updating version to: $VERSION"
+          # 更新 package.json
+          npm version $VERSION --no-git-tag-version
+          # 更新 Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          # 更新 tauri.conf.json (需要 jq)
+          npm install -g jq
+          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          echo "✅ Version updated in all source files"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -25,6 +47,19 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Install Linux dependencies
         run: |
@@ -72,6 +107,56 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $TAG_NAME = "${{ github.ref_name }}"
+          # 移除 'v' 前缀，提取版本号
+          $VERSION = $TAG_NAME -replace '^v', ''
+          Write-Host "Extracted version: $VERSION"
+          
+          # 对于 MSI，需要 major.minor.patch.build 格式
+          # 如果是预发布版本（如 v0.5.2-beta.1），提取 build 号
+          $MSI_VERSION = $VERSION
+          if ($TAG_NAME -match 'beta\.(\d+)$') {
+            $BUILD_NUM = $matches[1]
+            $MSI_VERSION = "$VERSION.$BUILD_NUM"
+          } elseif ($TAG_NAME -match 'alpha\.(\d+)$') {
+            $BUILD_NUM = $matches[1]
+            $MSI_VERSION = "$VERSION.$BUILD_NUM"
+          } elseif ($TAG_NAME -match 'rc\.(\d+)$') {
+            $BUILD_NUM = $matches[1]
+            $MSI_VERSION = "$VERSION.$BUILD_NUM"
+          } else {
+            # 正式发布，build 号为 0
+            $MSI_VERSION = "$VERSION.0"
+          }
+          Write-Host "MSI version: $MSI_VERSION"
+          # 使用 GitHub Actions 输出格式
+          "version=$VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "msi_version=$MSI_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Update version in source files
+        run: |
+          $VERSION = "${{ steps.version.outputs.version }}"
+          Write-Host "Updating version to: $VERSION"
+          
+          # 更新 package.json
+          $packageJson = Get-Content package.json | ConvertFrom-Json
+          $packageJson.version = $VERSION
+          $packageJson | ConvertTo-Json -Depth 10 | Set-Content package.json
+          
+          # 更新 Cargo.toml
+          (Get-Content src-tauri/Cargo.toml) -replace '^version = ".*"', "version = `"$VERSION`"" | Set-Content src-tauri/Cargo.toml
+          
+          # 更新 tauri.conf.json
+          $tauriConfig = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $tauriConfig.version = $VERSION
+          $tauriConfig | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+          
+          Write-Host "✅ Version updated in all source files"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -80,6 +165,19 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Users\runneradmin\.cargo\bin\
+            C:\Users\runneradmin\.cargo\registry\index\
+            C:\Users\runneradmin\.cargo\registry\cache\
+            C:\Users\runneradmin\.cargo\git\db\
+            src-tauri\target\
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Import Windows certificate
         env:
@@ -109,6 +207,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Set MSI version for Windows build
+        run: |
+          $MSI_VERSION = "${{ steps.version.outputs.msi_version }}"
+          Write-Host "Setting MSI version to: $MSI_VERSION"
+          # 更新 tauri.conf.json 为 MSI 兼容格式
+          $tauriConfig = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
+          $tauriConfig.version = $MSI_VERSION
+          $tauriConfig | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
+          Write-Host "✅ MSI version set: $MSI_VERSION"
+
       - name: Build Tauri app
         env:
           # Tauri will use the imported certificate for signing
@@ -132,6 +240,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          # 移除 'v' 前缀，提取版本号
+          VERSION="${TAG_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Update version in source files
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "Updating version to: $VERSION"
+          # 更新 package.json
+          npm version $VERSION --no-git-tag-version
+          # 更新 Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          # 更新 tauri.conf.json (需要 jq)
+          npm install -g jq
+          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          echo "✅ Version updated in all source files"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -140,6 +270,19 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -260,6 +403,51 @@ jobs:
           echo "📦 Downloaded artifacts structure:"
           find artifacts -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" -o -name "*.exe" -o -name "*.msi" \) | head -30 || echo "No artifacts found"
 
+      - name: Validate build artifacts
+        id: validate
+        run: |
+          echo "🔍 Validating build artifacts..."
+          
+          # 检查必需的文件
+          REQUIRED_PATTERNS=(
+            "artifacts/linux-artifacts/**/*.deb"
+            "artifacts/linux-artifacts/**/*.AppImage"
+            "artifacts/windows-artifacts/**/*.exe"
+            "artifacts/windows-artifacts/**/*.msi"
+            "artifacts/android-artifacts/**/*.apk"
+          )
+          
+          MISSING_FILES=()
+          for pattern in "${REQUIRED_PATTERNS[@]}"; do
+            if ! ls $pattern 1> /dev/null 2>&1; then
+              MISSING_FILES+=("$pattern")
+            fi
+          done
+          
+          if [ ${#MISSING_FILES[@]} -gt 0 ]; then
+            echo "❌ Missing required artifacts:"
+            printf '%s\n' "${MISSING_FILES[@]}"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # 验证文件大小（至少 1MB）
+          echo "📊 Checking file sizes..."
+          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" -o -name "*.exe" -o -name "*.msi" -o -name "*.apk" -o -name "*.aab" \) | while read file; do
+            if [ -f "$file" ]; then
+              SIZE=$(stat -c%s "$file" 2>/dev/null || echo "0")
+              SIZE_MB=$((SIZE / 1024 / 1024))
+              if [ $SIZE_MB -lt 1 ]; then
+                echo "⚠️ Warning: $file is suspiciously small (${SIZE_MB}MB)"
+              else
+                echo "✅ $file: ${SIZE_MB}MB"
+              fi
+            fi
+          done
+          
+          echo "✅ All artifacts validated"
+          echo "valid=true" >> $GITHUB_OUTPUT
+
       - name: Determine release type
         id: release-type
         run: |
@@ -270,7 +458,7 @@ jobs:
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create Release
+      - name: Create Release (Draft)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -289,11 +477,38 @@ jobs:
             - Commit: ${{ github.sha }}
             - Workflow: ${{ github.workflow }}
             - Run ID: ${{ github.run_id }}
-          draft: false
+            - Validation: ${{ steps.validate.outputs.valid }}
+            
+            > **Note**: This is a draft release. Please verify all artifacts before publishing.
+          draft: true
           prerelease: ${{ steps.release-type.outputs.prerelease }}
           files: |
             artifacts/linux-artifacts/**/*
             artifacts/windows-artifacts/**/*
             artifacts/android-artifacts/**/*
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Slack webhook
+        id: check-slack
+        run: |
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "has_webhook=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_webhook=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify release created
+        if: always() && steps.check-slack.outputs.has_webhook == 'true'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            🚀 Release ${{ github.ref_name }} created (Draft)!
+            Version: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Validation: ${{ steps.validate.outputs.valid }}
+            Please review and publish manually.
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 

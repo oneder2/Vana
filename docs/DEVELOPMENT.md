@@ -113,16 +113,60 @@ App_Sandbox_Data/
 
 ## 版本管理
 
-版本号格式：`major.minor.patch.build`
+版本号格式：`major.minor.patch`（语义化版本）
 
 版本号需要在以下文件中保持一致：
 - `package.json`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 
+详细版本号管理策略请参考：[版本号管理策略](./VERSIONING.md)
+
+## Git 实现说明
+
+### Git 库迁移
+
+项目已从 `gix` 完全迁移到 `git2-rs`（libgit2 的 Rust 绑定），所有核心 Git 操作都使用 git2-rs API 实现。
+
+#### 已迁移的操作
+
+- ✅ **索引操作**：`git add -A` → `index.add_all()` (git2-rs API)
+- ✅ **分支操作**：`git branch` / `git checkout` → `repo.branch()` / `switch_to_branch()` (git2-rs API)
+- ✅ **提交操作**：`git commit` → `repo.commit()` (git2-rs API)
+- ✅ **远程获取**：`git fetch` → `fetch_from_remote()` (git2-rs API)
+- ✅ **远程推送**：`git push` → `push_to_remote()` (git2-rs API)
+- ✅ **同步操作**：`git pull --rebase` → `sync_with_remote()` (git2-rs `Rebase` API)
+
+#### 未迁移的操作（低优先级）
+
+- ❌ **Git GC 操作**：`git pack-refs` / `git repack` / `git prune` → 仍使用命令行
+  - 原因：git2-rs 不直接支持这些操作
+  - 影响：不影响核心功能，仅在维护时使用
+  - 移动端：不支持（但不影响应用可用性）
+
+#### 技术说明
+
+1. **git2-rs vs gix**
+   - git2-rs 是更成熟、更稳定的选择，有更好的文档和社区支持
+   - 所有核心 Git 操作都已使用 git2-rs API 实现
+
+2. **移动端支持**
+   - 所有核心 Git 操作都支持移动端
+   - Git GC 操作在移动端不可用，但不影响核心功能
+
+3. **认证支持**
+   - 支持 HTTPS + PAT token 认证
+   - 通过临时更新远程 URL 的方式实现认证
+
+#### 参考资源
+
+- [git2-rs 官方文档](https://docs.rs/git2/)
+- [libgit2 官方文档](https://libgit2.org/)
+- [git2-rs 示例](https://github.com/rust-lang/git2-rs/tree/master/examples)
+
 ## 相关文档
 
 - [产品需求文档](./产品需求文档%20(PRD)_%20Project_%20No%20Visitors%20(游客止步).md)
 - [同步协议](./Sync%20Protocol.md)
-- [Git 命令迁移状态](./Git命令迁移状态.md)
+- [版本号管理策略](./VERSIONING.md)
 

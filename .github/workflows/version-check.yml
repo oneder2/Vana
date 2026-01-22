@@ -1,0 +1,89 @@
+name: Version Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'package.json'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/tauri.conf.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-version:
+    name: Check Version Consistency
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version consistency
+        id: version-check
+        run: |
+          echo "🔍 Checking version consistency..."
+          
+          # 读取三个文件中的版本号
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          CARGO_VERSION=$(grep '^version = ' src-tauri/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          TAURI_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          
+          echo "package.json: $PACKAGE_VERSION"
+          echo "Cargo.toml: $CARGO_VERSION"
+          echo "tauri.conf.json: $TAURI_VERSION"
+          
+          # 检查是否一致
+          if [ "$PACKAGE_VERSION" != "$CARGO_VERSION" ] || [ "$PACKAGE_VERSION" != "$TAURI_VERSION" ]; then
+            echo "❌ Version mismatch detected!"
+            echo "All three files must have the same version number."
+            echo "package.json: $PACKAGE_VERSION"
+            echo "Cargo.toml: $CARGO_VERSION"
+            echo "tauri.conf.json: $TAURI_VERSION"
+            echo "consistent=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # 验证版本号格式（语义化版本）
+          if ! echo "$PACKAGE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$'; then
+            echo "⚠️ Warning: Version format may not be SemVer compliant: $PACKAGE_VERSION"
+            echo "Recommended format: major.minor.patch (e.g., 0.5.2)"
+          fi
+          
+          echo "✅ All versions are consistent: $PACKAGE_VERSION"
+          echo "consistent=true" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        if: steps.version-check.outputs.consistent == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ **Version Check Failed**\n\nVersion numbers in the following files are inconsistent:\n- `package.json`: ${{ steps.version-check.outputs.package_version }}\n- `src-tauri/Cargo.toml`: ${{ steps.version-check.outputs.cargo_version }}\n- `src-tauri/tauri.conf.json`: ${{ steps.version-check.outputs.tauri_version }}\n\nPlease ensure all three files have the same version number.'
+            })
+
+      - name: Check for version conflicts
+        run: |
+          echo "🔍 Checking for version conflicts with existing tags..."
+          
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          
+          # 获取所有远程 tags
+          git fetch --tags
+          
+          # 检查是否存在相同版本的 tag
+          if git tag -l | grep -q "^v${CURRENT_VERSION}$"; then
+            echo "⚠️ Warning: Tag v${CURRENT_VERSION} already exists!"
+            echo "conflict=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ No version conflict detected"
+            echo "conflict=false" >> $GITHUB_OUTPUT
+          fi
+
