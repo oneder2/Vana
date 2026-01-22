@@ -160,20 +160,13 @@ jobs:
           "build_num=$BUILD_NUM" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "msi_version=$MSI_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Set MSI version for Windows build
-        run: |
-          $MSI_VERSION = "${{ steps.version.outputs.msi_version }}"
-          Write-Host "Setting MSI version to: $MSI_VERSION"
-          # 更新 tauri.conf.json 为 MSI 兼容格式
-          $tauriConfig = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
-          $tauriConfig.version = $MSI_VERSION
-          $tauriConfig | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
-          Write-Host "✅ MSI version set: $MSI_VERSION"
-
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build Tauri app
+        env:
+          # Set MSI version via environment variable (Tauri will use this for MSI only)
+          TAURI_WINDOWS_MSI_VERSION: ${{ steps.version.outputs.msi_version }}
         run: npm run tauri:build
 
       - name: Check Slack webhook
@@ -252,11 +245,45 @@ jobs:
       - name: Install Android dependencies
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1" "ndk;25.2.9519653"
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1"
+          
+          # 1. 自动获取当前系统中生效的 NDK 路径（由 tauri 识别到的版本为准）
+          # 我们不再手动下载特定版本，而是直接使用系统路径
+          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* 2>/dev/null | tail -1)
+          if [ -z "$NDK_PATH" ]; then
+            # 如果没有找到，安装一个默认版本
+            sdkmanager "ndk;25.2.9519653"
+            NDK_PATH="$ANDROID_HOME/ndk/25.2.9519653"
+          fi
+          echo "Using NDK at: $NDK_PATH"
+          
+          # 2. 构造 LLVM 工具链路径
+          TOOLCHAIN_PATH="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          
+          # 3. 核心修复：手动创建缺失的符号链接
+          # 某些版本的 NDK 将 ranlib 命名为 llvm-ranlib，而 OpenSSL 脚本在找 aarch64-linux-android-ranlib
+          if [ -d "$TOOLCHAIN_PATH" ]; then
+            cd "$TOOLCHAIN_PATH"
+            sudo ln -sf llvm-ranlib aarch64-linux-android-ranlib || true
+            sudo ln -sf llvm-ar aarch64-linux-android-ar || true
+            sudo ln -sf llvm-ranlib armv7a-linux-androideabi-ranlib || true
+            sudo ln -sf llvm-ar armv7a-linux-androideabi-ar || true
+            sudo ln -sf llvm-ranlib i686-linux-android-ranlib || true
+            sudo ln -sf llvm-ar i686-linux-android-ar || true
+            sudo ln -sf llvm-ranlib x86_64-linux-android-ranlib || true
+            sudo ln -sf llvm-ar x86_64-linux-android-ar || true
+          fi
+          
+          # 4. 写入环境变量
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
-          echo "PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools/bin:$PATH" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+          echo "$TOOLCHAIN_PATH" >> $GITHUB_PATH
+          echo "PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools/bin:$TOOLCHAIN_PATH:$PATH" >> $GITHUB_ENV
+          
+          # 5. 强制告知 OpenSSL 使用正确的 RANLIB
+          echo "RANLIB=aarch64-linux-android-ranlib" >> $GITHUB_ENV
+          echo "AR=aarch64-linux-android-ar" >> $GITHUB_ENV
 
       - name: Add Rust Android targets
         run: |
@@ -279,10 +306,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Initialize Android project
+        run: |
+          echo "📱 Initializing Android project..."
+          if [ ! -d "src-tauri/gen/android" ]; then
+            npx tauri android init
+            echo "✅ Android project initialized"
+          else
+            echo "✅ Android project already exists"
+          fi
+
       - name: Build Android APK
         run: |
           echo "🔨 Building Android development APK..."
-          npx tauri android build --verbose
+          # 显式注入环境变量，防止 openssl-sys 乱找工具
+          export AR=aarch64-linux-android-ar
+          export RANLIB=aarch64-linux-android-ranlib
+          # 显式指定 target 以减少编译器的混淆
+          # Tauri CLI 使用架构缩写，会自动映射到完整的 target triple
+          npx tauri android build --target aarch64 --verbose
 
       - name: Check Slack webhook
         id: check-slack

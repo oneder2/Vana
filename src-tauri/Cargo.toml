@@ -3,6 +3,10 @@ name = "vana"
 version = "0.5.2"
 edition = "2021"
 
+[lib]
+name = "vana"
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 # Tauri v2 核心依赖
 tauri = { version = "2.0.0", features = [] }
@@ -16,7 +20,7 @@ rand = "0.8"
 base64 = { version = "0.22", default-features = false, features = ["alloc", "std"] }
 
 # Git 操作
-git2 = { version = "0.18", features = ["https", "ssh"] }
+git2 = { version = "0.18", features = ["https", "ssh", "vendored-openssl"] }
 walkdir = "2.5"
 chrono = "0.4"
 
