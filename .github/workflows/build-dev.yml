@@ -316,6 +316,45 @@ jobs:
             echo "✅ Android project already exists"
           fi
 
+      - name: Setup Android keystore (Dev Build)
+        run: |
+          mkdir -p android-keystore
+          # Decode base64 keystore
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-keystore/keystore.jks
+
+          # Verify keystore was created successfully
+          if [ ! -f android-keystore/keystore.jks ]; then
+            echo "❌ 错误: Keystore 文件创建失败"
+            exit 1
+          fi
+
+          echo "✅ Keystore 文件已创建: $(ls -lh android-keystore/keystore.jks)"
+
+          # Create keystore.properties for Gradle
+          mkdir -p src-tauri/gen/android/app
+          cat > src-tauri/gen/android/app/keystore.properties << EOF
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          storeFile=$PWD/android-keystore/keystore.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          EOF
+
+          echo "✅ keystore.properties 已创建 (Dev Build)"
+
+      - name: Configure Android signing (Dev Build)
+        run: |
+          echo "🔧 配置 Gradle 签名 (Dev Build)..."
+          python3 scripts/configure-android-signing.py
+
+          echo ""
+          echo "🔍 验证配置..."
+          if grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts; then
+            echo "✅ 签名配置已成功添加到 build.gradle.kts"
+          else
+            echo "❌ 错误: 未在 build.gradle.kts 中找到签名配置"
+            exit 1
+          fi
+
       - name: Build Android APK
         run: |
           echo "🔨 Building Android development APK..."
@@ -358,4 +397,12 @@ jobs:
             src-tauri/gen/android/**/*.aab
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Cleanup keystore (Dev Build)
+        if: always()
+        run: |
+          echo "🧹 清理敏感文件..."
+          rm -rf android-keystore
+          rm -f src-tauri/gen/android/app/keystore.properties
+          echo "✅ 清理完成"
 

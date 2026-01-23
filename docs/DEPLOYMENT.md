@@ -71,15 +71,104 @@ git push origin v0.5.2
 
 #### Android 签名密钥
 
-- `ANDROID_KEYSTORE_BASE64`: Android keystore（JKS 文件）的 Base64 编码
+Android 应用需要使用数字证书签名才能发布。以下是配置步骤：
+
+##### 1. 生成 Keystore
+
+使用 `keytool` 生成签名密钥：
+
+```bash
+# macOS/Linux
+keytool -genkey -v -keystore ~/upload-keystore.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias release
+
+# Windows
+keytool -genkey -v -keystore %USERPROFILE%\upload-keystore.jks ^
+  -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 -alias release
+```
+
+**重要提示**:
+- 妥善保管 keystore 文件和密码
+- 不要将 keystore 提交到版本控制
+- 建议使用密码管理器保存密码
+- 证书有效期建议设置为 10000 天（约 27 年）
+
+##### 2. 验证 Keystore
+
+```bash
+# 查看 keystore 信息
+keytool -list -v -keystore upload-keystore.jks -storepass <密码>
+
+# 验证 alias
+keytool -list -keystore upload-keystore.jks -alias release -storepass <密码>
+```
+
+记录以下信息（发布到 Google Play 时需要）:
+- **SHA256 指纹**: 用于 Google Play App Signing
+- **有效期**: 确保证书在应用生命周期内有效
+
+##### 3. 配置 GitHub Secrets
+
+将以下信息添加到 GitHub Repository Secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: Keystore 文件的 Base64 编码
   ```bash
-  # 生成 Base64 编码
-  base64 -i keystore.jks | pbcopy  # macOS
-  base64 keystore.jks | clip        # Windows
+  # macOS/Linux
+  base64 -i upload-keystore.jks | pbcopy
+
+  # Linux (如果没有 pbcopy)
+  base64 upload-keystore.jks | xclip -selection clipboard
+
+  # Windows
+  certutil -encode upload-keystore.jks keystore.txt
+  # 然后打开 keystore.txt，复制内容（去掉首尾的 BEGIN/END 行）
   ```
-- `ANDROID_KEYSTORE_PASSWORD`: Keystore 密码
-- `ANDROID_KEY_ALIAS`: 密钥别名
-- `ANDROID_KEY_PASSWORD`: 密钥密码（如果与 keystore 密码不同）
+
+- `ANDROID_KEYSTORE_PASSWORD`: Keystore 密码（storePassword）
+- `ANDROID_KEY_ALIAS`: 密钥别名（通常是 `release`）
+- `ANDROID_KEY_PASSWORD`: 密钥密码（keyPassword，可以与 storePassword 相同）
+
+##### 4. 本地测试签名配置
+
+运行测试脚本验证配置：
+
+```bash
+chmod +x scripts/test-android-signing.sh
+./scripts/test-android-signing.sh
+```
+
+此脚本会检查：
+- ✅ 环境变量是否正确设置
+- ✅ Keystore 文件是否有效
+- ✅ 密码和 alias 是否匹配
+- ✅ 证书信息和有效期
+
+##### 5. CI/CD 自动签名流程
+
+CI 构建时会自动执行以下步骤：
+
+1. **解码 Keystore**: 从 `ANDROID_KEYSTORE_BASE64` 解码 JKS 文件
+2. **创建配置文件**: 生成 `keystore.properties` 文件
+3. **配置 Gradle**: 运行 `configure-android-signing.py` 修改 `build.gradle.kts`
+4. **构建签名 APK**: Gradle 自动使用配置的签名密钥
+5. **清理敏感文件**: 构建完成后删除 keystore 和配置文件
+
+##### 6. 验证签名
+
+下载构建的 APK 后，验证签名：
+
+```bash
+# 使用 apksigner (Android SDK)
+apksigner verify --print-certs your-app.apk
+
+# 使用 jarsigner (JDK)
+jarsigner -verify -verbose -certs your-app.apk
+```
+
+确认：
+- ✅ 签名有效
+- ✅ SHA256 指纹与 keystore 一致
+- ✅ 证书未过期
 
 ### 发布流程
 
