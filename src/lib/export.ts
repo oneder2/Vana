@@ -106,7 +106,7 @@ function convertJSONToHTML(content: JSONContent, theme: Theme): string {
 
 /**
  * 导出文档为 PDF
- * 使用浏览器打印 API，完美支持中文和所有样式
+ * 在 Tauri 环境中使用当前窗口打印，完美支持中文和所有样式
  * @param content Tiptap JSON 内容
  * @param theme 氛围协议主题
  * @param filename 文件名（不含扩展名）
@@ -122,111 +122,129 @@ export async function exportToPDF(
   // 生成 HTML 内容
   const htmlContent = convertJSONToHTML(content, theme);
 
-  // 创建打印窗口
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    throw new Error('无法打开打印窗口，请检查浏览器弹窗设置');
-  }
+  // 创建隐藏的打印容器
+  const printContainer = document.createElement('div');
+  printContainer.id = 'print-container';
+  printContainer.style.position = 'fixed';
+  printContainer.style.top = '0';
+  printContainer.style.left = '0';
+  printContainer.style.width = '100%';
+  printContainer.style.height = '100%';
+  printContainer.style.zIndex = '9999';
+  printContainer.style.backgroundColor = bgColor;
+  printContainer.style.overflow = 'auto';
+  printContainer.style.display = 'none'; // 默认隐藏
 
-  // 写入 HTML 内容
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>${filename}</title>
-      <style>
-        @page {
-          size: A4;
-          margin: 20mm;
-        }
+  // 创建打印样式
+  const printStyle = document.createElement('style');
+  printStyle.id = 'print-style';
+  printStyle.textContent = `
+    @media print {
+      body > *:not(#print-container) {
+        display: none !important;
+      }
 
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
+      #print-container {
+        display: block !important;
+        position: static !important;
+        width: 100% !important;
+        height: auto !important;
+        background-color: ${bgColor} !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
 
-        body {
-          background-color: ${bgColor};
-          color: ${textColor};
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-          font-size: 14px;
-          line-height: 1.6;
-          padding: 20px;
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
+      @page {
+        size: A4;
+        margin: 20mm;
+      }
+    }
 
-        h1, h2, h3, h4, h5, h6 {
-          margin: 16px 0 8px 0;
-          font-weight: bold;
-        }
+    #print-container {
+      color: ${textColor};
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 20px;
+    }
 
-        p {
-          margin: 8px 0;
-        }
+    #print-container h1,
+    #print-container h2,
+    #print-container h3,
+    #print-container h4,
+    #print-container h5,
+    #print-container h6 {
+      margin: 16px 0 8px 0;
+      font-weight: bold;
+    }
 
-        blockquote {
-          margin: 12px 0;
-          padding-left: 16px;
-        }
+    #print-container p {
+      margin: 8px 0;
+    }
 
-        pre {
-          margin: 12px 0;
-          white-space: pre-wrap;
-          word-wrap: break-word;
-        }
+    #print-container blockquote {
+      margin: 12px 0;
+      padding-left: 16px;
+    }
 
-        ul, ol {
-          margin: 8px 0;
-          padding-left: 24px;
-        }
+    #print-container pre {
+      margin: 12px 0;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
 
-        li {
-          margin: 4px 0;
-        }
+    #print-container ul,
+    #print-container ol {
+      margin: 8px 0;
+      padding-left: 24px;
+    }
 
-        .footer {
-          position: fixed;
-          bottom: 10mm;
-          left: 0;
-          right: 0;
-          text-align: center;
-          font-size: 10px;
-          font-style: italic;
-          color: ${textColor};
-          opacity: 0.6;
-        }
+    #print-container li {
+      margin: 4px 0;
+    }
 
-        @media print {
-          body {
-            background-color: ${bgColor};
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      ${htmlContent}
-      <div class="footer">Created with No Visitors - ${theme.name}</div>
-    </body>
-    </html>
-  `);
+    .print-footer {
+      margin-top: 40px;
+      text-align: center;
+      font-size: 10px;
+      font-style: italic;
+      opacity: 0.6;
+    }
+  `;
 
-  printWindow.document.close();
+  // 添加内容
+  printContainer.innerHTML = `
+    ${htmlContent}
+    <div class="print-footer">Created with No Visitors - ${theme.name}</div>
+  `;
 
-  // 等待内容加载完成后打印
-  printWindow.onload = () => {
+  // 添加到 DOM
+  document.head.appendChild(printStyle);
+  document.body.appendChild(printContainer);
+
+  // 触发打印
+  try {
+    // 等待 DOM 更新
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // 调用打印
+    window.print();
+
+    // 打印完成后清理（延迟清理，确保打印对话框已打开）
     setTimeout(() => {
-      printWindow.print();
-      // 打印完成后关闭窗口
-      setTimeout(() => {
-        printWindow.close();
-      }, 100);
-    }, 250);
-  };
+      document.head.removeChild(printStyle);
+      document.body.removeChild(printContainer);
+    }, 1000);
+  } catch (error) {
+    // 清理
+    if (printStyle.parentNode) {
+      document.head.removeChild(printStyle);
+    }
+    if (printContainer.parentNode) {
+      document.body.removeChild(printContainer);
+    }
+    throw error;
+  }
 }
 
 /**
