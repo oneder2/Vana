@@ -190,6 +190,8 @@ pub fn run() {
             commands::switch_to_branch_command,
             // 搜索命令
             commands::search_files_command,
+            // 导出命令
+            commands::save_export_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

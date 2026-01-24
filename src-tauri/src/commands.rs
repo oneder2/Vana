@@ -767,7 +767,7 @@ pub fn switch_to_branch_command(path: String, branch: String) -> Result<(), Stri
 }
 
 /// 搜索文档内容
-/// 
+///
 /// 前端调用: `invoke('search_files', { workspacePath: '...', query: '...' })`
 #[tauri::command]
 pub async fn search_files_command(
@@ -778,5 +778,41 @@ pub async fn search_files_command(
     search_files(&workspace_path, &query, &app)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 保存导出文件到 Documents/vana 目录
+///
+/// 前端调用: `invoke('save_export_file', { filename: '...', content: [...], fileType: 'pdf' | 'docx' })`
+#[tauri::command]
+pub async fn save_export_file(
+    filename: String,
+    content: Vec<u8>,
+    file_type: String,
+) -> Result<String, String> {
+    use std::fs;
+
+    // 获取 Documents 目录
+    let docs_dir = dirs::document_dir()
+        .ok_or_else(|| "无法获取 Documents 目录".to_string())?;
+
+    // 创建 vana 子目录
+    let vana_dir = docs_dir.join("vana");
+    fs::create_dir_all(&vana_dir)
+        .map_err(|e| format!("创建 vana 目录失败: {}", e))?;
+
+    // 处理文件名冲突（自动递增）
+    let mut final_path = vana_dir.join(format!("{}.{}", filename, file_type));
+    let mut counter = 1;
+    while final_path.exists() {
+        final_path = vana_dir.join(format!("{}({}).{}", filename, counter, file_type));
+        counter += 1;
+    }
+
+    // 保存文件
+    fs::write(&final_path, content)
+        .map_err(|e| format!("保存文件失败: {}", e))?;
+
+    // 返回保存的文件路径
+    Ok(final_path.to_string_lossy().to_string())
 }
 

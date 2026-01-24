@@ -6,7 +6,7 @@
 
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Heading, FileText, Quote, List, Code, Info, Plus } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
@@ -40,13 +40,35 @@ interface BlockTypeSelectorProps {
 /**
  * 块类型选择器组件
  */
-export function BlockTypeSelector({ 
-  editor, 
-  onClose, 
+export function BlockTypeSelector({
+  editor,
+  onClose,
   mode = 'desktop',
-  position 
+  position
 }: BlockTypeSelectorProps) {
   const { theme } = useTheme();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 桌面端：点击外部关闭菜单
+  useEffect(() => {
+    if (mode !== 'desktop') return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+
+    // 延迟添加监听器，避免立即触发
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside);
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [mode, onClose]);
 
   const handleSelectBlockType = (blockType: BlockType) => {
     if (!editor || !editor.isEditable) {
@@ -251,6 +273,7 @@ export function BlockTypeSelector({
 
   return (
     <div
+      ref={menuRef}
       className="fixed z-[100] min-w-[200px] rounded border shadow-lg"
       style={{
         right: `${menuRight}px`, // 从右边定位，确保右下角对齐按钮

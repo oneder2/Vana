@@ -34,7 +34,7 @@ import { loadAtmosphereConfig, findThemeForFile } from '@/lib/atmosphere';
 import { loadWindowState, saveWindowState } from '@/lib/windowState';
 import { exportToPDF, exportToDOCX } from '@/lib/export';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit, Search, FileDown } from 'lucide-react';
+import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit, Search, FileDown, Bold, Italic, Underline, Strikethrough } from 'lucide-react';
 import Link from 'next/link';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
@@ -502,6 +502,79 @@ function MainApp() {
             <Plus size={20} />
           </button>
           
+          {/* 文本格式化按钮组 */}
+          <div className="hidden md:flex items-center gap-1 border rounded"
+            style={{
+              borderColor: getThemeBorderColor(theme),
+              backgroundColor: getThemeSurfaceColor(theme),
+            }}
+          >
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().toggleBold().run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive('bold') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{
+                color: editorInstance?.isActive('bold') ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="粗体 (Ctrl+B / Cmd+B)"
+            >
+              <Bold size={16} />
+            </button>
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().toggleItalic().run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive('italic') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{
+                color: editorInstance?.isActive('italic') ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="斜体 (Ctrl+I / Cmd+I)"
+            >
+              <Italic size={16} />
+            </button>
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().toggleUnderline().run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive('underline') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{
+                color: editorInstance?.isActive('underline') ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="下划线 (Ctrl+U / Cmd+U)"
+            >
+              <Underline size={16} />
+            </button>
+            <button
+              onClick={() => {
+                if (editorInstance) {
+                  editorInstance.chain().focus().toggleStrike().run();
+                }
+              }}
+              className={`p-1.5 transition-opacity ${
+                editorInstance?.isActive('strike') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
+              }`}
+              style={{
+                color: editorInstance?.isActive('strike') ? getThemeAccentColor(theme) : undefined,
+              }}
+              title="删除线 (Ctrl+Shift+X / Cmd+Shift+X)"
+            >
+              <Strikethrough size={16} />
+            </button>
+          </div>
+
           {/* 文本对齐按钮组 - 每个块独立对齐 */}
           <div className="hidden md:flex items-center gap-1 border rounded"
             style={{
@@ -518,7 +591,7 @@ function MainApp() {
               className={`p-1.5 transition-opacity ${
                 editorInstance?.isActive({ textAlign: 'left' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
               }`}
-              style={{ 
+              style={{
                 color: editorInstance?.isActive({ textAlign: 'left' }) ? getThemeAccentColor(theme) : undefined,
               }}
               title="居左对齐"
@@ -534,7 +607,7 @@ function MainApp() {
               className={`p-1.5 transition-opacity ${
                 editorInstance?.isActive({ textAlign: 'center' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
               }`}
-              style={{ 
+              style={{
                 color: editorInstance?.isActive({ textAlign: 'center' }) ? getThemeAccentColor(theme) : undefined,
               }}
               title="居中对齐"
@@ -550,7 +623,7 @@ function MainApp() {
               className={`p-1.5 transition-opacity ${
                 editorInstance?.isActive({ textAlign: 'right' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
               }`}
-              style={{ 
+              style={{
                 color: editorInstance?.isActive({ textAlign: 'right' }) ? getThemeAccentColor(theme) : undefined,
               }}
               title="居右对齐"
@@ -614,54 +687,61 @@ function MainApp() {
           {/* 导出按钮 */}
           {currentFilePath && editorContent && (
             <div className="relative group">
+              {/* 扩大悬停判定区域 */}
+              <div className="absolute -inset-2 group-hover:block hidden" />
+
               <button
-                className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
+                className="p-1.5 transition-opacity opacity-50 hover:opacity-100 relative z-10"
                 style={{ color: getThemeAccentColor(theme) }}
                 title="导出文档"
               >
                 <FileDown size={18} />
               </button>
 
-              {/* 导出菜单 */}
+              {/* 导出菜单 - 添加过渡区域 */}
               <div
-                className="absolute right-0 top-full mt-1 hidden group-hover:block z-50 rounded border shadow-lg"
-                style={{
-                  backgroundColor: getThemeSurfaceColor(theme),
-                  borderColor: getThemeBorderColor(theme),
-                }}
+                className="absolute right-0 top-full pt-2 hidden group-hover:block z-50"
               >
-                <button
-                  onClick={async () => {
-                    try {
-                      const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
-                      await exportToPDF(editorContent, theme, filename);
-                      toast.success('PDF 导出成功');
-                    } catch (error) {
-                      console.error('导出 PDF 失败:', error);
-                      toast.error(`导出 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
-                    }
+                <div
+                  className="rounded border shadow-lg"
+                  style={{
+                    backgroundColor: getThemeSurfaceColor(theme),
+                    borderColor: getThemeBorderColor(theme),
                   }}
-                  className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
-                  style={{ color: getThemeAccentColor(theme) }}
                 >
-                  导出为 PDF
-                </button>
-                <button
-                  onClick={async () => {
-                    try {
-                      const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
-                      await exportToDOCX(editorContent, theme, filename);
-                      toast.success('DOCX 导出成功');
-                    } catch (error) {
-                      console.error('导出 DOCX 失败:', error);
-                      toast.error(`导出 DOCX 失败: ${error instanceof Error ? error.message : String(error)}`);
-                    }
-                  }}
-                  className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
-                  style={{ color: getThemeAccentColor(theme) }}
-                >
-                  导出为 DOCX
-                </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
+                        await exportToPDF(editorContent, theme, filename);
+                        toast.success('PDF 导出成功');
+                      } catch (error) {
+                        console.error('导出 PDF 失败:', error);
+                        toast.error(`导出 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
+                      }
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
+                    style={{ color: getThemeAccentColor(theme) }}
+                  >
+                    导出为 PDF
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
+                        await exportToDOCX(editorContent, theme, filename);
+                        toast.success('DOCX 导出成功');
+                      } catch (error) {
+                        console.error('导出 DOCX 失败:', error);
+                        toast.error(`导出 DOCX 失败: ${error instanceof Error ? error.message : String(error)}`);
+                      }
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
+                    style={{ color: getThemeAccentColor(theme) }}
+                  >
+                    导出为 DOCX
+                  </button>
+                </div>
               </div>
             </div>
           )}

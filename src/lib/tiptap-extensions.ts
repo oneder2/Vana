@@ -13,6 +13,7 @@ import OrderedList from '@tiptap/extension-ordered-list';
 import Placeholder from '@tiptap/extension-placeholder';
 import Paragraph from '@tiptap/extension-paragraph';
 import TextAlign from '@tiptap/extension-text-align';
+import Underline from '@tiptap/extension-underline';
 
 /**
  * Meta 块节点（元数据块）
@@ -324,6 +325,8 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
       types: ['heading', 'paragraph', 'blockquote'],
       defaultAlignment: 'left',
     }),
+    // Underline 扩展 - 下划线
+    Underline,
     Placeholder.configure({
       placeholder: '铭刻...',
       emptyEditorClass: 'is-editor-empty',

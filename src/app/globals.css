@@ -170,6 +170,23 @@
   font-family: monospace;
 }
 
+/* 文本格式化样式 */
+.tiptap-editor strong {
+  font-weight: bold;
+}
+
+.tiptap-editor em {
+  font-style: italic;
+}
+
+.tiptap-editor u {
+  text-decoration: underline;
+}
+
+.tiptap-editor s {
+  text-decoration: line-through;
+}
+
 .tiptap-editor pre {
   background-color: rgba(0, 0, 0, 0.1);
   border-radius: 0.25rem;
