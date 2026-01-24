@@ -9,7 +9,6 @@ import { Theme } from './themes';
 import { getThemeBgColor, getThemeAccentColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
 import { invoke } from '@tauri-apps/api/core';
-import html2pdf from 'html2pdf.js';
 
 /**
  * 从 Tailwind 类名中提取颜色的 RGB 值
@@ -158,6 +157,9 @@ export async function exportToPDF(
   theme: Theme,
   filename: string
 ): Promise<void> {
+  // 动态导入 html2pdf.js（仅在浏览器端运行）
+  const html2pdf = (await import('html2pdf.js')).default;
+
   const bgColor = getThemeBgColor(theme);
   const textColor = theme.id === 'vellum' ? '#292524' : '#d6d3d1';
 
