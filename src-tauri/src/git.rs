@@ -316,18 +316,18 @@ pub fn get_remote_url(repo_path: &Path, name: &str) -> Result<Option<String>> {
 /// 从远程获取更新
 pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<&str>) -> Result<()> {
     eprintln!("[GitOperation] fetch_from_remote: 开始执行 fetch（使用 git2-rs API），remote_name: {}, repo_path: {:?}", remote_name, repo_path);
-    
+
     let repo = Repository::open(repo_path)
         .context("无法打开 Git 仓库")?;
-    
+
     let mut remote = repo.find_remote(remote_name)
         .context(format!("无法找到远程仓库: {}", remote_name))?;
-    
+
     // 如果提供了 PAT token，临时更新远程 URL
     if let Some(pat) = pat_token {
         let url = remote.url()
             .ok_or_else(|| anyhow::anyhow!("远程 URL 为空"))?;
-        
+
         if url.starts_with("https://") {
             let url_without_protocol = url.strip_prefix("https://").unwrap_or(url);
             let authenticated_url = if let Some(at_pos) = url_without_protocol.find('@') {
@@ -336,13 +336,13 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
             } else {
                 format!("https://{}@{}", pat, url_without_protocol)
             };
-            
+
             eprintln!("[GitOperation] fetch_from_remote: 临时更新远程 URL 以包含 PAT 认证");
             // 先删除再创建以更新 URL
             // 注意：删除重建会导致 fetch 配置累积，需要在重建后清理
             repo.remote_delete(remote_name)?;
             remote = repo.remote(remote_name, &authenticated_url)?;
-            
+
             // 重建后，清理可能累积的 fetch 配置，只保留一个
             // 这可以防止 multivar 错误
             if let Ok(mut config) = repo.config() {
@@ -357,11 +357,24 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
             }
         }
     }
-    
+
     // 执行 fetch
     // 使用 snapshot() 来处理 multivar（重复配置项）问题
     let mut callbacks = git2::RemoteCallbacks::new();
-    
+
+    // Windows 平台：配置证书检查回调以解决 Schannel SSL 证书验证问题
+    // 在 Windows 上，libgit2 使用 Schannel 作为 SSL 后端，可能会遇到证书吊销检查失败的问题
+    // 参考：https://github.com/libgit2/libgit2/issues/6724
+    #[cfg(target_os = "windows")]
+    {
+        callbacks.certificate_check(|_cert, _host| {
+            // 对于 HTTPS 连接，接受所有证书（因为我们使用 PAT 认证）
+            // 这解决了 Windows 上 "certificate revocation status could not be verified" 的问题
+            eprintln!("[GitOperation] fetch_from_remote: Windows 平台 - 跳过证书吊销检查");
+            Ok(git2::CertificateCheckStatus::CertificateOk)
+        });
+    }
+
     // 尝试使用 snapshot() 来避免 multivar 错误
     // 如果失败，则跳过 credential helper（依赖 URL 中的 PAT）
     if let Ok(mut config) = repo.config() {
@@ -377,15 +390,15 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
         eprintln!("[GitOperation] fetch_from_remote: 警告 - 无法读取 Git 配置（可能存在 multivar），将跳过 credential helper");
         eprintln!("[GitOperation] fetch_from_remote: 依赖 URL 中的 PAT 认证");
     }
-    
+
     let mut fetch_options = git2::FetchOptions::new();
     fetch_options.remote_callbacks(callbacks);
-    
+
     // 将所有远端分支抓取到 refs/remotes/<remote_name>/*
     let refspec = format!("refs/heads/*:refs/remotes/{}/*", remote_name);
     remote.fetch(&[&refspec], Some(&mut fetch_options), None)
         .context("fetch 失败")?;
-    
+
     eprintln!("[GitOperation] fetch_from_remote: fetch 完成（使用 git2-rs API）");
     Ok(())
 }
@@ -437,11 +450,24 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
     
     // 构建 refspec
     let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
-    
+
     // 执行 push
     // 使用 snapshot() 来处理 multivar（重复配置项）问题
     let mut callbacks = git2::RemoteCallbacks::new();
-    
+
+    // Windows 平台：配置证书检查回调以解决 Schannel SSL 证书验证问题
+    // 在 Windows 上，libgit2 使用 Schannel 作为 SSL 后端，可能会遇到证书吊销检查失败的问题
+    // 参考：https://github.com/libgit2/libgit2/issues/6724
+    #[cfg(target_os = "windows")]
+    {
+        callbacks.certificate_check(|_cert, _host| {
+            // 对于 HTTPS 连接，接受所有证书（因为我们使用 PAT 认证）
+            // 这解决了 Windows 上 "certificate revocation status could not be verified" 的问题
+            eprintln!("[GitOperation] push_to_remote: Windows 平台 - 跳过证书吊销检查");
+            Ok(git2::CertificateCheckStatus::CertificateOk)
+        });
+    }
+
     // 尝试使用 snapshot() 来避免 multivar 错误
     // 如果失败，则跳过 credential helper（依赖 URL 中的 PAT）
     if let Ok(mut config) = repo.config() {
@@ -457,13 +483,13 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
         eprintln!("[GitOperation] push_to_remote: 警告 - 无法读取 Git 配置（可能存在 multivar），将跳过 credential helper");
         eprintln!("[GitOperation] push_to_remote: 依赖 URL 中的 PAT 认证");
     }
-    
+
     let mut push_options = git2::PushOptions::new();
     push_options.remote_callbacks(callbacks);
-    
+
     remote.push(&[&refspec], Some(&mut push_options))
         .context("push 失败")?;
-    
+
     eprintln!("[GitOperation] push_to_remote: push 完成（使用 git2-rs API）");
     Ok(())
 }

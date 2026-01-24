@@ -32,8 +32,9 @@ import { readFile, getWorkspacePath, ensureWorkspaceInitialized, fetchFromRemote
 import { retryFailedPushTasks, getQueueSize } from '@/lib/syncQueue';
 import { loadAtmosphereConfig, findThemeForFile } from '@/lib/atmosphere';
 import { loadWindowState, saveWindowState } from '@/lib/windowState';
+import { exportToPDF, exportToDOCX } from '@/lib/export';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit, Search } from 'lucide-react';
+import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit, Search, FileDown } from 'lucide-react';
 import Link from 'next/link';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
@@ -221,20 +222,20 @@ function MainApp() {
             console.log('[initWorkspace] 应用启动：执行 Fetch');
             await fetchFromRemote(path, 'origin', patToken);
             if (isMounted) {
-              console.log('[initWorkspace] Fetch 完成');
+            console.log('[initWorkspace] Fetch 完成');
             }
           } else {
             console.log('[initWorkspace] 未配置远程仓库或 PAT，跳过 Fetch');
           }
         } catch (fetchError) {
           if (isMounted) {
-            console.error('[initWorkspace] Fetch 失败:', fetchError);
-            // Fetch 失败不影响应用启动
+          console.error('[initWorkspace] Fetch 失败:', fetchError);
+          // Fetch 失败不影响应用启动
           }
         }
       } catch (error) {
         if (isMounted) {
-          console.error('初始化工作区失败:', error);
+        console.error('初始化工作区失败:', error);
         }
       }
     };
@@ -610,6 +611,61 @@ function MainApp() {
             <Search size={18} />
           </button>
 
+          {/* 导出按钮 */}
+          {currentFilePath && editorContent && (
+            <div className="relative group">
+              <button
+                className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
+                style={{ color: getThemeAccentColor(theme) }}
+                title="导出文档"
+              >
+                <FileDown size={18} />
+              </button>
+
+              {/* 导出菜单 */}
+              <div
+                className="absolute right-0 top-full mt-1 hidden group-hover:block z-50 rounded border shadow-lg"
+                style={{
+                  backgroundColor: getThemeSurfaceColor(theme),
+                  borderColor: getThemeBorderColor(theme),
+                }}
+              >
+                <button
+                  onClick={async () => {
+                    try {
+                      const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
+                      await exportToPDF(editorContent, theme, filename);
+                      toast.success('PDF 导出成功');
+                    } catch (error) {
+                      console.error('导出 PDF 失败:', error);
+                      toast.error(`导出 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                  }}
+                  className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
+                  style={{ color: getThemeAccentColor(theme) }}
+                >
+                  导出为 PDF
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
+                      await exportToDOCX(editorContent, theme, filename);
+                      toast.success('DOCX 导出成功');
+                    } catch (error) {
+                      console.error('导出 DOCX 失败:', error);
+                      toast.error(`导出 DOCX 失败: ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                  }}
+                  className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
+                  style={{ color: getThemeAccentColor(theme) }}
+                >
+                  导出为 DOCX
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 提交调试按钮 */}
           {currentFilePath && (
             <button
@@ -912,7 +968,7 @@ function MainApp() {
       <AtmospherePreviewModal
         isOpen={showAtmospherePreview}
         onClose={() => setShowAtmospherePreview(false)}
-      />
+        />
     </div>
   );
 }
