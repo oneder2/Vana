@@ -4,10 +4,9 @@
  * 应用文档的氛围协议主题样式
  */
 
-import jsPDF from 'jspdf';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from 'docx';
 import { Theme } from './themes';
-import { getThemeBgColor, getThemeAccentColor, getThemeSurfaceColor } from './themeStyles';
+import { getThemeBgColor, getThemeAccentColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
 
 /**
@@ -27,24 +26,87 @@ function extractRGBFromTheme(colorHex: string): { r: number; g: number; b: numbe
  */
 function extractTextFromJSON(content: JSONContent): string {
   if (!content) return '';
-  
+
   let text = '';
-  
+
   if (content.type === 'text') {
     text += content.text || '';
   }
-  
+
   if (content.content && Array.isArray(content.content)) {
     for (const child of content.content) {
       text += extractTextFromJSON(child);
     }
   }
-  
+
   return text;
 }
 
 /**
+ * 将 Tiptap JSON 内容转换为 HTML
+ * 用于 PDF 导出（通过浏览器打印）
+ */
+function convertJSONToHTML(content: JSONContent, theme: Theme): string {
+  if (!content.content) return '';
+
+  const bgColor = getThemeBgColor(theme);
+  const textColor = theme.id === 'vellum' ? '#292524' : '#d6d3d1';
+  const accentColor = theme.id === 'arcane'
+    ? '#8b5cf6'
+    : theme.id === 'terminal'
+    ? '#00ff41'
+    : theme.id === 'rusty'
+    ? '#c2410c'
+    : '#292524';
+
+  let html = '';
+
+  for (const block of content.content) {
+    const text = extractTextFromJSON(block);
+    if (!text.trim() && block.type !== 'paragraph') continue;
+
+    const align = block.attrs?.textAlign || 'left';
+    const alignStyle = `text-align: ${align};`;
+
+    if (block.type === 'heading') {
+      const level = block.attrs?.level || 1;
+      const fontSize = level === 1 ? '32px' : level === 2 ? '24px' : '20px';
+      html += `<h${level} style="color: ${accentColor}; ${alignStyle} font-size: ${fontSize}; font-weight: bold; margin: 16px 0 8px 0;">${text}</h${level}>`;
+    } else if (block.type === 'blockquote') {
+      html += `<blockquote style="border-left: 4px solid ${accentColor}; padding-left: 16px; margin: 12px 0; font-style: italic; color: ${textColor}; ${alignStyle}">${text}</blockquote>`;
+    } else if (block.type === 'codeBlock') {
+      const codeBg = theme.id === 'vellum' ? '#e9e4d9' : '#1a1a1a';
+      html += `<pre style="background-color: ${codeBg}; color: ${textColor}; padding: 12px; border-radius: 4px; font-family: 'Courier New', monospace; overflow-x: auto; margin: 12px 0;"><code>${text}</code></pre>`;
+    } else if (block.type === 'bulletList') {
+      html += '<ul style="margin: 8px 0; padding-left: 24px;">';
+      if (block.content) {
+        for (const item of block.content) {
+          const itemText = extractTextFromJSON(item);
+          html += `<li style="color: ${textColor}; margin: 4px 0;">${itemText}</li>`;
+        }
+      }
+      html += '</ul>';
+    } else if (block.type === 'orderedList') {
+      html += '<ol style="margin: 8px 0; padding-left: 24px;">';
+      if (block.content) {
+        for (const item of block.content) {
+          const itemText = extractTextFromJSON(item);
+          html += `<li style="color: ${textColor}; margin: 4px 0;">${itemText}</li>`;
+        }
+      }
+      html += '</ol>';
+    } else {
+      // 普通段落
+      html += `<p style="color: ${textColor}; ${alignStyle} margin: 8px 0; line-height: 1.6;">${text || '&nbsp;'}</p>`;
+    }
+  }
+
+  return html;
+}
+
+/**
  * 导出文档为 PDF
+ * 使用浏览器打印 API，完美支持中文和所有样式
  * @param content Tiptap JSON 内容
  * @param theme 氛围协议主题
  * @param filename 文件名（不含扩展名）
@@ -54,166 +116,117 @@ export async function exportToPDF(
   theme: Theme,
   filename: string
 ): Promise<void> {
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  });
+  const bgColor = getThemeBgColor(theme);
+  const textColor = theme.id === 'vellum' ? '#292524' : '#d6d3d1';
 
-  // 获取主题颜色
-  const bgColor = extractRGBFromTheme(getThemeBgColor(theme));
-  const textColor = theme.id === 'vellum' 
-    ? extractRGBFromTheme('#292524') 
-    : extractRGBFromTheme('#d6d3d1');
-  const accentColorHex = getThemeAccentColor(theme);
-  // 从 Tailwind 类名中提取颜色（例如 'text-violet-500'）
-  const accentColor = theme.id === 'arcane' 
-    ? extractRGBFromTheme('#8b5cf6') // violet-500
-    : theme.id === 'terminal'
-    ? extractRGBFromTheme('#00ff41') // terminal green
-    : theme.id === 'rusty'
-    ? extractRGBFromTheme('#c2410c') // orange-700
-    : extractRGBFromTheme('#292524'); // stone-800 for vellum
+  // 生成 HTML 内容
+  const htmlContent = convertJSONToHTML(content, theme);
 
-  // 设置背景颜色
-  pdf.setFillColor(bgColor.r, bgColor.g, bgColor.b);
-  pdf.rect(0, 0, 210, 297, 'F'); // A4 尺寸
+  // 创建打印窗口
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    throw new Error('无法打开打印窗口，请检查浏览器弹窗设置');
+  }
 
-  // 设置默认文本颜色
-  pdf.setTextColor(textColor.r, textColor.g, textColor.b);
-
-  let yPosition = 20; // 起始 Y 位置
-  const pageWidth = 210;
-  const margin = 20;
-  const maxWidth = pageWidth - 2 * margin;
-
-  // 遍历文档内容
-  if (content.content && Array.isArray(content.content)) {
-    for (const block of content.content) {
-      // 检查是否需要新页面
-      if (yPosition > 270) {
-        pdf.addPage();
-        pdf.setFillColor(bgColor.r, bgColor.g, bgColor.b);
-        pdf.rect(0, 0, 210, 297, 'F');
-        yPosition = 20;
-      }
-
-      const text = extractTextFromJSON(block);
-      if (!text.trim()) {
-        yPosition += 5; // 空行
-        continue;
-      }
-
-      // 根据块类型设置样式
-      if (block.type === 'heading') {
-        const level = block.attrs?.level || 1;
-        const fontSize = level === 1 ? 24 : level === 2 ? 20 : 16;
-        pdf.setFontSize(fontSize);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(accentColor.r, accentColor.g, accentColor.b);
-        
-        // 处理文本对齐
-        const align = block.attrs?.textAlign || 'left';
-        const xPosition = align === 'center' 
-          ? pageWidth / 2 
-          : align === 'right' 
-          ? pageWidth - margin 
-          : margin;
-        
-        pdf.text(text, xPosition, yPosition, { 
-          align: align as 'left' | 'center' | 'right',
-          maxWidth 
-        });
-        yPosition += fontSize * 0.5 + 5;
-        pdf.setTextColor(textColor.r, textColor.g, textColor.b);
-      } else if (block.type === 'blockquote') {
-        pdf.setFontSize(12);
-        pdf.setFont('helvetica', 'italic');
-        
-        // 绘制引用边框
-        pdf.setDrawColor(accentColor.r, accentColor.g, accentColor.b);
-        pdf.setLineWidth(1);
-        pdf.line(margin, yPosition - 3, margin, yPosition + 10);
-        
-        const lines = pdf.splitTextToSize(text, maxWidth - 10);
-        pdf.text(lines, margin + 5, yPosition, { maxWidth: maxWidth - 10 });
-        yPosition += lines.length * 6 + 5;
-      } else if (block.type === 'codeBlock') {
-        pdf.setFontSize(10);
-        pdf.setFont('courier', 'normal');
-        
-        // 绘制代码块背景
-        const codeHeight = text.split('\n').length * 5 + 4;
-        pdf.setFillColor(
-          theme.id === 'vellum' ? 230 : 20,
-          theme.id === 'vellum' ? 228 : 20,
-          theme.id === 'vellum' ? 217 : 20
-        );
-        pdf.rect(margin, yPosition - 3, maxWidth, codeHeight, 'F');
-        
-        const lines = text.split('\n');
-        for (const line of lines) {
-          pdf.text(line, margin + 2, yPosition);
-          yPosition += 5;
+  // 写入 HTML 内容
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>${filename}</title>
+      <style>
+        @page {
+          size: A4;
+          margin: 20mm;
         }
-        yPosition += 5;
-      } else if (block.type === 'bulletList' || block.type === 'orderedList') {
-        pdf.setFontSize(12);
-        pdf.setFont('helvetica', 'normal');
-        
-        // 处理列表项
-        if (block.content && Array.isArray(block.content)) {
-          for (let i = 0; i < block.content.length; i++) {
-            const listItem = block.content[i];
-            const itemText = extractTextFromJSON(listItem);
-            const bullet = block.type === 'bulletList' ? '•' : `${i + 1}.`;
-            
-            pdf.text(bullet, margin, yPosition);
-            const lines = pdf.splitTextToSize(itemText, maxWidth - 10);
-            pdf.text(lines, margin + 7, yPosition, { maxWidth: maxWidth - 10 });
-            yPosition += lines.length * 6 + 2;
+
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+
+        body {
+          background-color: ${bgColor};
+          color: ${textColor};
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+          font-size: 14px;
+          line-height: 1.6;
+          padding: 20px;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+          margin: 16px 0 8px 0;
+          font-weight: bold;
+        }
+
+        p {
+          margin: 8px 0;
+        }
+
+        blockquote {
+          margin: 12px 0;
+          padding-left: 16px;
+        }
+
+        pre {
+          margin: 12px 0;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+        }
+
+        ul, ol {
+          margin: 8px 0;
+          padding-left: 24px;
+        }
+
+        li {
+          margin: 4px 0;
+        }
+
+        .footer {
+          position: fixed;
+          bottom: 10mm;
+          left: 0;
+          right: 0;
+          text-align: center;
+          font-size: 10px;
+          font-style: italic;
+          color: ${textColor};
+          opacity: 0.6;
+        }
+
+        @media print {
+          body {
+            background-color: ${bgColor};
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
         }
-        yPosition += 3;
-      } else {
-        // 普通段落
-        pdf.setFontSize(12);
-        pdf.setFont('helvetica', 'normal');
-        
-        const align = block.attrs?.textAlign || 'left';
-        const xPosition = align === 'center' 
-          ? pageWidth / 2 
-          : align === 'right' 
-          ? pageWidth - margin 
-          : margin;
-        
-        const lines = pdf.splitTextToSize(text, maxWidth);
-        pdf.text(lines, xPosition, yPosition, { 
-          align: align as 'left' | 'center' | 'right',
-          maxWidth 
-        });
-        yPosition += lines.length * 6 + 3;
-      }
-    }
-  }
+      </style>
+    </head>
+    <body>
+      ${htmlContent}
+      <div class="footer">Created with No Visitors - ${theme.name}</div>
+    </body>
+    </html>
+  `);
 
-  // 添加页脚（主题标识）
-  const totalPages = (pdf as any).internal.getNumberOfPages();
-  for (let i = 1; i <= totalPages; i++) {
-    pdf.setPage(i);
-    pdf.setFontSize(8);
-    pdf.setTextColor(textColor.r, textColor.g, textColor.b);
-    pdf.setFont('helvetica', 'italic');
-    pdf.text(
-      `Created with No Visitors - ${theme.name}`,
-      pageWidth / 2,
-      290,
-      { align: 'center' }
-    );
-  }
+  printWindow.document.close();
 
-  // 保存 PDF
-  pdf.save(`${filename}.pdf`);
+  // 等待内容加载完成后打印
+  printWindow.onload = () => {
+    setTimeout(() => {
+      printWindow.print();
+      // 打印完成后关闭窗口
+      setTimeout(() => {
+        printWindow.close();
+      }, 100);
+    }, 250);
+  };
 }
 
 /**
@@ -229,8 +242,8 @@ export async function exportToDOCX(
 ): Promise<void> {
   const paragraphs: Paragraph[] = [];
 
-  // 获取主题颜色（DOCX 使用十六进制颜色）
-  const accentColorHex = theme.id === 'arcane' 
+  // 获取主题颜色（DOCX 使用十六进制颜色，不带 # 号）
+  const accentColorHex = theme.id === 'arcane'
     ? '8b5cf6' // violet-500
     : theme.id === 'terminal'
     ? '00ff41' // terminal green
@@ -239,6 +252,9 @@ export async function exportToDOCX(
     : '292524'; // stone-800 for vellum
 
   const textColorHex = theme.id === 'vellum' ? '292524' : 'd6d3d1';
+
+  // 获取背景颜色（DOCX 使用十六进制颜色，不带 # 号）
+  const bgColorHex = getThemeBgColor(theme).replace('#', '');
 
   // 遍历文档内容
   if (content.content && Array.isArray(content.content)) {
@@ -260,17 +276,23 @@ export async function exportToDOCX(
         const level = block.attrs?.level || 1;
         paragraphs.push(
           new Paragraph({
-            text,
-            heading: level === 1 
-              ? HeadingLevel.HEADING_1 
-              : level === 2 
-              ? HeadingLevel.HEADING_2 
+            children: [
+              new TextRun({
+                text,
+                color: accentColorHex,
+                bold: true,
+                size: level === 1 ? 32 : level === 2 ? 28 : 24,
+              }),
+            ],
+            heading: level === 1
+              ? HeadingLevel.HEADING_1
+              : level === 2
+              ? HeadingLevel.HEADING_2
               : HeadingLevel.HEADING_3,
             alignment,
             spacing: { after: 200 },
-            run: {
-              color: accentColorHex,
-              bold: true,
+            shading: {
+              fill: bgColorHex,
             },
           })
         );
@@ -287,9 +309,21 @@ export async function exportToDOCX(
             alignment,
             indent: { left: 720 }, // 0.5 inch
             spacing: { after: 120 },
+            border: {
+              left: {
+                color: accentColorHex,
+                space: 1,
+                style: BorderStyle.SINGLE,
+                size: 24,
+              },
+            },
+            shading: {
+              fill: bgColorHex,
+            },
           })
         );
       } else if (block.type === 'codeBlock') {
+        const codeBgHex = theme.id === 'vellum' ? 'e9e4d9' : '1a1a1a';
         paragraphs.push(
           new Paragraph({
             children: [
@@ -301,7 +335,7 @@ export async function exportToDOCX(
             ],
             alignment: AlignmentType.LEFT,
             shading: {
-              fill: theme.id === 'vellum' ? 'e9e4d9' : '1a1a1a',
+              fill: codeBgHex,
             },
             spacing: { after: 120 },
           })
@@ -318,6 +352,9 @@ export async function exportToDOCX(
             ],
             alignment,
             spacing: { after: 120 },
+            shading: {
+              fill: bgColorHex,
+            },
           })
         );
       }
@@ -326,9 +363,19 @@ export async function exportToDOCX(
 
   // 创建文档
   const doc = new Document({
+    background: {
+      color: bgColorHex,
+    },
     sections: [
       {
-        properties: {},
+        properties: {
+          page: {
+            pageNumbers: {
+              start: 1,
+              formatType: 'decimal',
+            },
+          },
+        },
         children: paragraphs,
       },
     ],
