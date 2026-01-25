@@ -1008,6 +1008,9 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     };
   }, []);
 
+  // 跟踪鼠标按下位置，用于区分点击和拖拽
+  const mouseDownPosRef = useRef<{ x: number; y: number } | null>(null);
+
   // 处理右键菜单
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     if (!editor) return;
@@ -1015,16 +1018,39 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     setContextMenu({ x: e.clientX, y: e.clientY });
   }, [editor]);
 
+  // 处理鼠标按下
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // 记录鼠标按下位置
+    mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
   // 处理容器点击（空白区域）
   const handleContainerClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!editor || !editor.view) return;
-    
-    // 如果点击的是编辑器内容本身，不处理（让编辑器自己的 handleClick 处理）
+
+    // 检测是否是拖拽选择：如果鼠标按下和松开位置不同，说明是拖拽
+    if (mouseDownPosRef.current) {
+      const dragDistance = Math.sqrt(
+        Math.pow(e.clientX - mouseDownPosRef.current.x, 2) +
+        Math.pow(e.clientY - mouseDownPosRef.current.y, 2)
+      );
+
+      // 如果移动距离超过 5px，认为是拖拽，不触发点击逻辑
+      if (dragDistance > 5) {
+        mouseDownPosRef.current = null;
+        return;
+      }
+    }
+    mouseDownPosRef.current = null;
+
+    // 如果点击的是编辑器内部的文本节点（非 .ProseMirror 容器本身），让编辑器自己处理
     const target = e.target as HTMLElement;
-    if (target.closest('.ProseMirror')) {
+    const proseMirrorContainer = target.closest('.ProseMirror');
+    if (proseMirrorContainer && target !== proseMirrorContainer) {
+      // 点击的是 .ProseMirror 内部的子元素（文本节点等），不处理
       return;
     }
-    
+
     // 获取点击坐标
     const { clientX, clientY } = e;
     
@@ -1268,9 +1294,10 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
       )}
 
       {/* 固定的文本显示区域 - 区域位置固定，文字排布方式在内部 */}
-      <div 
+      <div
         className="max-w-4xl px-8 py-20 min-h-full relative mx-auto"
         onContextMenu={handleContextMenu}
+        onMouseDown={handleMouseDown}
         onClick={handleContainerClick}
       >
         {/* 编辑器内容 - 每个块独立对齐（通过 TextAlign 扩展） */}
