@@ -101,6 +101,8 @@ Release 构建：
 - 已将 Android Studio JBR 接入 shell 启动文件作为 `JAVA_HOME`
 - 已完成 `npx tauri android init --ci --skip-targets-install`
 - 已补齐 Android Rust targets 所需的 NDK 工具链 `ar` / `ranlib` 兼容链接
+- Linux 本地打包已补充 `scripts/pkgconfig/librsvg-2.0.pc` shim
+  用于在缺少 `librsvg2-dev` 的机器上通过 AppImage 的 `linuxdeploy-plugin-gtk` 检查
 
 本机实测结果：
 - `npx tauri android build --debug --target aarch64` 已成功
@@ -130,6 +132,11 @@ Release 构建：
 
 5. 需要 Release 包时：
    配置 keystore，再执行签名构建
+
+Linux AppImage 额外说明：
+- 如果系统没有安装 `librsvg2-dev`，仓库内的 `scripts/pkgconfig/librsvg-2.0.pc` 会作为本地兜底
+- 因此本项目推荐通过 `npm run tauri:build` 或 `npm run tauri -- build --bundles appimage` 触发打包
+  不建议直接裸跑 `npx tauri build`，否则可能绕过这个 Linux 本地修复
 
 ## 当前建议
 

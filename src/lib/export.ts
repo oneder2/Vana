@@ -6,7 +6,7 @@
 
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from 'docx';
 import { Theme } from './themes';
-import { getThemeBgColor } from './themeStyles';
+import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeSurfaceColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -35,315 +35,354 @@ function escapeMarkdownText(text: string): string {
   return text.replace(/([*_`\\])/g, '\\$1');
 }
 
-/**
- * 将 Tiptap JSON 内容转换为带格式的 HTML
- * 简化版本，确保文字可见性
- */
-function convertTextToHTML(content: JSONContent): string {
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function rgbaToRgb(color: string): string {
+  const rgbaMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!rgbaMatch) {
+    return color;
+  }
+
+  const [, r, g, b] = rgbaMatch;
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function convertInlineContentToHTML(content: JSONContent): string {
   if (!content) return '';
 
   if (content.type === 'text') {
-    let text = content.text || '';
-    
-    // 简单的HTML转义
-    text = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    let text = escapeHtml(content.text || '');
 
-    // 简化的文本标记处理
-    if (content.marks && Array.isArray(content.marks)) {
-      for (const mark of content.marks) {
-        if (mark.type === 'bold') {
-          text = `<b>${text}</b>`;
-        } else if (mark.type === 'italic') {
-          text = `<i>${text}</i>`;
-        } else if (mark.type === 'underline') {
-          text = `<u>${text}</u>`;
-        } else if (mark.type === 'strike') {
-          text = `<strike>${text}</strike>`;
-        }
+    for (const mark of content.marks || []) {
+      if (mark.type === 'bold') {
+        text = `<strong>${text}</strong>`;
+      } else if (mark.type === 'italic') {
+        text = `<em>${text}</em>`;
+      } else if (mark.type === 'underline') {
+        text = `<u>${text}</u>`;
+      } else if (mark.type === 'strike') {
+        text = `<s>${text}</s>`;
+      } else if (mark.type === 'code') {
+        text = `<code>${text}</code>`;
       }
     }
 
     return text;
   }
 
-  if (content.content && Array.isArray(content.content)) {
-    let html = '';
-    for (const child of content.content) {
-      html += convertTextToHTML(child);
-    }
-    return html;
-  }
-
-  return '';
+  return (content.content || []).map(convertInlineContentToHTML).join('');
 }
 
-/**
- * 将 Tiptap JSON 内容转换为 HTML
- * 用于 PDF 导出 - 使用简化的颜色方案确保可见性
- */
-function convertJSONToHTML(content: JSONContent, theme: Theme): string {
-  if (!content || !content.content) {
-    console.warn('内容为空或格式不正确:', content);
-    return '<p style="color: #000000; font-size: 16px; font-weight: bold;">文档内容为空</p>';
+function renderListItems(list: JSONContent, ordered: boolean): string {
+  const tag = ordered ? 'ol' : 'ul';
+  const items = (list.content || []).map((item) => {
+    const itemHtml = (item.content || [])
+      .map((child) => {
+        if (child.type === 'paragraph') {
+          return convertInlineContentToHTML(child);
+        }
+        return child.type === 'bulletList' || child.type === 'orderedList'
+          ? renderListItems(child, child.type === 'orderedList')
+          : convertInlineContentToHTML(child);
+      })
+      .join('');
+
+    return `<li>${itemHtml || '&nbsp;'}</li>`;
+  }).join('');
+
+  return `<${tag}>${items}</${tag}>`;
+}
+
+function convertJSONToHTML(content: JSONContent): string {
+  if (!content?.content || !Array.isArray(content.content)) {
+    return '<p class="empty">文档内容为空</p>';
   }
 
-  // 使用对比度极高的颜色确保可见性
-  let textColor: string;
-  let accentColor: string;
-  
-  if (theme.id === 'vellum') {
-    // 浅色主题：深色文字
-    textColor = '#000000'; // 纯黑色
-    accentColor = '#000000'; // 纯黑色
-  } else {
-    // 深色主题：白色文字
-    textColor = '#FFFFFF'; // 纯白色
-    accentColor = '#FFFFFF'; // 纯白色
-  }
-
-  let html = '';
-  let hasContent = false;
-
-  console.log('PDF导出 - 使用高对比度颜色:', { 
-    theme: theme.id, 
-    textColor, 
-    accentColor,
-    bgColor: getThemeBgColor(theme)
-  });
-
-  for (const block of content.content) {
-    if (!block) continue;
-
-    const text = convertTextToHTML(block);
-    const plainText = extractTextFromJSON(block);
-    
-    // 检查是否有实际内容
-    if (plainText.trim() || block.type === 'paragraph') {
-      hasContent = true;
-    }
-
+  const blocks = content.content.map((block) => {
     const align = block.attrs?.textAlign || 'left';
-    const alignStyle = `text-align: ${align};`;
-    
-    // 基础样式 - 确保文字可见
-    const baseStyle = `color: ${textColor}; font-family: Arial, sans-serif; line-height: 1.6;`;
+    const alignAttr = ` style="text-align:${align};"`;
 
-    if (block.type === 'heading') {
-      const level = block.attrs?.level || 1;
-      const fontSize = level === 1 ? '24px' : level === 2 ? '20px' : '16px';
-      html += `<h${level} style="${baseStyle} ${alignStyle} font-size: ${fontSize}; font-weight: bold; margin: 20px 0 10px 0;">${text || '标题'}</h${level}>`;
-    } else if (block.type === 'blockquote') {
-      html += `<div style="${baseStyle} ${alignStyle} margin: 16px 0; padding: 12px; border-left: 4px solid ${textColor}; background-color: rgba(128,128,128,0.1);">${text || '引用内容'}</div>`;
-    } else if (block.type === 'codeBlock') {
-      const codeBg = theme.id === 'vellum' ? '#f0f0f0' : '#333333';
-      const codeColor = theme.id === 'vellum' ? '#000000' : '#ffffff';
-      html += `<pre style="background-color: ${codeBg}; color: ${codeColor}; padding: 12px; margin: 16px 0; font-family: 'Courier New', monospace; font-size: 14px; border-radius: 4px; white-space: pre-wrap;"><code>${plainText || '代码内容'}</code></pre>`;
-    } else if (block.type === 'bulletList') {
-      html += `<ul style="${baseStyle} margin: 12px 0; padding-left: 20px;">`;
-      if (block.content && block.content.length > 0) {
-        for (const item of block.content) {
-          if (item.type === 'listItem' && item.content) {
-            let itemText = '';
-            for (const itemChild of item.content) {
-              itemText += convertTextToHTML(itemChild);
-            }
-            html += `<li style="${baseStyle} margin: 4px 0;">${itemText || '列表项'}</li>`;
-          }
-        }
-      } else {
-        html += `<li style="${baseStyle} margin: 4px 0;">列表项</li>`;
+    switch (block.type) {
+      case 'heading': {
+        const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
+        return `<h${level}${alignAttr}>${convertInlineContentToHTML(block) || '标题'}</h${level}>`;
       }
-      html += '</ul>';
-    } else if (block.type === 'orderedList') {
-      html += `<ol style="${baseStyle} margin: 12px 0; padding-left: 20px;">`;
-      if (block.content && block.content.length > 0) {
-        for (const item of block.content) {
-          if (item.type === 'listItem' && item.content) {
-            let itemText = '';
-            for (const itemChild of item.content) {
-              itemText += convertTextToHTML(itemChild);
-            }
-            html += `<li style="${baseStyle} margin: 4px 0;">${itemText || '列表项'}</li>`;
-          }
-        }
-      } else {
-        html += `<li style="${baseStyle} margin: 4px 0;">列表项</li>`;
-      }
-      html += '</ol>';
-    } else if (block.type === 'paragraph') {
-      // 普通段落
-      const paragraphText = text || '&nbsp;';
-      html += `<p style="${baseStyle} ${alignStyle} margin: 10px 0;">${paragraphText}</p>`;
-    } else {
-      // 其他未知类型
-      if (plainText.trim()) {
-        html += `<p style="${baseStyle} ${alignStyle} margin: 10px 0;">${text}</p>`;
+      case 'blockquote':
+        return `<blockquote${alignAttr}>${(block.content || [])
+          .map((child) => child.type === 'paragraph' ? convertInlineContentToHTML(child) : convertInlineContentToHTML(child))
+          .join('<br />') || '引用内容'}</blockquote>`;
+      case 'codeBlock':
+        return `<pre><code>${escapeHtml(extractTextFromJSON(block) || '')}</code></pre>`;
+      case 'bulletList':
+        return renderListItems(block, false);
+      case 'orderedList':
+        return renderListItems(block, true);
+      case 'paragraph':
+        return `<p${alignAttr}>${convertInlineContentToHTML(block) || '&nbsp;'}</p>`;
+      default: {
+        const fallback = convertInlineContentToHTML(block) || escapeHtml(extractTextFromJSON(block));
+        return fallback ? `<p${alignAttr}>${fallback}</p>` : '';
       }
     }
-  }
+  }).join('');
 
-  // 如果没有任何内容，返回默认内容
-  if (!hasContent || !html.trim()) {
-    const baseStyle = `color: ${textColor}; font-family: Arial, sans-serif; line-height: 1.6;`;
-    html = `<p style="${baseStyle} text-align: center; font-style: italic; margin: 20px 0;">文档内容为空</p>`;
-  }
-
-  console.log('生成的HTML内容长度:', html.length);
-  console.log('HTML内容预览:', html.substring(0, 500) + '...');
-
-  return html;
+  return blocks.trim() ? blocks : '<p class="empty">文档内容为空</p>';
 }
 
-/**
- * 检测是否在 Tauri 环境中运行
- */
 function isTauriEnvironment(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-/**
- * 创建用于PDF导出的HTML模板
- */
-function createPDFTemplate(htmlContent: string, theme: Theme): string {
-  const bgColor = getThemeBgColor(theme);
-  const textColor = theme.id === 'vellum' ? '#1c1917' : '#ffffff'; // 修复文字颜色
+function waitForNextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
 
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>PDF Export</title>
-      <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-          font-size: 14px;
-          line-height: 1.6;
-          color: ${textColor} !important;
-          background-color: ${bgColor};
-          padding: 20mm;
-          width: 210mm;
-          min-height: 297mm;
-        }
-        
-        .content {
-          width: 100%;
-          max-width: none;
-          color: ${textColor} !important;
-        }
-        
-        .footer {
-          margin-top: 40px;
-          text-align: center;
-          font-size: 10px;
-          font-style: italic;
-          opacity: 0.6;
-          page-break-inside: avoid;
-          color: ${textColor} !important;
-        }
-        
-        /* 确保所有文本元素都有正确的颜色 */
-        h1, h2, h3, h4, h5, h6 {
-          margin: 16px 0 8px 0;
-          font-weight: bold;
-        }
-        
-        p {
-          margin: 8px 0;
-          color: ${textColor} !important;
-        }
-        
-        blockquote {
-          margin: 12px 0;
-          padding-left: 16px;
-          font-style: italic;
-          color: ${textColor} !important;
-        }
-        
-        pre, code {
-          margin: 12px 0;
-          padding: 12px;
-          border-radius: 4px;
-          font-family: 'Courier New', monospace;
-          overflow-x: auto;
-        }
-        
-        ul, ol {
-          margin: 8px 0;
-          padding-left: 24px;
-          color: ${textColor} !important;
-        }
-        
-        li {
-          margin: 4px 0;
-          color: ${textColor} !important;
-        }
-        
-        strong {
-          font-weight: bold;
-          color: inherit !important;
-        }
-        
-        em {
-          font-style: italic;
-          color: inherit !important;
-        }
-        
-        u {
-          text-decoration: underline;
-          color: inherit !important;
-        }
-        
-        s {
-          text-decoration: line-through;
-          color: inherit !important;
-        }
-        
-        /* 分页控制 */
-        @media print {
-          body {
-            margin: 0;
-            padding: 20mm;
-            color: ${textColor} !important;
-          }
-          
-          .page-break {
-            page-break-before: always;
-          }
-          
-          .avoid-break {
-            page-break-inside: avoid;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="content">
-        ${htmlContent}
-      </div>
-      <div class="footer">
-        Created with No Visitors - ${theme.name}
-      </div>
-    </body>
-    </html>
+async function waitForRenderStability(): Promise<void> {
+  if (typeof document !== 'undefined' && 'fonts' in document) {
+    const fontDocument = document as unknown as { fonts?: FontFaceSet };
+    await fontDocument.fonts?.ready;
+  }
+  await waitForNextFrame();
+  await waitForNextFrame();
+}
+
+function createPDFRenderRoot(
+  htmlContent: string,
+  theme: Theme,
+  filename: string
+): HTMLDivElement {
+  const background = getThemeBgColor(theme);
+  const surface = getThemeSurfaceColor(theme);
+  const border = rgbaToRgb(getThemeBorderColor(theme));
+  const accent = getThemeAccentColor(theme);
+  const text = theme.id === 'vellum' ? '#1c1917' : '#f5f5f4';
+  const muted = theme.id === 'vellum' ? '#57534e' : '#a8a29e';
+  const exportedAt = new Date().toLocaleString();
+
+  const host = document.createElement('div');
+  host.id = 'pdf-export-render-root';
+  host.style.cssText = `
+    position: fixed;
+    left: -10000px;
+    top: 0;
+    width: 794px;
+    padding: 0;
+    margin: 0;
+    opacity: 1;
+    pointer-events: none;
+    z-index: -1;
   `;
+
+  host.innerHTML = `
+    <style>
+      #pdf-export-render-root .nv-pdf-page {
+        width: 794px;
+        background: ${background};
+        color: ${text};
+        padding: 56px 60px 48px;
+        box-sizing: border-box;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.7;
+      }
+      #pdf-export-render-root .nv-pdf-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 24px;
+        padding-bottom: 18px;
+        margin-bottom: 28px;
+        border-bottom: 1px solid ${border};
+      }
+      #pdf-export-render-root .nv-pdf-title {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.25;
+        color: ${accent};
+        word-break: break-word;
+      }
+      #pdf-export-render-root .nv-pdf-meta {
+        color: ${muted};
+        font-size: 12px;
+        text-align: right;
+        white-space: nowrap;
+      }
+      #pdf-export-render-root .nv-pdf-content h1,
+      #pdf-export-render-root .nv-pdf-content h2,
+      #pdf-export-render-root .nv-pdf-content h3 {
+        color: ${accent};
+        margin: 1.1em 0 0.45em;
+        line-height: 1.3;
+        page-break-after: avoid;
+      }
+      #pdf-export-render-root .nv-pdf-content h1 { font-size: 24px; }
+      #pdf-export-render-root .nv-pdf-content h2 { font-size: 20px; }
+      #pdf-export-render-root .nv-pdf-content h3 { font-size: 17px; }
+      #pdf-export-render-root .nv-pdf-content p,
+      #pdf-export-render-root .nv-pdf-content ul,
+      #pdf-export-render-root .nv-pdf-content ol,
+      #pdf-export-render-root .nv-pdf-content blockquote,
+      #pdf-export-render-root .nv-pdf-content pre {
+        margin: 0 0 14px;
+        font-size: 14px;
+        page-break-inside: avoid;
+      }
+      #pdf-export-render-root .nv-pdf-content ul,
+      #pdf-export-render-root .nv-pdf-content ol {
+        padding-left: 24px;
+      }
+      #pdf-export-render-root .nv-pdf-content li {
+        margin-bottom: 6px;
+      }
+      #pdf-export-render-root .nv-pdf-content blockquote {
+        margin-left: 0;
+        padding: 12px 16px;
+        border-left: 4px solid ${accent};
+        background: ${surface};
+        color: ${text};
+      }
+      #pdf-export-render-root .nv-pdf-content pre {
+        padding: 14px 16px;
+        overflow: hidden;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border-radius: 10px;
+        border: 1px solid ${border};
+        background: ${surface};
+      }
+      #pdf-export-render-root .nv-pdf-content code {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.92em;
+      }
+      #pdf-export-render-root .nv-pdf-content strong { font-weight: 700; }
+      #pdf-export-render-root .nv-pdf-content em { font-style: italic; }
+      #pdf-export-render-root .nv-pdf-content u { text-decoration: underline; }
+      #pdf-export-render-root .nv-pdf-content s { text-decoration: line-through; }
+      #pdf-export-render-root .nv-pdf-content .empty {
+        color: ${muted};
+        text-align: center;
+        font-style: italic;
+      }
+      #pdf-export-render-root .nv-pdf-footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        padding-top: 20px;
+        margin-top: 36px;
+        border-top: 1px solid ${border};
+        color: ${muted};
+        font-size: 11px;
+      }
+    </style>
+    <div class="nv-pdf-page">
+      <div class="nv-pdf-header">
+        <h1 class="nv-pdf-title">${escapeHtml(filename)}</h1>
+        <div class="nv-pdf-meta">
+          <div>${escapeHtml(theme.name)}</div>
+          <div>${escapeHtml(exportedAt)}</div>
+        </div>
+      </div>
+      <div class="nv-pdf-content">${htmlContent}</div>
+      <div class="nv-pdf-footer">
+        <span>Created with No Visitors</span>
+        <span>Local-first export</span>
+      </div>
+    </div>
+  `;
+
+  return host;
+}
+
+async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<Blob> {
+  const html2canvas = (await import('html2canvas')).default;
+  const jsPDF = (await import('jspdf')).default;
+
+  const pageElement = renderRoot.querySelector('.nv-pdf-page') as HTMLElement | null;
+  if (!pageElement) {
+    throw new Error('PDF 渲染容器创建失败');
+  }
+
+  await waitForRenderStability();
+
+  const canvas = await html2canvas(pageElement, {
+    backgroundColor: getThemeBgColor(theme),
+    scale: Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)),
+    useCORS: true,
+    logging: false,
+    windowWidth: pageElement.scrollWidth,
+    windowHeight: pageElement.scrollHeight,
+  });
+
+  if (canvas.width === 0 || canvas.height === 0) {
+    throw new Error('PDF 渲染结果为空');
+  }
+
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+    compress: true,
+  });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 12;
+  const contentWidth = pageWidth - margin * 2;
+  const contentHeight = pageHeight - margin * 2;
+  const pageHeightPx = Math.floor((canvas.width * contentHeight) / contentWidth);
+  const background = getThemeBgColor(theme);
+
+  let pageIndex = 0;
+  for (let offsetY = 0; offsetY < canvas.height; offsetY += pageHeightPx) {
+    const sliceHeight = Math.min(pageHeightPx, canvas.height - offsetY);
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = sliceHeight;
+
+    const context = pageCanvas.getContext('2d');
+    if (!context) {
+      throw new Error('无法创建 PDF 分页画布');
+    }
+
+    context.fillStyle = background;
+    context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    context.drawImage(
+      canvas,
+      0,
+      offsetY,
+      canvas.width,
+      sliceHeight,
+      0,
+      0,
+      canvas.width,
+      sliceHeight
+    );
+
+    const renderedHeight = (sliceHeight * contentWidth) / canvas.width;
+    const imageData = pageCanvas.toDataURL('image/jpeg', 0.92);
+
+    if (pageIndex > 0) {
+      pdf.addPage();
+    }
+
+    pdf.setFillColor(background);
+    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+    pdf.addImage(imageData, 'JPEG', margin, margin, contentWidth, renderedHeight, undefined, 'FAST');
+    pageIndex += 1;
+  }
+
+  return pdf.output('blob');
 }
 
 /**
  * 导出文档为 PDF
- * 修复html2canvas高度塌陷问题，使用专业建议的解决方案
+ * 使用稳定的离屏渲染和自动分页切片，优先保证跨平台可分享性
  * @param content Tiptap JSON 内容
  * @param theme 氛围协议主题
  * @param filename 文件名（不含扩展名）
@@ -353,169 +392,38 @@ export async function exportToPDF(
   theme: Theme,
   filename: string
 ): Promise<void> {
+  let renderRoot: HTMLDivElement | null = null;
+
   try {
-    console.log('=== PDF导出开始 ===');
-    console.log('主题:', theme.id, theme.name);
-    console.log('文件名:', filename);
-    
-    // 动态导入 html2canvas 和 jsPDF
-    const html2canvas = (await import('html2canvas')).default;
-    const jsPDF = (await import('jspdf')).default;
+    const htmlContent = convertJSONToHTML(content);
+    renderRoot = createPDFRenderRoot(htmlContent, theme, filename);
+    document.body.appendChild(renderRoot);
 
-    const bgColor = getThemeBgColor(theme);
-    console.log('背景色:', bgColor);
-    
-    // 生成 HTML 内容
-    const htmlContent = convertJSONToHTML(content, theme);
-    
-    // 检查内容是否为空
-    if (!htmlContent.trim()) {
-      throw new Error('文档内容为空，无法生成PDF');
-    }
+    const pdfBlob = await renderPDFToBlob(renderRoot, theme);
 
-    // 确定文字颜色
-    const textColor = theme.id === 'vellum' ? '#000000' : '#FFFFFF';
-    console.log('文字颜色:', textColor);
-
-    // 创建PDF导出容器 - 使用专业建议的方法
-    const container = document.createElement('div');
-    container.id = 'pdf-export-container';
-    container.style.cssText = `
-      position: fixed;
-      top: -2000px;
-      left: 0;
-      width: 800px;
-      min-height: 600px;
-      padding: 40px;
-      background-color: ${bgColor};
-      color: ${textColor};
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-      font-size: 16px;
-      line-height: 1.6;
-      box-sizing: border-box;
-      z-index: -1;
-      overflow: visible;
-      display: block;
-    `;
-    
-    container.innerHTML = `
-      <div style="
-        width: 100%;
-        min-height: 500px;
-        background-color: ${bgColor};
-        color: ${textColor};
-        padding: 20px;
-        display: block;
-      ">
-        <div style="color: ${textColor}; min-height: 400px;">
-          ${htmlContent}
-        </div>
-        <div style="margin-top: 40px; text-align: center; font-size: 12px; color: ${textColor};">
-          Created with No Visitors - ${theme.name}
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(container);
-
-    // 等待DOM渲染和字体加载 - 专业建议的等待时间
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // 获取容器真实尺寸
-    const rect = container.getBoundingClientRect();
-    console.log('容器实际尺寸:', {
-      width: rect.width,
-      height: rect.height,
-      offsetWidth: container.offsetWidth,
-      offsetHeight: container.offsetHeight,
-      scrollWidth: container.scrollWidth,
-      scrollHeight: container.scrollHeight
-    });
-
-    // 检查高度塌陷问题
-    if (container.offsetHeight === 0 || rect.height === 0) {
-      console.warn('检测到高度塌陷，强制设置高度');
-      const innerDiv = container.firstElementChild as HTMLElement;
-      if (innerDiv) {
-        innerDiv.style.minHeight = '600px';
-        innerDiv.style.height = 'auto';
-        innerDiv.style.display = 'block';
-      }
-      // 再次等待布局
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
-    console.log('开始生成PDF...');
-
-    // 使用专业建议的html2canvas配置
-    const canvas = await html2canvas(container, {
-      width: rect.width || container.offsetWidth,
-      height: rect.height || container.offsetHeight || 600,
-      scale: 2, // 专业建议：提高清晰度
-      useCORS: true,
-      backgroundColor: bgColor,
-      logging: true,
-      onclone: (clonedDoc) => {
-        // 专业建议：预克隆钩子处理样式
-        const clonedElement = clonedDoc.getElementById('pdf-export-container');
-        if (clonedElement) {
-          clonedElement.style.height = 'auto';
-          clonedElement.style.overflow = 'visible';
-          clonedElement.style.display = 'block';
-          // 确保内部元素也有正确的样式
-          const innerDiv = clonedElement.firstElementChild as HTMLElement;
-          if (innerDiv) {
-            innerDiv.style.minHeight = '600px';
-            innerDiv.style.display = 'block';
-          }
-        }
-      }
-    });
-
-    console.log('Canvas生成完成，尺寸:', canvas.width, 'x', canvas.height);
-
-    // 创建PDF
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const imgData = canvas.toDataURL('image/jpeg', 0.9);
-    
-    // 计算PDF尺寸
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    
-    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-
-    console.log('PDF配置:', { pdfWidth, pdfHeight });
-
-    // 根据环境选择不同的处理方式
     if (isTauriEnvironment()) {
-      console.log('Tauri环境，保存到文件...');
-      const pdfBlob = pdf.output('blob');
       const arrayBuffer = await pdfBlob.arrayBuffer();
       const bytes = Array.from(new Uint8Array(arrayBuffer));
 
-      const savedPath = await invoke<string>('save_export_file', {
+      await invoke<string>('save_export_file', {
         filename,
         content: bytes,
         fileType: 'pdf',
       });
-
-      console.log('✅ PDF已保存到:', savedPath);
     } else {
-      console.log('浏览器环境，直接下载...');
-      pdf.save(`${filename}.pdf`);
-      console.log('✅ PDF已下载:', `${filename}.pdf`);
+      const downloadUrl = URL.createObjectURL(pdfBlob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = `${filename}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(downloadUrl);
     }
-
   } catch (error) {
-    console.error('❌ 生成 PDF 失败:', error);
     throw new Error(`生成 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    // 清理临时容器
-    const container = document.getElementById('pdf-export-container');
-    if (container && container.parentNode) {
-      container.parentNode.removeChild(container);
+    if (renderRoot?.parentNode) {
+      renderRoot.parentNode.removeChild(renderRoot);
     }
-    console.log('=== PDF导出结束 ===');
   }
 }
 /**
