@@ -11,16 +11,24 @@ import { Minus, Square, X, Maximize2 } from 'lucide-react';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { useTheme } from '@/components/ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
+import { isMobile } from '@/lib/platform';
 
 export function TitleBar() {
   const { theme } = useTheme();
   const [isMaximized, setIsMaximized] = useState(false);
   const [appWindow, setAppWindow] = useState<Window | null>(null);
+  const [shouldHide, setShouldHide] = useState(false);
 
   // 初始化窗口对象（仅在 Tauri 环境中）
   useEffect(() => {
     const initWindow = async () => {
       try {
+        const mobile = await isMobile().catch(() => false);
+        if (mobile) {
+          setShouldHide(true);
+          return;
+        }
+
         // 检查是否在 Tauri 环境中
         if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
           const windowObj = getCurrentWindow();
@@ -40,6 +48,10 @@ export function TitleBar() {
 
     initWindow();
   }, []);
+
+  if (shouldHide) {
+    return null;
+  }
 
   // 监听窗口状态变化
   useEffect(() => {
@@ -156,4 +168,3 @@ export function TitleBar() {
     </div>
   );
 }
-

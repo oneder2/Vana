@@ -26,6 +26,7 @@ import { FileTreeSkeleton } from './Skeleton';
 import { writeAtmosphereConfig, readAtmosphereConfig } from '@/lib/api';
 import { loadAtmosphereConfig } from '@/lib/atmosphere';
 import type { ThemeId } from '@/lib/themes';
+import type { LibraryEntry } from '@/lib/api';
 
 // 侧边栏属性
 interface SidebarProps {
@@ -34,6 +35,76 @@ interface SidebarProps {
   onDirectoryChange?: (path: string) => void;
   isOpen?: boolean;
   onToggle?: () => void;
+  currentFilePath?: string;
+  favoritePaths?: string[];
+  recentPaths?: string[];
+  archivedPaths?: string[];
+  trashEntries?: Array<{ path: string; entry: LibraryEntry }>;
+  onMoveToTrash?: (path: string) => Promise<void>;
+  onRestoreFromTrash?: (path: string) => Promise<void>;
+  onDeletePermanently?: (path: string) => Promise<void>;
+  onPathRename?: (oldPath: string, newPath: string) => Promise<void> | void;
+}
+
+function QuickAccessSection({
+  title,
+  items,
+  activePath,
+  onSelect,
+  emptyText,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  items: Array<{ path: string; subtitle?: string }>;
+  activePath?: string;
+  onSelect: (path: string) => void;
+  emptyText: string;
+  actionLabel?: string;
+  onAction?: (path: string) => Promise<void>;
+}) {
+  const { theme } = useTheme();
+
+  return (
+    <div className="mb-5">
+      <div className={`text-[10px] ${theme.uiFont} mb-2 opacity-40 uppercase tracking-widest`}>
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div className="text-[11px] opacity-40 px-2 py-1">{emptyText}</div>
+      ) : (
+        <div className="space-y-1">
+          {items.map((item) => (
+            <div
+              key={item.path}
+              className="flex items-center gap-2 rounded px-2 py-1.5"
+              style={{
+                backgroundColor: activePath === item.path ? getThemeAccentBgColor(theme) + '40' : 'transparent',
+              }}
+            >
+              <button
+                onClick={() => onSelect(item.path)}
+                className="flex-1 text-left min-w-0"
+                style={{ color: getThemeAccentColor(theme) }}
+              >
+                <div className="text-xs truncate">{removeEncSuffix(item.path.split('/').pop() || item.path)}</div>
+                {item.subtitle && <div className="text-[10px] opacity-50 truncate">{item.subtitle}</div>}
+              </button>
+              {actionLabel && onAction && (
+                <button
+                  onClick={() => onAction(item.path)}
+                  className="text-[10px] opacity-70 hover:opacity-100 shrink-0"
+                  style={{ color: getThemeAccentColor(theme) }}
+                >
+                  {actionLabel}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -361,6 +432,15 @@ export function Sidebar({
   onDirectoryChange,
   isOpen = true,
   onToggle,
+  currentFilePath,
+  favoritePaths = [],
+  recentPaths = [],
+  archivedPaths = [],
+  trashEntries = [],
+  onMoveToTrash,
+  onRestoreFromTrash,
+  onDeletePermanently,
+  onPathRename,
 }: SidebarProps) {
   const { theme } = useTheme();
   const toast = useToast();
@@ -400,6 +480,7 @@ export function Sidebar({
   // 键盘导航：跟踪当前聚焦的项
   const [focusedItemPath, setFocusedItemPath] = useState<string | null>(null);
   const focusedItemRef = useRef<string | null>(null);
+  const visibleFiles = files.filter((item) => !archivedPaths.includes(item.path));
 
   // 从缓存加载展开状态
   useEffect(() => {
@@ -426,18 +507,18 @@ export function Sidebar({
       }
 
       // 只在顶层文件项中导航（简化实现）
-      if (files.length === 0) return;
+      if (visibleFiles.length === 0) return;
 
       let currentIndex = -1;
       if (focusedItemRef.current) {
-        currentIndex = files.findIndex((item) => item.path === focusedItemRef.current);
+        currentIndex = visibleFiles.findIndex((item) => item.path === focusedItemRef.current);
       }
 
       switch (e.key) {
         case 'ArrowDown': {
           e.preventDefault();
-          const nextIndex = currentIndex < files.length - 1 ? currentIndex + 1 : 0;
-          const nextItem = files[nextIndex];
+          const nextIndex = currentIndex < visibleFiles.length - 1 ? currentIndex + 1 : 0;
+          const nextItem = visibleFiles[nextIndex];
           if (nextItem) {
             focusedItemRef.current = nextItem.path;
             setFocusedItemPath(nextItem.path);
@@ -446,8 +527,8 @@ export function Sidebar({
         }
         case 'ArrowUp': {
           e.preventDefault();
-          const prevIndex = currentIndex > 0 ? currentIndex - 1 : files.length - 1;
-          const prevItem = files[prevIndex];
+          const prevIndex = currentIndex > 0 ? currentIndex - 1 : visibleFiles.length - 1;
+          const prevItem = visibleFiles[prevIndex];
           if (prevItem) {
             focusedItemRef.current = prevItem.path;
             setFocusedItemPath(prevItem.path);
@@ -457,7 +538,7 @@ export function Sidebar({
         case 'Enter': {
           e.preventDefault();
           if (focusedItemRef.current) {
-            const item = files.find((item) => item.path === focusedItemRef.current);
+            const item = visibleFiles.find((item) => item.path === focusedItemRef.current);
             if (item) {
               if (item.is_directory) {
                 handleToggleExpand(item.path);
@@ -484,7 +565,7 @@ export function Sidebar({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, files, contextMenu, deleteModal.isOpen, inputModal.isOpen, onFileSelect]);
+  }, [isOpen, visibleFiles, contextMenu, deleteModal.isOpen, inputModal.isOpen, onFileSelect]);
 
   // 切换展开状态
   const handleToggleExpand = (path: string) => {
@@ -518,6 +599,7 @@ export function Sidebar({
       }
       
       await moveFileOrDirectory(sourcePath, destPath);
+      await onPathRename?.(sourcePath, destPath);
       await refreshFiles();
     } catch (error) {
       console.error('拖拽移动失败:', error);
@@ -707,6 +789,7 @@ export function Sidebar({
             } else {
               // 移动文件
               await moveFileOrDirectory(sourcePath, destPath);
+              await onPathRename?.(sourcePath, destPath);
               // 移动后清空剪贴板
               setClipboard(null);
             }
@@ -798,6 +881,14 @@ export function Sidebar({
 
     setIsOperationInProgress(true);
     try {
+      if (onMoveToTrash) {
+        await onMoveToTrash(item.path);
+        await refreshFiles();
+        setDeleteModal({ isOpen: false, item: null });
+        setContextMenu(null);
+        return;
+      }
+
       // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
       const patToken = await getPatToken();
       const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
@@ -976,6 +1067,7 @@ export function Sidebar({
               await renameFileOrDirectory(item.path, newPath);
               console.log('[重命名] 重命名完成');
             }
+            await onPathRename?.(item.path, newPath);
             
             console.log('[重命名] 开始刷新文件列表');
             // 如果重命名的文件在根目录，刷新根目录
@@ -1030,7 +1122,7 @@ export function Sidebar({
   return (
     <aside
       className={`
-        ${isOpen ? 'translate-x-0 w-64' : '-translate-x-full w-0'} 
+        ${isOpen ? 'translate-x-0 w-[85vw] max-w-xs md:w-64' : '-translate-x-full w-0'} 
         fixed md:relative z-40 h-full border-r 
         transition-all duration-300 ease-in-out flex flex-col
       `}
@@ -1099,30 +1191,94 @@ export function Sidebar({
         </div>
         {loading ? (
           <FileTreeSkeleton />
-        ) : files.length === 0 ? (
-          <div className="text-xs opacity-50">
-            <div className="mb-2">目录为空</div>
-            <div className="text-[10px] opacity-60">点击右上角 + 按钮创建文件或文件夹</div>
-          </div>
         ) : (
-          <div className="space-y-1">
-            {files.map((item) => (
-              <FolderItem
-                key={item.path}
-                item={item}
-                onSelect={onFileSelect}
-                onDirectoryChange={onDirectoryChange}
-                theme={theme}
-                onContextMenu={handleContextMenu}
-                expandedPaths={expandedPaths}
-                onToggleExpand={handleToggleExpand}
-                onDrop={handleDrop}
-                onClearRootDragOver={() => setIsRootDragOver(false)}
-                focusedItemPath={focusedItemPath}
-                directoryThemeId={item.is_directory ? directoryThemes.get(item.path) : undefined}
-              />
-            ))}
-          </div>
+          <>
+            <QuickAccessSection
+              title="Favorites"
+              items={favoritePaths.map((path) => ({ path }))}
+              activePath={currentFilePath}
+              onSelect={(path) => onFileSelect?.(path)}
+              emptyText="暂无收藏文档"
+            />
+            <QuickAccessSection
+              title="Recent"
+              items={recentPaths.map((path) => ({ path }))}
+              activePath={currentFilePath}
+              onSelect={(path) => onFileSelect?.(path)}
+              emptyText="暂无最近文档"
+            />
+            <QuickAccessSection
+              title="Archived"
+              items={archivedPaths.map((path) => ({ path }))}
+              activePath={currentFilePath}
+              onSelect={(path) => onFileSelect?.(path)}
+              emptyText="暂无归档文档"
+            />
+            <QuickAccessSection
+              title="Trash"
+              items={trashEntries.map(({ path, entry }) => ({
+                path,
+                subtitle: entry.original_path ? `原路径: ${entry.original_path}` : '已移至回收站',
+              }))}
+              emptyText="回收站为空"
+              onSelect={() => {}}
+              actionLabel="恢复"
+              onAction={async (path) => {
+                await onRestoreFromTrash?.(path);
+                await refreshFiles();
+              }}
+            />
+            {trashEntries.length > 0 && onDeletePermanently && (
+              <div className="mb-5">
+                <div className={`text-[10px] ${theme.uiFont} mb-2 opacity-40 uppercase tracking-widest`}>
+                  Trash Cleanup
+                </div>
+                <div className="space-y-1">
+                  {trashEntries.map(({ path }) => (
+                    <div key={`${path}-delete`} className="flex items-center gap-2 px-2 py-1">
+                      <div className="flex-1 text-[11px] opacity-50 truncate">
+                        {removeEncSuffix(path.split('/').pop() || path)}
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await onDeletePermanently(path);
+                          await refreshFiles();
+                        }}
+                        className="text-[10px] text-red-500 opacity-80 hover:opacity-100"
+                      >
+                        永久删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {visibleFiles.length === 0 ? (
+              <div className="text-xs opacity-50">
+                <div className="mb-2">目录为空</div>
+                <div className="text-[10px] opacity-60">点击右上角 + 按钮创建文件或文件夹</div>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {visibleFiles.map((item) => (
+                  <FolderItem
+                    key={item.path}
+                    item={item}
+                    onSelect={onFileSelect}
+                    onDirectoryChange={onDirectoryChange}
+                    theme={theme}
+                    onContextMenu={handleContextMenu}
+                    expandedPaths={expandedPaths}
+                    onToggleExpand={handleToggleExpand}
+                    onDrop={handleDrop}
+                    onClearRootDragOver={() => setIsRootDragOver(false)}
+                    focusedItemPath={focusedItemPath}
+                    directoryThemeId={item.is_directory ? directoryThemes.get(item.path) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -1185,15 +1341,15 @@ export function Sidebar({
       {deleteModal.item && (
         <Modal
           isOpen={deleteModal.isOpen}
-          title={deleteModal.item.is_directory ? '删除目录' : '删除文件'}
+          title="移至回收站"
           message={
             deleteModal.item.is_directory
-              ? `确定要删除目录 "${removeEncSuffix(deleteModal.item.name)}" 吗？\n\n这将删除目录及其所有内容，此操作无法撤销。`
-              : `确定要删除文件 "${removeEncSuffix(deleteModal.item.name)}" 吗？\n\n此操作无法撤销。`
+              ? `确定要将目录 "${removeEncSuffix(deleteModal.item.name)}" 移至回收站吗？`
+              : `确定要将文件 "${removeEncSuffix(deleteModal.item.name)}" 移至回收站吗？`
           }
-          confirmText="删除"
+          confirmText="移入回收站"
           cancelText="取消"
-          type="danger"
+          type="warning"
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteModal({ isOpen: false, item: null })}
         />
@@ -1201,4 +1357,3 @@ export function Sidebar({
     </aside>
   );
 }
-

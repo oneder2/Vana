@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '@/components/ThemeProvider';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
-import { Settings, Save, Trash2, RefreshCw, CheckCircle, XCircle, Loader, Camera } from 'lucide-react';
+import { Settings, Save, Trash2, RefreshCw, CheckCircle, XCircle, Loader, Camera, GitBranch, Database } from 'lucide-react';
 import Link from 'next/link';
 import {
   storePatToken,
@@ -22,6 +22,11 @@ import {
   abortSync,
   resolveConflict,
   getWorkspacePath,
+  readWorkspaceConfig,
+  writeWorkspaceConfig,
+  verifyRepository,
+  getCurrentBranch,
+  gitGc,
 } from '@/lib/api';
 import { ConflictModal, type ConflictChoice } from '@/components/ConflictModal';
 import { QRCodeDisplay } from '@/components/QRCodeDisplay';
@@ -48,8 +53,16 @@ export default function SettingsPage() {
   
   // 远程仓库相关状态
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
+  const [remoteInput, setRemoteInput] = useState('');
   const [workspacePath, setWorkspacePath] = useState<string>('');
   const [remoteConfiguring, setRemoteConfiguring] = useState(false);
+  const [autoCommitInterval, setAutoCommitInterval] = useState(15);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [repoInfo, setRepoInfo] = useState<{ branch: string | null; commitCount: number; latestCommit: string | null }>({
+    branch: null,
+    commitCount: 0,
+    latestCommit: null,
+  });
   
   // 同步相关状态
   const [syncing, setSyncing] = useState(false);
@@ -57,9 +70,6 @@ export default function SettingsPage() {
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [syncConflict, setSyncConflict] = useState<import('@/lib/api').SyncConflict | null>(null);
-  
-  // 默认远程仓库URL
-  const DEFAULT_REMOTE_URL = 'https://github.com/oneder2/Erlang-Writing.git';
   
   // 初始化：检查PAT和远程仓库状态
   useEffect(() => {
@@ -88,6 +98,19 @@ export default function SettingsPage() {
         // 获取远程仓库URL
         const remote = await getRemoteUrl(workspace, 'origin');
         setRemoteUrl(remote);
+        setRemoteInput(remote || '');
+
+        const [config, verification, branch] = await Promise.all([
+          readWorkspaceConfig(),
+          verifyRepository(workspace),
+          getCurrentBranch(workspace).catch(() => null),
+        ]);
+        setAutoCommitInterval(config.auto_commit_interval);
+        setRepoInfo({
+          branch,
+          commitCount: verification.commit_count,
+          latestCommit: verification.latest_commit_message,
+        });
       } catch (error) {
         console.error('初始化设置页面失败:', error);
       }
@@ -184,17 +207,46 @@ export default function SettingsPage() {
       setSyncStatus({ success: false, message: '无法获取工作区路径' });
       return;
     }
+    if (!remoteInput.trim()) {
+      setSyncStatus({ success: false, message: '请输入远程仓库 URL' });
+      return;
+    }
     
     setRemoteConfiguring(true);
     
     try {
-      await addRemote(workspacePath, 'origin', DEFAULT_REMOTE_URL);
-      setRemoteUrl(DEFAULT_REMOTE_URL);
+      await addRemote(workspacePath, 'origin', remoteInput.trim());
+      setRemoteUrl(remoteInput.trim());
       setSyncStatus({ success: true, message: '远程仓库配置成功' });
     } catch (error) {
       setSyncStatus({ success: false, message: `配置失败: ${error}` });
     } finally {
       setRemoteConfiguring(false);
+    }
+  };
+
+  const handleSaveWorkspaceConfig = async () => {
+    setSavingConfig(true);
+    try {
+      await writeWorkspaceConfig({
+        commit_scope: 'workspace',
+        auto_commit_interval: autoCommitInterval,
+      });
+      setSyncStatus({ success: true, message: '工作区配置已保存' });
+    } catch (error) {
+      setSyncStatus({ success: false, message: `保存配置失败: ${error}` });
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleRunGitGc = async () => {
+    if (!workspacePath) return;
+    try {
+      await gitGc(workspacePath);
+      setSyncStatus({ success: true, message: 'Git 维护完成' });
+    } catch (error) {
+      setSyncStatus({ success: false, message: `Git 维护失败: ${error}` });
     }
   };
   
@@ -223,6 +275,13 @@ export default function SettingsPage() {
         } else {
           setSyncStatus({ success: true, message: '同步成功' });
           setLastSyncTime(new Date().toLocaleString());
+          const verification = await verifyRepository(workspacePath);
+          const branch = await getCurrentBranch(workspacePath).catch(() => null);
+          setRepoInfo({
+            branch,
+            commitCount: verification.commit_count,
+            latestCommit: verification.latest_commit_message,
+          });
         }
       } else {
         setSyncStatus({ success: false, message: '同步失败' });
@@ -249,6 +308,13 @@ export default function SettingsPage() {
         setSyncConflict(null);
         setSyncStatus({ success: true, message: '冲突已处理并同步完成' });
         setLastSyncTime(new Date().toLocaleString());
+        const verification = await verifyRepository(workspacePath);
+        const branch = await getCurrentBranch(workspacePath).catch(() => null);
+        setRepoInfo({
+          branch,
+          commitCount: verification.commit_count,
+          latestCommit: verification.latest_commit_message,
+        });
       }
     } catch (error) {
       setSyncStatus({ success: false, message: `冲突处理失败: ${error}` });
@@ -310,7 +376,7 @@ export default function SettingsPage() {
 
       {/* 主内容区域 */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-8 py-20">
+        <div className="max-w-4xl mx-auto px-4 py-8 pb-24 md:px-8 md:py-20">
           <h1
             className={`text-2xl mb-8 ${theme.uiFont}`}
             style={{ color: getThemeAccentColor(theme) }}
@@ -412,14 +478,14 @@ export default function SettingsPage() {
                   )}
                 </div>
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-2">
                     <label
                       className="block text-sm"
                       style={{ color: getThemeAccentColor(theme) }}
                     >
                       二维码传输
                     </label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {isMobileDevice && (
                         <button
                           onClick={() => setShowScanner(true)}
@@ -547,35 +613,19 @@ export default function SettingsPage() {
                   >
                     远程仓库URL
                   </label>
-                  {remoteUrl ? (
-                    <div
-                      className="w-full px-4 py-2 rounded border break-words"
+                  <div className="space-y-2">
+                    <input
+                      value={remoteInput}
+                      onChange={(e) => setRemoteInput(e.target.value)}
+                      placeholder="https://github.com/your-org/your-repo.git"
+                      className="w-full px-4 py-2 rounded border"
                       style={{
                         backgroundColor: getThemeBgColor(theme),
                         borderColor: getThemeBorderColor(theme),
                         color: theme.id === 'vellum' ? 'rgb(41, 37, 36)' : 'rgb(231, 229, 228)',
-                        wordBreak: 'break-all',
-                        overflowWrap: 'break-word',
-                        maxWidth: '100%',
                       }}
-                    >
-                      {(() => {
-                        try {
-                          // 尝试解析URL并移除可能的PAT token
-                          const urlStr = remoteUrl.replace(/^https?:\/\//, 'https://');
-                          const url = new URL(urlStr);
-                          // 移除用户名和密码部分（可能包含PAT）
-                          const cleanUrl = `${url.protocol}//${url.host}${url.pathname}${url.search}`;
-                          return cleanUrl;
-                        } catch {
-                          // 如果URL解析失败，直接显示但移除可能的PAT token模式
-                          return remoteUrl.replace(/github_pat_[^@]+@/g, '');
-                        }
-                      })()}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-sm opacity-60 mb-2">未配置远程仓库</p>
+                    />
+                    <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:gap-3">
                       <button
                         onClick={handleConfigureRemote}
                         disabled={remoteConfiguring}
@@ -586,15 +636,12 @@ export default function SettingsPage() {
                           color: getThemeAccentColor(theme),
                         }}
                       >
-                        {remoteConfiguring ? (
-                          <Loader size={16} className="animate-spin" />
-                        ) : (
-                          <Settings size={16} />
-                        )}
-                        <span>配置远程仓库</span>
+                        {remoteConfiguring ? <Loader size={16} className="animate-spin" /> : <Settings size={16} />}
+                        <span>{remoteUrl ? '更新远程仓库' : '配置远程仓库'}</span>
                       </button>
+                      {remoteUrl && <span className="text-xs opacity-60">当前已连接到 origin</span>}
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -671,13 +718,12 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          {/* 其他设置区域（预留） */}
-          <section>
+          <section className="mb-12">
             <h2
               className={`text-lg mb-4 ${theme.uiFont}`}
               style={{ color: getThemeAccentColor(theme) }}
             >
-              其他设置
+              工作区配置
             </h2>
             <div
               className="p-6 rounded border"
@@ -686,9 +732,87 @@ export default function SettingsPage() {
                 borderColor: getThemeBorderColor(theme),
               }}
             >
-              <p className="text-sm opacity-60">
-                更多设置选项将在此处添加...
-              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm mb-2" style={{ color: getThemeAccentColor(theme) }}>
+                    自动提交间隔（分钟）
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={autoCommitInterval}
+                    onChange={(e) => setAutoCommitInterval(Number(e.target.value || 15))}
+                    className="w-full px-4 py-2 rounded border"
+                    style={{
+                      backgroundColor: getThemeBgColor(theme),
+                      borderColor: getThemeBorderColor(theme),
+                      color: theme.id === 'vellum' ? 'rgb(41, 37, 36)' : 'rgb(231, 229, 228)',
+                    }}
+                  />
+                </div>
+                <div className="text-xs opacity-60">
+                  提交范围固定为 `workspace`，当前版本不开放切换。
+                </div>
+                <button
+                  onClick={handleSaveWorkspaceConfig}
+                  disabled={savingConfig}
+                  className="px-4 py-2 rounded border flex items-center gap-2 hover:opacity-80 transition-opacity disabled:opacity-50"
+                  style={{
+                    backgroundColor: getThemeBgColor(theme),
+                    borderColor: getThemeBorderColor(theme),
+                    color: getThemeAccentColor(theme),
+                  }}
+                >
+                  {savingConfig ? <Loader size={16} className="animate-spin" /> : <Save size={16} />}
+                  <span>保存工作区配置</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2
+              className={`text-lg mb-4 ${theme.uiFont}`}
+              style={{ color: getThemeAccentColor(theme) }}
+            >
+              仓库信息
+            </h2>
+            <div
+              className="p-6 rounded border"
+              style={{
+                backgroundColor: getThemeSurfaceColor(theme),
+                borderColor: getThemeBorderColor(theme),
+              }}
+            >
+              <div className="space-y-4">
+                <div className="text-sm opacity-80 flex items-center gap-2">
+                  <GitBranch size={16} />
+                  <span>当前分支：{repoInfo.branch || 'main'}</span>
+                </div>
+                <div className="text-sm opacity-80 flex items-center gap-2">
+                  <Database size={16} />
+                  <span>提交数量：{repoInfo.commitCount}</span>
+                </div>
+                <div className="text-xs opacity-60">
+                  最新提交：{repoInfo.latestCommit || '暂无'}
+                </div>
+                <div className="text-xs opacity-50 break-all">
+                  工作区路径：{workspacePath || '未初始化'}
+                </div>
+                <button
+                  onClick={handleRunGitGc}
+                  className="px-4 py-2 rounded border flex items-center gap-2 hover:opacity-80 transition-opacity"
+                  style={{
+                    backgroundColor: getThemeBgColor(theme),
+                    borderColor: getThemeBorderColor(theme),
+                    color: getThemeAccentColor(theme),
+                  }}
+                >
+                  <RefreshCw size={16} />
+                  <span>执行 Git 维护</span>
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -696,4 +820,3 @@ export default function SettingsPage() {
     </div>
   );
 }
-

@@ -23,8 +23,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Check version consistency
         id: version-check
+        continue-on-error: true
         run: |
           echo "🔍 Checking version consistency..."
           
@@ -44,6 +50,9 @@ jobs:
             echo "package.json: $PACKAGE_VERSION"
             echo "Cargo.toml: $CARGO_VERSION"
             echo "tauri.conf.json: $TAURI_VERSION"
+            echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+            echo "cargo_version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+            echo "tauri_version=$TAURI_VERSION" >> $GITHUB_OUTPUT
             echo "consistent=false" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -55,10 +64,13 @@ jobs:
           fi
           
           echo "✅ All versions are consistent: $PACKAGE_VERSION"
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "cargo_version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+          echo "tauri_version=$TAURI_VERSION" >> $GITHUB_OUTPUT
           echo "consistent=true" >> $GITHUB_OUTPUT
 
       - name: Comment on PR
-        if: steps.version-check.outputs.consistent == 'false'
+        if: always() && steps.version-check.outputs.consistent == 'false'
         uses: actions/github-script@v7
         with:
           script: |
@@ -69,7 +81,12 @@ jobs:
               body: '❌ **Version Check Failed**\n\nVersion numbers in the following files are inconsistent:\n- `package.json`: ${{ steps.version-check.outputs.package_version }}\n- `src-tauri/Cargo.toml`: ${{ steps.version-check.outputs.cargo_version }}\n- `src-tauri/tauri.conf.json`: ${{ steps.version-check.outputs.tauri_version }}\n\nPlease ensure all three files have the same version number.'
             })
 
+      - name: Fail on version mismatch
+        if: always() && steps.version-check.outputs.consistent == 'false'
+        run: exit 1
+
       - name: Check for version conflicts
+        id: tag-conflict
         run: |
           echo "🔍 Checking for version conflicts with existing tags..."
           
@@ -86,4 +103,3 @@ jobs:
             echo "✅ No version conflict detected"
             echo "conflict=false" >> $GITHUB_OUTPUT
           fi
-

@@ -169,6 +169,23 @@ pub struct WorkspaceConfig {
     pub auto_commit_interval: u64, // 分钟数
 }
 
+/// Library 元数据项
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LibraryEntry {
+    pub favorite: bool,
+    pub archived_at: Option<String>,
+    pub last_opened_at: Option<String>,
+    pub trashed_at: Option<String>,
+    pub original_path: Option<String>,
+    pub title_override: Option<String>,
+}
+
+/// Git 跟踪的文档库元数据
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LibraryMetadata {
+    pub entries: std::collections::HashMap<String, LibraryEntry>,
+}
+
 /// 获取平台信息
 /// 
 /// 前端调用: `invoke('get_platform')`
@@ -311,7 +328,54 @@ pub async fn write_workspace_config(
     tokio::fs::write(&config_file, content)
         .await
         .map_err(|e| format!("无法写入配置文件: {}", e))?;
-    
+
+    Ok(())
+}
+
+/// 读取文档库元数据
+///
+/// 前端调用: `invoke('read_library_metadata')`
+#[tauri::command]
+pub async fn read_library_metadata(app: AppHandle) -> Result<LibraryMetadata, String> {
+    let workspace_path = get_workspace_path(app)?;
+    let metadata_file = PathBuf::from(&workspace_path).join(".config/library.json");
+
+    if !metadata_file.exists() {
+        return Ok(LibraryMetadata::default());
+    }
+
+    let content = tokio::fs::read_to_string(&metadata_file)
+        .await
+        .map_err(|e| format!("无法读取文档库元数据: {}", e))?;
+
+    serde_json::from_str(&content)
+        .map_err(|e| format!("无法解析文档库元数据: {}", e))
+}
+
+/// 写入文档库元数据
+///
+/// 前端调用: `invoke('write_library_metadata', { metadata: {...} })`
+#[tauri::command]
+pub async fn write_library_metadata(
+    app: AppHandle,
+    metadata: LibraryMetadata,
+) -> Result<(), String> {
+    let workspace_path = get_workspace_path(app)?;
+    let metadata_file = PathBuf::from(&workspace_path).join(".config/library.json");
+
+    if let Some(parent) = metadata_file.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("无法创建文档库元数据目录: {}", e))?;
+    }
+
+    let content = serde_json::to_string_pretty(&metadata)
+        .map_err(|e| format!("无法序列化文档库元数据: {}", e))?;
+
+    tokio::fs::write(&metadata_file, content)
+        .await
+        .map_err(|e| format!("无法写入文档库元数据: {}", e))?;
+
     Ok(())
 }
 
@@ -815,4 +879,3 @@ pub async fn save_export_file(
     // 返回保存的文件路径
     Ok(final_path.to_string_lossy().to_string())
 }
-

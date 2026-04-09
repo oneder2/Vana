@@ -1,6 +1,6 @@
 # Vana - No Visitors: Git-based Arcane Archive
 
-**版本**: v0.5.2 (Beta Release)  
+**版本**: v0.5.2 (1.0 MVP Track)  
 **核心理念**: Git 为核 (Git as Engine)、零知识加密 (Zero-Knowledge Encryption)、氛围拟态 (Atmosphere Protocol)、Tauri 驱动。
 
 ## 项目概述
@@ -13,7 +13,9 @@ Vana 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档管理�
 - 📝 **双层保存策略**：防抖磁盘保存 + Git 自动提交，确保数据安全与版本追溯
 - 🌐 **Git 云端同步**：单分支 `main` 工作流，支持 rebase 冲突处理和交互式解决（已修复 Windows 平台 SSL 证书验证问题）
 - 🎨 **氛围协议**：多主题 UI（arcane、terminal、rusty、vellum），支持目录级主题配置
-- 📤 **文档导出**：支持导出为 PDF 和 DOCX 格式，自动应用文档的氛围协议主题样式
+- 📚 **文档库能力**：支持收藏、最近文档、归档、回收站与工作区级提交时间线
+- ⌨️ **高频操作入口**：支持命令面板、全文搜索、Markdown 导入与 Markdown/PDF/DOCX 导出
+- 📤 **文档导出**：支持导出为 PDF、DOCX 和 Markdown 格式，自动应用文档的氛围协议主题样式
 - 📱 **跨平台支持**：Linux、Windows、Android（Beta）
 
 ## 快速开始
@@ -41,8 +43,16 @@ Vana 是一个基于 Tauri v2 + Next.js App Router 构建的加密文档管理�
 
 4. **导出文档**
    - 打开文档后，点击顶部工具栏的导出按钮（下载图标）
-   - 选择导出格式（PDF 或 DOCX）
+   - 选择导出格式（PDF、DOCX 或 Markdown）
    - 导出的文档会自动应用当前文档的氛围协议主题样式
+
+5. **管理文档库**
+   - 在侧边栏查看 Favorites、Recent、Archived、Trash 逻辑分组
+   - 使用顶部工具栏或命令面板完成收藏、归档、移至回收站、查看历史时间线
+
+6. **命令面板**
+   - 使用 `Ctrl+K` / `Cmd+K` 打开命令面板
+   - 可快速搜索文档、打开历史、导入 Markdown 和执行常用操作
 
 ## 文档导航
 
@@ -71,7 +81,7 @@ ISC
 
 ## 开发状态
 
-项目目前处于 **Beta 阶段**，核心功能已实现，正在调试发布release。欢迎反馈和建议！
+项目目前处于 **Beta 阶段**。1.0 MVP 已覆盖私密写作、Git 同步、工作区元数据、回收站、Markdown 导入导出和基础历史时间线。
 
 ---
 

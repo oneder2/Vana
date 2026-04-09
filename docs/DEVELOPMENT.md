@@ -87,6 +87,9 @@ App_Sandbox_Data/
 ├── workspace/             # Git 仓库根目录
 │   ├── .git/
 │   ├── .config/           # 全局配置
+│   │   ├── settings.json  # 工作区设置（自动提交间隔等）
+│   │   └── library.json   # Git 跟踪的文档库元数据（收藏/归档/回收站/最近文档）
+│   ├── .trash/            # 回收站（隐藏目录）
 │   ├── 奇幻项目/
 │   │   ├── .vnode.json   # 主题配置
 │   │   └── 序章.enc      # 加密文件
@@ -104,12 +107,19 @@ App_Sandbox_Data/
 
 - **Tier 1**: 防抖磁盘保存（停止打字 2 秒后）
 - **Tier 2**: Git 自动提交（文档关闭/后台/15分钟）
+- **同步触发**: 冷启动、前台恢复、手动同步、关闭前同步、失败队列重试
 
 ### 氛围协议
 
 - `.vnode.json` 配置读写
 - 主题自动加载
 - 多主题 UI（arcane、terminal、rusty、vellum）
+
+### 工作区元数据
+
+- `.config/library.json` 使用明文 JSON 保存 Git 跟踪的文档库状态
+- 当前记录的字段包括收藏、归档时间、最近打开时间、回收站时间和原始路径
+- 文档正文仍保持 `.enc` 加密存储，元数据不进入正文文件
 
 ## 版本管理
 
@@ -169,4 +179,3 @@ App_Sandbox_Data/
 - [产品需求文档](./产品需求文档%20(PRD)_%20Project_%20No%20Visitors%20(游客止步).md)
 - [同步协议](./Sync%20Protocol.md)
 - [版本号管理策略](./VERSIONING.md)
-

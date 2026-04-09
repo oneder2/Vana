@@ -58,23 +58,23 @@ fi
 
 echo ""
 
-# 3. 检查 Next.js 构建
-echo "3. 检查 Next.js 构建..."
-if npm run build > /dev/null 2>&1; then
-    echo "  ✓ Next.js 构建成功"
+# 3. 检查前端与 Rust 静态校验
+echo "3. 检查 lint/typecheck 与 Rust 编译..."
+if npm run check > /dev/null 2>&1; then
+    echo "  ✓ npm run check 成功"
 else
-    echo "  ✗ Next.js 构建失败"
+    echo "  ✗ npm run check 失败"
     exit 1
 fi
 
 echo ""
 
-# 4. 检查 Rust 编译
-echo "4. 检查 Rust 编译..."
-if cargo check --manifest-path src-tauri/Cargo.toml > /dev/null 2>&1; then
-    echo "  ✓ Rust 编译成功"
+# 4. 检查 Next.js 构建
+echo "4. 检查 Next.js 构建..."
+if npm run build > /dev/null 2>&1; then
+    echo "  ✓ Next.js 构建成功"
 else
-    echo "  ✗ Rust 编译失败"
+    echo "  ✗ Next.js 构建失败"
     exit 1
 fi
 
@@ -112,4 +112,3 @@ echo "提示：如果构建时间过长，可以："
 echo "  1. 使用 --target 参数只构建特定平台"
 echo "  2. 检查网络连接（首次构建需要下载依赖）"
 echo "  3. 确保有足够的磁盘空间"
-

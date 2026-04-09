@@ -5,18 +5,63 @@ on:
     branches:
       - main
     paths-ignore:
-      - '**.md'
-      - '.gitignore'
-      - 'LICENSE'
+      - "**.md"
+      - ".gitignore"
+      - "LICENSE"
 
 permissions:
   contents: read
 
 jobs:
+  check:
+    name: Validate Project
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
   build-linux:
     name: Build Linux (Dev)
     runs-on: ubuntu-22.04
-    
+    needs: check
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -61,13 +106,10 @@ jobs:
       - name: Set build metadata version
         id: version
         run: |
-          # 读取当前版本号
           BASE_VERSION=$(node -p "require('./package.json').version")
           BUILD_NUM="${{ github.run_number }}"
           BUILD_VERSION="${BASE_VERSION}+build.${BUILD_NUM}"
-          echo "version=$BUILD_VERSION" >> $GITHUB_OUTPUT
-          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
-          echo "build_num=$BUILD_NUM" >> $GITHUB_OUTPUT
+          echo "version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
           echo "Build version: $BUILD_VERSION"
 
       - name: Install frontend dependencies
@@ -76,43 +118,22 @@ jobs:
       - name: Build Tauri app
         run: npm run tauri:build
 
-      - name: Check Slack webhook
-        id: check-slack
-        run: |
-          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
-            echo "has_webhook=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_webhook=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Notify build status
-        if: always() && steps.check-slack.outputs.has_webhook == 'true'
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          text: |
-            Linux Dev Build ${{ job.status }}!
-            Version: ${{ steps.version.outputs.version }}
-            Run: ${{ github.run_number }}
-            Commit: ${{ github.sha }}
-          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-dev-artifacts-${{ github.run_number }}
+          name: linux-dev-artifacts
           path: |
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.rpm
+          if-no-files-found: error
           retention-days: 7
 
   build-windows:
     name: Build Windows (Dev)
     runs-on: windows-latest
-    
+    needs: check
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -143,70 +164,37 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          # 读取当前版本号
           $packageJson = Get-Content package.json | ConvertFrom-Json
-          $BASE_VERSION = $packageJson.version
-          $BUILD_NUM = "${{ github.run_number }}"
-          $BUILD_VERSION = "$BASE_VERSION+build.$BUILD_NUM"
-          Write-Host "Build version: $BUILD_VERSION"
-          
-          # 对于 Windows MSI，需要 major.minor.patch.build 格式
-          # 使用 run_number 作为 build 号
-          $MSI_VERSION = "$BASE_VERSION.$BUILD_NUM"
-          Write-Host "MSI version: $MSI_VERSION"
-          # 使用 GitHub Actions 输出格式
-          "version=$BUILD_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "base_version=$BASE_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "build_num=$BUILD_NUM" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "msi_version=$MSI_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $baseVersion = $packageJson.version
+          $buildNum = "${{ github.run_number }}"
+          $buildVersion = "$baseVersion+build.$buildNum"
+          $msiVersion = "$baseVersion.$buildNum"
+          "version=$buildVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "msi_version=$msiVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Build Tauri app
         env:
-          # Set MSI version via environment variable (Tauri will use this for MSI only)
           TAURI_WINDOWS_MSI_VERSION: ${{ steps.version.outputs.msi_version }}
         run: npm run tauri:build
-
-      - name: Check Slack webhook
-        id: check-slack
-        shell: pwsh
-        run: |
-          $webhook = "${{ secrets.SLACK_WEBHOOK_URL }}"
-          if ($webhook -and $webhook -ne '') {
-            Write-Host "has_webhook=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          } else {
-            Write-Host "has_webhook=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          }
-
-      - name: Notify build status
-        if: always() && steps.check-slack.outputs.has_webhook == 'true'
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          text: |
-            Windows Dev Build ${{ job.status }}!
-            Version: ${{ steps.version.outputs.version }}
-            Run: ${{ github.run_number }}
-            Commit: ${{ github.sha }}
-          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-dev-artifacts-${{ github.run_number }}
+          name: windows-dev-artifacts
           path: |
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error
           retention-days: 7
 
   build-android:
     name: Build Android (Dev)
     runs-on: ubuntu-22.04
-    
+    needs: check
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -246,22 +234,14 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1"
-          
-          # 1. 自动获取当前系统中生效的 NDK 路径（由 tauri 识别到的版本为准）
-          # 我们不再手动下载特定版本，而是直接使用系统路径
-          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* 2>/dev/null | tail -1)
+
+          NDK_PATH=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | tail -1)
           if [ -z "$NDK_PATH" ]; then
-            # 如果没有找到，安装一个默认版本
             sdkmanager "ndk;25.2.9519653"
             NDK_PATH="$ANDROID_HOME/ndk/25.2.9519653"
           fi
-          echo "Using NDK at: $NDK_PATH"
-          
-          # 2. 构造 LLVM 工具链路径
+
           TOOLCHAIN_PATH="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          
-          # 3. 核心修复：手动创建缺失的符号链接
-          # 某些版本的 NDK 将 ranlib 命名为 llvm-ranlib，而 OpenSSL 脚本在找 aarch64-linux-android-ranlib
           if [ -d "$TOOLCHAIN_PATH" ]; then
             cd "$TOOLCHAIN_PATH"
             sudo ln -sf llvm-ranlib aarch64-linux-android-ranlib || true
@@ -273,17 +253,13 @@ jobs:
             sudo ln -sf llvm-ranlib x86_64-linux-android-ranlib || true
             sudo ln -sf llvm-ar x86_64-linux-android-ar || true
           fi
-          
-          # 4. 写入环境变量
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-          echo "$TOOLCHAIN_PATH" >> $GITHUB_PATH
-          echo "PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools/bin:$TOOLCHAIN_PATH:$PATH" >> $GITHUB_ENV
-          
-          # 5. 强制告知 OpenSSL 使用正确的 RANLIB
-          echo "RANLIB=aarch64-linux-android-ranlib" >> $GITHUB_ENV
-          echo "AR=aarch64-linux-android-ar" >> $GITHUB_ENV
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "$TOOLCHAIN_PATH" >> "$GITHUB_PATH"
+          echo "RANLIB=aarch64-linux-android-ranlib" >> "$GITHUB_ENV"
+          echo "AR=aarch64-linux-android-ar" >> "$GITHUB_ENV"
 
       - name: Add Rust Android targets
         run: |
@@ -292,45 +268,29 @@ jobs:
           rustup target add x86_64-linux-android
           rustup target add i686-linux-android
 
-      - name: Set build metadata version
-        id: version
-        run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
-          BUILD_NUM="${{ github.run_number }}"
-          BUILD_VERSION="${BASE_VERSION}+build.${BUILD_NUM}"
-          echo "version=$BUILD_VERSION" >> $GITHUB_OUTPUT
-          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
-          echo "build_num=$BUILD_NUM" >> $GITHUB_OUTPUT
-          echo "Build version: $BUILD_VERSION"
-
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Initialize Android project
         run: |
-          echo "📱 Initializing Android project..."
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init
-            echo "✅ Android project initialized"
-          else
-            echo "✅ Android project already exists"
           fi
+          test -f src-tauri/gen/android/app/build.gradle.kts
 
-      - name: Setup Android keystore (Dev Build)
+      - name: Validate Android signing secrets
+        run: |
+          test -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}"
+          test -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          test -n "${{ secrets.ANDROID_KEY_ALIAS }}"
+          test -n "${{ secrets.ANDROID_KEY_PASSWORD }}"
+
+      - name: Setup Android keystore
         run: |
           mkdir -p android-keystore
-          # Decode base64 keystore
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-keystore/keystore.jks
+          test -f android-keystore/keystore.jks
 
-          # Verify keystore was created successfully
-          if [ ! -f android-keystore/keystore.jks ]; then
-            echo "❌ 错误: Keystore 文件创建失败"
-            exit 1
-          fi
-
-          echo "✅ Keystore 文件已创建: $(ls -lh android-keystore/keystore.jks)"
-
-          # Create keystore.properties for Gradle
           mkdir -p src-tauri/gen/android/app
           cat > src-tauri/gen/android/app/keystore.properties << EOF
           keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
@@ -339,70 +299,30 @@ jobs:
           storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           EOF
 
-          echo "✅ keystore.properties 已创建 (Dev Build)"
-
-      - name: Configure Android signing (Dev Build)
+      - name: Configure Android signing
         run: |
-          echo "🔧 配置 Gradle 签名 (Dev Build)..."
           python3 scripts/configure-android-signing.py
-
-          echo ""
-          echo "🔍 验证配置..."
-          if grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts; then
-            echo "✅ 签名配置已成功添加到 build.gradle.kts"
-          else
-            echo "❌ 错误: 未在 build.gradle.kts 中找到签名配置"
-            exit 1
-          fi
+          grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts
 
       - name: Build Android APK
         run: |
-          echo "🔨 Building Android development APK..."
-          # 显式注入环境变量，防止 openssl-sys 乱找工具
           export AR=aarch64-linux-android-ar
           export RANLIB=aarch64-linux-android-ranlib
-          # 显式指定 target 以减少编译器的混淆
-          # Tauri CLI 使用架构缩写，会自动映射到完整的 target triple
           npx tauri android build --target aarch64 --verbose
-
-      - name: Check Slack webhook
-        id: check-slack
-        run: |
-          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
-            echo "has_webhook=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_webhook=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Notify build status
-        if: always() && steps.check-slack.outputs.has_webhook == 'true'
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          text: |
-            Android Dev Build ${{ job.status }}!
-            Version: ${{ steps.version.outputs.version }}
-            Run: ${{ github.run_number }}
-            Commit: ${{ github.sha }}
-          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          find src-tauri/gen/android -type f \( -name "*.apk" -o -name "*.aab" \) | head -20
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-dev-artifacts-${{ github.run_number }}
+          name: android-dev-artifacts
           path: |
             src-tauri/gen/android/**/*.apk
             src-tauri/gen/android/**/*.aab
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
-      - name: Cleanup keystore (Dev Build)
+      - name: Cleanup keystore
         if: always()
         run: |
-          echo "🧹 清理敏感文件..."
           rm -rf android-keystore
           rm -f src-tauri/gen/android/app/keystore.properties
-          echo "✅ 清理完成"
-

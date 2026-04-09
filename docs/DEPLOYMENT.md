@@ -16,6 +16,7 @@
 - **构建命令**：
 
 ```bash
+npm run check
 npm run tauri:build
 ```
 
@@ -42,6 +43,13 @@ npm run tauri:build
 git tag v0.5.2
 git push origin v0.5.2
 ```
+
+发布工作流会先执行统一校验：
+
+- `npm run lint`（当前等价于 `tsc --noEmit`）
+- `cargo check --manifest-path src-tauri/Cargo.toml`
+
+随后再进入 Linux / Windows / Android 平台构建。
 
 ### 支持的平台
 
@@ -186,6 +194,8 @@ jarsigner -verify -verbose -certs your-app.apk
    ```
    
    > **注意**：版本号会自动从 tag 提取，无需在源代码中手动更新版本号。
+   >
+   > CI 会通过 `scripts/sync-version.mjs` 将 tag 版本同步到 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json`。Windows 构建会额外生成 MSI 兼容版本号。
 4. **等待构建完成**：在 GitHub Actions 页面查看构建进度
 5. **检查 Release**：构建完成后，在 GitHub Releases 页面查看并下载构建产物
 
@@ -207,6 +217,7 @@ jarsigner -verify -verbose -certs your-app.apk
 - **Linux 构建失败**：检查依赖安装步骤，确保所有系统库已正确安装
 - **Windows 签名失败**：验证证书是否正确导入，检查 `WINDOWS_CERTIFICATE_THUMBPRINT` 是否匹配
 - **Android 构建失败**：确认 Android SDK、NDK 版本与项目配置匹配，检查 keystore 配置是否正确
+- **Android 初始化失败**：当前仓库不提交 `src-tauri/gen/android` 生成工程，CI 会先执行 `npx tauri android init` 再注入签名配置
 
 ### Secrets 配置验证
 
@@ -409,4 +420,3 @@ Windows 运行从 GitHub Release 下载的 `.exe` / 安装包时，可能会看�
 - **已补全 Windows 版本资源元数据**（公司名/产品名/文件描述/图标/版本号等），提升"正规软件"观感
 - **支持自签名证书签名**（免费方案）：可验证文件完整性，但不保证消除 SmartScreen
 - 未来会考虑 **提交 Microsoft 样本分析** 来逐步建立信誉
-

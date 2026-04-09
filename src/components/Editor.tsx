@@ -1251,7 +1251,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
     >
       {/* 同步状态指示器 */}
       {workspacePath && (
-        <div className="fixed top-24 right-4 md:top-12 md:right-4 z-50">
+        <div className="fixed top-20 right-4 md:top-12 md:right-4 z-50">
           <div
             className="w-3 h-3 rounded-full transition-all duration-300"
             style={{
@@ -1295,7 +1295,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
 
       {/* 固定的文本显示区域 - 区域位置固定，文字排布方式在内部 */}
       <div
-        className="max-w-4xl px-8 py-20 min-h-full relative mx-auto"
+        className="max-w-4xl px-4 py-10 pb-24 md:px-8 md:py-20 min-h-full relative mx-auto"
         onContextMenu={handleContextMenu}
         onMouseDown={handleMouseDown}
         onClick={handleContainerClick}

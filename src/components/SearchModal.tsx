@@ -180,7 +180,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-2 md:p-4"
       style={{
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
       }}
@@ -190,7 +190,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
       aria-labelledby="search-modal-title"
     >
       <div
-        className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg border shadow-lg"
+        className="w-full max-w-2xl max-h-[calc(100dvh-1rem)] md:max-h-[80vh] flex flex-col rounded-lg border shadow-lg"
         style={{
           backgroundColor: getThemeBgColor(theme),
           borderColor: getThemeBorderColor(theme),
@@ -199,7 +199,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
       >
         {/* 头部 */}
         <div
-          className="flex items-center gap-3 px-4 py-3 border-b"
+          className="flex items-center gap-3 px-3 py-3 md:px-4 border-b"
           style={{
             borderColor: getThemeBorderColor(theme),
           }}
@@ -312,7 +312,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
 
         {/* 底部提示 */}
         <div
-          className="px-4 py-2 text-xs opacity-60 border-t text-center"
+          className="px-3 py-2 text-[11px] md:text-xs opacity-60 border-t text-center"
           style={{
             borderColor: getThemeBorderColor(theme),
           }}
@@ -324,4 +324,3 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
     </div>
   );
 }
-

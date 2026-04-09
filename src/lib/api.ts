@@ -48,6 +48,19 @@ export interface WorkspaceConfig {
   auto_commit_interval: number;
 }
 
+export interface LibraryEntry {
+  favorite: boolean;
+  archived_at: string | null;
+  last_opened_at: string | null;
+  trashed_at: string | null;
+  original_path: string | null;
+  title_override: string | null;
+}
+
+export interface LibraryMetadata {
+  entries: Record<string, LibraryEntry>;
+}
+
 /**
  * 读取加密文件
  * @param path 文件路径
@@ -193,6 +206,20 @@ export async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
  */
 export async function writeWorkspaceConfig(config: WorkspaceConfig): Promise<void> {
   return await invoke<void>('write_workspace_config', { config });
+}
+
+/**
+ * 读取 Git 跟踪的文档库元数据
+ */
+export async function readLibraryMetadata(): Promise<LibraryMetadata> {
+  return await invoke<LibraryMetadata>('read_library_metadata');
+}
+
+/**
+ * 写入 Git 跟踪的文档库元数据
+ */
+export async function writeLibraryMetadata(metadata: LibraryMetadata): Promise<void> {
+  return await invoke<void>('write_library_metadata', { metadata });
 }
 
 /**
@@ -604,4 +631,3 @@ export async function searchFiles(workspacePath: string, query: string): Promise
     query,
   });
 }
-

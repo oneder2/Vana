@@ -41,3 +41,12 @@ Thumbs.db
 .env.production.local
 
 /secrets
+
+.cursor/
+.codex
+.codex/
+.kiro/
+.kilocode/
+.augment/
+tsconfig.tsbuildinfo
+src-tauri/gen/android/.gradle/

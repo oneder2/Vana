@@ -98,13 +98,32 @@ chmod +x scripts/test-android-signing.sh
 
 ### 其他脚本
 
+#### `sync-version.mjs`
+**用途**: 在发布构建前同步多端版本号
+
+**功能**:
+- 同步 `package.json`
+- 同步 `package-lock.json`
+- 同步 `src-tauri/Cargo.toml`
+- 同步 `src-tauri/tauri.conf.json`
+- 可选注入 Windows MSI 专用版本号
+
+**使用方法**:
+```bash
+node scripts/sync-version.mjs 0.5.2
+node scripts/sync-version.mjs 0.5.2-beta.1 0.5.2.1
+```
+
+---
+
 #### `check-build-ready.sh`
 **用途**: Beta 构建就绪检查
 
 **功能**:
 - 检查版本号一致性（`package.json`, `Cargo.toml`, `tauri.conf.json`）
-- 验证 Git 状态
-- 检查必要的依赖
+- 运行 `npm run check`
+- 运行 `npm run build`
+- 检查必要的资源文件与构建配置
 
 **使用方法**:
 ```bash
@@ -119,22 +138,22 @@ chmod +x scripts/test-android-signing.sh
 
 ```mermaid
 graph TD
-    A[推送 Git Tag v*] --> B[提取版本号]
-    B --> C[更新源文件版本]
+    A[推送 Git Tag v*] --> B[统一校验]
+    B --> C[同步版本号]
     C --> D[初始化 Android 项目]
     D --> E[解码 Keystore]
     E --> F[创建 keystore.properties]
     F --> G[配置 Gradle 签名]
-    G --> H[构建签名 APK]
+    G --> H[构建各平台产物]
     H --> I[上传 Artifacts]
-    I --> J[清理敏感文件]
+    I --> J[创建 Draft Release]
 ```
 
 **关键步骤**:
-1. **Setup Android keystore**: 解码 Base64 keystore，创建配置文件
-2. **Configure Android signing**: 运行 `configure-android-signing.py`
-3. **Build Android APK**: 使用签名配置构建
-4. **Cleanup keystore**: 删除敏感文件
+1. **Validate Project**: 先执行 `npm run lint`、`npm run build` 和 `cargo check`
+2. **Sync release version**: 运行 `sync-version.mjs` 对齐前端、Rust 和 Tauri 版本
+3. **Configure Android signing**: 运行 `configure-android-signing.py`
+4. **Build artifacts**: 分平台构建 Linux / Windows / Android
 
 ---
 
@@ -331,4 +350,3 @@ adb install -r your-app.apk
 
 **最后更新**: 2026-01-23  
 **维护者**: @oneder2
-

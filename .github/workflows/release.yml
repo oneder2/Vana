@@ -9,35 +9,58 @@ permissions:
   contents: write
 
 jobs:
-  build-linux:
-    name: Build Linux
+  check:
+    name: Validate Project
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: version
-        run: |
-          TAG_NAME="${{ github.ref_name }}"
-          # 移除 'v' 前缀，提取版本号
-          VERSION="${TAG_NAME#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
 
-      - name: Update version in source files
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "Updating version to: $VERSION"
-          # 更新 package.json
-          npm version $VERSION --no-git-tag-version
-          # 更新 Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-          # 更新 tauri.conf.json (需要 jq)
-          npm install -g jq
-          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-          echo "✅ Version updated in all source files"
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            pkg-config \
+            curl \
+            wget \
+            file
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-22.04
+    needs: check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -76,15 +99,17 @@ jobs:
             wget \
             file
 
-      - name: Verify dependencies
+      - name: Extract version from tag
+        id: version
         run: |
-          echo "Checking installed dependencies..."
-          dpkg -l | grep -E "(libwebkit2gtk|libgtk-3|libayatana|librsvg|patchelf)" || exit 1
-          which patchelf || exit 1
-          echo "All dependencies verified"
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Sync release version
+        run: node scripts/sync-version.mjs "${{ steps.version.outputs.version }}"
 
       - name: Build Tauri app
         run: npm run tauri:build
@@ -97,71 +122,17 @@ jobs:
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.rpm
+          if-no-files-found: error
           retention-days: 30
 
   build-windows:
     name: Build Windows (Signed)
     runs-on: windows-latest
-    
+    needs: check
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Extract version from tag
-        id: version
-        shell: pwsh
-        run: |
-          $TAG_NAME = "${{ github.ref_name }}"
-          # 移除 'v' 前缀，提取版本号
-          $VERSION = $TAG_NAME -replace '^v', ''
-          Write-Host "Extracted version: $VERSION"
-          
-          # 对于 MSI，需要 major.minor.patch.build 格式
-          # 如果是预发布版本（如 v0.5.2-beta.1），提取 build 号
-          $MSI_VERSION = $VERSION
-          if ($TAG_NAME -match 'beta\.(\d+)$') {
-            $BUILD_NUM = $matches[1]
-            $MSI_VERSION = "$VERSION.$BUILD_NUM"
-          } elseif ($TAG_NAME -match 'alpha\.(\d+)$') {
-            $BUILD_NUM = $matches[1]
-            $MSI_VERSION = "$VERSION.$BUILD_NUM"
-          } elseif ($TAG_NAME -match 'rc\.(\d+)$') {
-            $BUILD_NUM = $matches[1]
-            $MSI_VERSION = "$VERSION.$BUILD_NUM"
-          } else {
-            # 正式发布，build 号为 0
-            $MSI_VERSION = "$VERSION.0"
-          }
-          Write-Host "MSI version: $MSI_VERSION"
-          # 使用 GitHub Actions 输出格式
-          "version=$VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "msi_version=$MSI_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Update version in source files
-        run: |
-          $VERSION = "${{ steps.version.outputs.version }}"
-          $MSI_VERSION = "${{ steps.version.outputs.msi_version }}"
-          Write-Host "Updating version to: $VERSION (MSI: $MSI_VERSION)"
-          
-          # 更新 package.json
-          $packageJson = Get-Content package.json | ConvertFrom-Json
-          $packageJson.version = $VERSION
-          $packageJson | ConvertTo-Json -Depth 10 | Set-Content package.json
-          
-          # 更新 Cargo.toml
-          (Get-Content src-tauri/Cargo.toml) -replace '^version = ".*"', "version = `"$VERSION`"" | Set-Content src-tauri/Cargo.toml
-          
-          # 更新 tauri.conf.json（保持 semver 格式）
-          $tauriConfig = Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json
-          $tauriConfig.version = $VERSION
-          # 设置 Windows MSI 版本号（如果支持）
-          if (-not $tauriConfig.bundle.windows) {
-            $tauriConfig.bundle.windows = @{}
-          }
-          $tauriConfig.bundle.windows.version = $MSI_VERSION
-          $tauriConfig | ConvertTo-Json -Depth 10 | Set-Content src-tauri/tauri.conf.json
-          
-          Write-Host "✅ Version updated: $VERSION (MSI: $MSI_VERSION)"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -185,37 +156,65 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tagName = "${{ github.ref_name }}"
+          $version = $tagName -replace '^v', ''
+          $baseVersion = [regex]::Match($version, '^\d+\.\d+\.\d+').Value
+          if (-not $baseVersion) {
+            throw "Unable to derive base version from tag $tagName"
+          }
+
+          $buildNumber = 0
+          if ($version -match '(alpha|beta|rc)\.(\d+)$') {
+            $buildNumber = $matches[2]
+          }
+
+          $msiVersion = "$baseVersion.$buildNumber"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "msi_version=$msiVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Sync release version
+        shell: pwsh
+        run: node scripts/sync-version.mjs "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.msi_version }}"
+
       - name: Import Windows certificate
+        shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if (-not (Test-Path certificate)) {
-            New-Item -ItemType Directory -Path certificate
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            throw "WINDOWS_CERTIFICATE secret is required"
           }
-          # Decode base64 certificate
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw "WINDOWS_CERTIFICATE_PASSWORD secret is required"
+          }
+
+          New-Item -ItemType Directory -Path certificate -Force | Out-Null
           [System.IO.File]::WriteAllBytes(
             "$PWD\certificate\certificate.pfx",
             [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
           )
-          # Import certificate to CurrentUser\My store
+
           $securePassword = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
           Import-PfxCertificate `
             -FilePath "$PWD\certificate\certificate.pfx" `
             -CertStoreLocation Cert:\CurrentUser\My `
             -Password $securePassword `
-            -ErrorAction Stop
-          Write-Host "Certificate imported successfully"
-          # Clean up certificate file immediately
+            -ErrorAction Stop | Out-Null
+
           Remove-Item -Path "$PWD\certificate\certificate.pfx" -Force
           Remove-Item -Path "$PWD\certificate" -Force
 
-      - name: Install frontend dependencies
-        run: npm ci
-
       - name: Build Tauri app
         env:
-          # Tauri will use the imported certificate for signing
+          TAURI_WINDOWS_MSI_VERSION: ${{ steps.version.outputs.msi_version }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: npm run tauri:build
 
@@ -226,37 +225,17 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error
           retention-days: 30
 
   build-android:
     name: Build Android (APK)
     runs-on: ubuntu-22.04
-    
+    needs: check
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Extract version from tag
-        id: version
-        run: |
-          TAG_NAME="${{ github.ref_name }}"
-          # 移除 'v' 前缀，提取版本号
-          VERSION="${TAG_NAME#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
-
-      - name: Update version in source files
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "Updating version to: $VERSION"
-          # 更新 package.json
-          npm version $VERSION --no-git-tag-version
-          # 更新 Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-          # 更新 tauri.conf.json (需要 jq)
-          npm install -g jq
-          jq ".version = \"$VERSION\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-          echo "✅ Version updated in all source files"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -280,6 +259,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
@@ -291,26 +276,16 @@ jobs:
 
       - name: Install Android dependencies
         run: |
-          # Accept Android SDK licenses
           yes | sdkmanager --licenses || true
-          # Install required Android SDK components
           sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1"
-          
-          # 1. 自动获取当前系统中生效的 NDK 路径（由 tauri 识别到的版本为准）
-          # 我们不再手动下载特定版本，而是直接使用系统路径
-          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* 2>/dev/null | tail -1)
+
+          NDK_PATH=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | tail -1)
           if [ -z "$NDK_PATH" ]; then
-            # 如果没有找到，安装一个默认版本
             sdkmanager "ndk;25.2.9519653"
             NDK_PATH="$ANDROID_HOME/ndk/25.2.9519653"
           fi
-          echo "Using NDK at: $NDK_PATH"
-          
-          # 2. 构造 LLVM 工具链路径
+
           TOOLCHAIN_PATH="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          
-          # 3. 核心修复：手动创建缺失的符号链接
-          # 某些版本的 NDK 将 ranlib 命名为 llvm-ranlib，而 OpenSSL 脚本在找 aarch64-linux-android-ranlib
           if [ -d "$TOOLCHAIN_PATH" ]; then
             cd "$TOOLCHAIN_PATH"
             sudo ln -sf llvm-ranlib aarch64-linux-android-ranlib || true
@@ -322,17 +297,13 @@ jobs:
             sudo ln -sf llvm-ranlib x86_64-linux-android-ranlib || true
             sudo ln -sf llvm-ar x86_64-linux-android-ar || true
           fi
-          
-          # 4. 写入环境变量
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-          echo "$TOOLCHAIN_PATH" >> $GITHUB_PATH
-          echo "PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools/bin:$TOOLCHAIN_PATH:$PATH" >> $GITHUB_ENV
-          
-          # 5. 强制告知 OpenSSL 使用正确的 RANLIB
-          echo "RANLIB=aarch64-linux-android-ranlib" >> $GITHUB_ENV
-          echo "AR=aarch64-linux-android-ar" >> $GITHUB_ENV
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "$TOOLCHAIN_PATH" >> "$GITHUB_PATH"
+          echo "RANLIB=aarch64-linux-android-ranlib" >> "$GITHUB_ENV"
+          echo "AR=aarch64-linux-android-ar" >> "$GITHUB_ENV"
 
       - name: Add Rust Android targets
         run: |
@@ -344,31 +315,29 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Sync release version
+        run: node scripts/sync-version.mjs "${{ steps.version.outputs.version }}"
+
       - name: Initialize Android project
         run: |
-          echo "📱 Initializing Android project..."
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init
-            echo "✅ Android project initialized"
-          else
-            echo "✅ Android project already exists"
           fi
+          test -f src-tauri/gen/android/app/build.gradle.kts
+
+      - name: Validate Android signing secrets
+        run: |
+          test -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}"
+          test -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          test -n "${{ secrets.ANDROID_KEY_ALIAS }}"
+          test -n "${{ secrets.ANDROID_KEY_PASSWORD }}"
 
       - name: Setup Android keystore
         run: |
           mkdir -p android-keystore
-          # Decode base64 keystore
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-keystore/keystore.jks
+          test -f android-keystore/keystore.jks
 
-          # Verify keystore was created successfully
-          if [ ! -f android-keystore/keystore.jks ]; then
-            echo "❌ 错误: Keystore 文件创建失败"
-            exit 1
-          fi
-
-          echo "✅ Keystore 文件已创建: $(ls -lh android-keystore/keystore.jks)"
-
-          # Create keystore.properties for Gradle
           mkdir -p src-tauri/gen/android/app
           cat > src-tauri/gen/android/app/keystore.properties << EOF
           keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
@@ -377,59 +346,16 @@ jobs:
           storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           EOF
 
-          echo "✅ keystore.properties 已创建"
-          echo "📋 配置内容 (密码已隐藏):"
-          echo "  keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
-          echo "  storeFile=$PWD/android-keystore/keystore.jks"
-
       - name: Configure Android signing
         run: |
-          echo "🔧 配置 Gradle 签名..."
           python3 scripts/configure-android-signing.py
-
-          echo ""
-          echo "🔍 验证配置..."
-          if grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts; then
-            echo "✅ 签名配置已成功添加到 build.gradle.kts"
-            echo ""
-            echo "📄 build.gradle.kts 签名相关配置预览:"
-            grep -A 5 "signingConfigs" src-tauri/gen/android/app/build.gradle.kts || true
-          else
-            echo "❌ 错误: 未在 build.gradle.kts 中找到签名配置"
-            exit 1
-          fi
+          grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts
 
       - name: Build Android APK
         run: |
-          echo "🔨 Building Android release APK..."
-          # Tauri android build defaults to release mode
-          # Use --verbose for detailed output
-          # Note: --apk and --release flags are not needed (default behavior)
-          # 显式注入环境变量，防止 openssl-sys 乱找工具
           export AR=aarch64-linux-android-ar
           export RANLIB=aarch64-linux-android-ranlib
-          # 显式指定 target 以减少编译器的混淆
-          # Tauri CLI 使用架构缩写，会自动映射到完整的 target triple
           npx tauri android build --target aarch64 --verbose
-          
-          echo "✅ Build completed, checking outputs..."
-
-      - name: Debug - List build outputs
-        run: |
-          echo "📦 Searching for APK/AAB files..."
-          echo ""
-          echo "=== Checking APK outputs ==="
-          find src-tauri/gen/android -type f -name "*.apk" 2>/dev/null | head -20 || echo "No APK files found"
-          echo ""
-          echo "=== Checking AAB outputs ==="
-          find src-tauri/gen/android -type f -name "*.aab" 2>/dev/null | head -20 || echo "No AAB files found"
-          echo ""
-          echo "=== Common output directories ==="
-          ls -la src-tauri/gen/android/app/build/outputs/apk/ 2>/dev/null || echo "APK directory not found"
-          ls -la src-tauri/gen/android/app/build/outputs/bundle/ 2>/dev/null || echo "Bundle directory not found"
-          echo ""
-          echo "=== Full outputs directory structure ==="
-          find src-tauri/gen/android/app/build/outputs -type f 2>/dev/null | head -30 || echo "Outputs directory not found"
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
@@ -438,7 +364,7 @@ jobs:
           path: |
             src-tauri/gen/android/**/*.apk
             src-tauri/gen/android/**/*.aab
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
       - name: Cleanup keystore
@@ -449,77 +375,40 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [build-linux, build-windows, build-android]
     runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-windows
+      - build-android
     if: startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
+    steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List downloaded artifacts
-        run: |
-          echo "📦 Downloaded artifacts structure:"
-          find artifacts -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" -o -name "*.exe" -o -name "*.msi" \) | head -30 || echo "No artifacts found"
-
       - name: Validate build artifacts
         id: validate
         run: |
-          echo "🔍 Validating build artifacts..."
-          
-          # 检查必需的文件
-          REQUIRED_PATTERNS=(
-            "artifacts/linux-artifacts/**/*.deb"
-            "artifacts/linux-artifacts/**/*.AppImage"
-            "artifacts/windows-artifacts/**/*.exe"
-            "artifacts/windows-artifacts/**/*.msi"
-            "artifacts/android-artifacts/**/*.apk"
-          )
-          
-          MISSING_FILES=()
-          for pattern in "${REQUIRED_PATTERNS[@]}"; do
-            if ! ls $pattern 1> /dev/null 2>&1; then
-              MISSING_FILES+=("$pattern")
-            fi
-          done
-          
-          if [ ${#MISSING_FILES[@]} -gt 0 ]; then
-            echo "❌ Missing required artifacts:"
-            printf '%s\n' "${MISSING_FILES[@]}"
-            echo "valid=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-          # 验证文件大小（至少 1MB）
-          echo "📊 Checking file sizes..."
-          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" -o -name "*.exe" -o -name "*.msi" -o -name "*.apk" -o -name "*.aab" \) | while read file; do
-            if [ -f "$file" ]; then
-              SIZE=$(stat -c%s "$file" 2>/dev/null || echo "0")
-              SIZE_MB=$((SIZE / 1024 / 1024))
-              if [ $SIZE_MB -lt 1 ]; then
-                echo "⚠️ Warning: $file is suspiciously small (${SIZE_MB}MB)"
-              else
-                echo "✅ $file: ${SIZE_MB}MB"
-              fi
-            fi
-          done
-          
-          echo "✅ All artifacts validated"
-          echo "valid=true" >> $GITHUB_OUTPUT
+          linux_count=$(find artifacts/linux-artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) | wc -l)
+          windows_count=$(find artifacts/windows-artifacts -type f \( -name "*.exe" -o -name "*.msi" \) | wc -l)
+          android_count=$(find artifacts/android-artifacts -type f \( -name "*.apk" -o -name "*.aab" \) | wc -l)
+
+          test "$linux_count" -gt 0
+          test "$windows_count" -gt 0
+          test "$android_count" -gt 0
+
+          echo "valid=true" >> "$GITHUB_OUTPUT"
 
       - name: Determine release type
         id: release-type
         run: |
           TAG_NAME="${{ github.ref_name }}"
           if [[ "$TAG_NAME" == *"beta"* ]] || [[ "$TAG_NAME" == *"alpha"* ]] || [[ "$TAG_NAME" == *"rc"* ]]; then
-            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
-            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Release (Draft)
@@ -529,21 +418,12 @@ jobs:
           name: "No Visitors ${{ github.ref_name }}"
           body: |
             ## Release ${{ github.ref_name }}
-            
+
             Automated release build for No Visitors.
-            
-            ### Downloads
-            - **Linux**: .deb, .AppImage, or .rpm packages
-            - **Windows**: .exe or .msi installer (signed)
-            - **Android**: Release APK
-            
-            ### Build Information
-            - Commit: ${{ github.sha }}
-            - Workflow: ${{ github.workflow }}
-            - Run ID: ${{ github.run_id }}
-            - Validation: ${{ steps.validate.outputs.valid }}
-            
-            > **Note**: This is a draft release. Please verify all artifacts before publishing.
+
+            - Linux: `.deb`, `.AppImage`, `.rpm`
+            - Windows: `.exe`, `.msi`
+            - Android: `.apk`
           draft: true
           prerelease: ${{ steps.release-type.outputs.prerelease }}
           files: |
@@ -551,28 +431,3 @@ jobs:
             artifacts/windows-artifacts/**/*
             artifacts/android-artifacts/**/*
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check Slack webhook
-        id: check-slack
-        run: |
-          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
-            echo "has_webhook=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_webhook=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Notify release created
-        if: always() && steps.check-slack.outputs.has_webhook == 'true'
-        uses: 8398a7/action-slack@v3
-        with:
-          status: ${{ job.status }}
-          text: |
-            🚀 Release ${{ github.ref_name }} created (Draft)!
-            Version: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-            Validation: ${{ steps.validate.outputs.valid }}
-            Please review and publish manually.
-          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-

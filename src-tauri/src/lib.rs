@@ -144,6 +144,8 @@ pub fn run() {
             commands::ensure_workspace_initialized,
             commands::read_workspace_config,
             commands::write_workspace_config,
+            commands::read_library_metadata,
+            commands::write_library_metadata,
             // 文件系统命令
             commands::read_file,
             commands::write_file,
@@ -196,4 +198,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

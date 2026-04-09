@@ -32,12 +32,12 @@ export function AtmospherePreviewModal({
 
   return (
     <div
-      className="fixed inset-0 z-[10001] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[10001] flex items-center justify-center p-2 md:p-4"
       style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}
       onClick={onClose}
     >
       <div
-        className="rounded-lg border shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto"
+        className="rounded-lg border shadow-lg max-w-4xl w-full max-h-[calc(100dvh-1rem)] md:max-h-[90vh] overflow-y-auto"
         style={{
           backgroundColor: getThemeSurfaceColor(theme),
           borderColor: getThemeBorderColor(theme),
@@ -49,7 +49,7 @@ export function AtmospherePreviewModal({
       >
         {/* 标题栏 */}
         <div
-          className="flex items-center justify-between px-6 py-4 border-b sticky top-0"
+          className="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b sticky top-0"
           style={{ 
             borderColor: getThemeBorderColor(theme),
             backgroundColor: getThemeSurfaceColor(theme),
@@ -79,13 +79,13 @@ export function AtmospherePreviewModal({
         </div>
 
         {/* 主题预览列表 */}
-        <div className="p-6 space-y-6">
+        <div className="p-4 md:p-6 space-y-4 md:space-y-6">
           {themes.map((t) => {
             const isPreviewing = previewThemeId === t.id;
             return (
               <div
                 key={t.id}
-                className="rounded-lg border p-6 transition-all"
+                className="rounded-lg border p-4 md:p-6 transition-all"
                 style={{
                   backgroundColor: isPreviewing ? getThemeAccentBgColor(theme) + '20' : 'transparent',
                   borderColor: isPreviewing ? getThemeAccentColor(theme) : getThemeBorderColor(theme),
@@ -199,4 +199,3 @@ export function AtmospherePreviewModal({
     </div>
   );
 }
-

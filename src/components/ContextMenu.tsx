@@ -139,7 +139,7 @@ export function ContextMenu({
         { id: 'cut', label: '剪切', icon: Scissors },
         ...(hasClipboard ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),
         { id: 'rename', label: '重命名', icon: FileText },
-        { id: 'delete', label: '删除', icon: Trash2 },
+        { id: 'delete', label: '移至回收站', icon: Trash2 },
       ];
 
   // 编辑器块操作菜单项
