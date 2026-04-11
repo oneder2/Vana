@@ -2,7 +2,18 @@
 
 本文档说明如何构建、签名和发布应用。
 
-## Beta 分发（Desktop）
+## 分支与发布模型
+
+- `feat/*`：功能开发分支，只跑轻量 CI
+- `dev`：集成分支，触发测试构建
+- `main`：发布候选分支，触发发布前校验
+- `v*` tag：正式发布入口，创建 GitHub Release
+
+注意：
+- 合并到 `main` 不等于立即发版
+- 只有打在 `main` 提交上的 `v*` tag 才会触发正式发布
+
+## Desktop 构建
 
 ### 版本对齐
 
@@ -21,9 +32,13 @@ npm run tauri:build
 ```
 
 - **产物位置（常见）**：
+  - `src-tauri/target/release/vana`
   - `src-tauri/target/release/bundle/`（按平台生成 `deb/AppImage/msi/dmg` 等）
 
-### Beta 最小回归清单（建议发版前手动点一遍）
+> Linux 本机发包时不要显式追加 `--target x86_64-unknown-linux-gnu`。
+> 统一使用 `npm run tauri:build`，避免生成第二套 `src-tauri/target/x86_64-unknown-linux-gnu/` 目录并误用旧二进制。
+
+### 发布前最小回归清单（建议发版前手动点一遍）
 
 - **文件操作**：新建/重命名/删除（确认都落盘并能提交）
 - **同步链路**：配置远端 URL + PAT → `fetch` / `rebase` / `push`
@@ -37,7 +52,7 @@ npm run tauri:build
 
 ### 触发条件
 
-推送以 `v` 开头的 tag 时自动触发构建和发布：
+推送以 `v` 开头、且指向 `main` 提交的 tag 时自动触发构建和发布：
 
 ```bash
 git tag v0.5.2

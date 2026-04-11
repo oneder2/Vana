@@ -178,6 +178,7 @@ pub fn run() {
             // 远程仓库命令
             commands::add_remote,
             commands::get_remote_url,
+            commands::validate_remote_connection_command,
             commands::remove_remote,
             // 远程同步命令
             commands::fetch_from_remote,

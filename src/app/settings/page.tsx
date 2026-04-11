@@ -41,8 +41,10 @@ import {
   addRemote,
   getRemoteUrl,
   getWorkspacePath,
+  ensureWorkspaceInitialized,
   readWorkspaceConfig,
   writeWorkspaceConfig,
+  validateRemoteConnection,
   verifyRepository,
   getCurrentBranch,
   gitGc,
@@ -75,6 +77,27 @@ function StepBadge({
   );
 }
 
+function normalizeRemoteUrl(input: string): string {
+  const value = input.trim();
+
+  if (value.startsWith('git@github.com:')) {
+    const repoPath = value.slice('git@github.com:'.length).replace(/\.git$/, '');
+    return `https://github.com/${repoPath}.git`;
+  }
+
+  if (value.startsWith('ssh://git@github.com/')) {
+    const repoPath = value.slice('ssh://git@github.com/'.length).replace(/\.git$/, '');
+    return `https://github.com/${repoPath}.git`;
+  }
+
+  if (value.startsWith('https://github.com/')) {
+    const normalized = value.replace(/\/+$/, '');
+    return normalized.endsWith('.git') ? normalized : `${normalized}.git`;
+  }
+
+  return value;
+}
+
 export default function SettingsPage() {
   const { theme } = useTheme();
   const accentColor = getThemeAccentColor(theme);
@@ -97,6 +120,7 @@ export default function SettingsPage() {
   const [remoteInput, setRemoteInput] = useState('');
   const [workspacePath, setWorkspacePath] = useState('');
   const [remoteConfiguring, setRemoteConfiguring] = useState(false);
+  const [remoteChecking, setRemoteChecking] = useState(false);
   const [autoCommitInterval, setAutoCommitInterval] = useState(15);
   const [savingConfig, setSavingConfig] = useState(false);
   const [repoInfo, setRepoInfo] = useState<{ branch: string | null; commitCount: number; latestCommit: string | null }>({
@@ -104,6 +128,7 @@ export default function SettingsPage() {
     commitCount: 0,
     latestCommit: null,
   });
+  const [remoteCheck, setRemoteCheck] = useState<import('@/lib/api').RemoteConnectionStatus | null>(null);
 
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{ success: boolean; message: string } | null>(null);
@@ -116,6 +141,7 @@ export default function SettingsPage() {
       try {
         const mobile = await isMobile();
         setIsMobileDevice(mobile);
+        await ensureWorkspaceInitialized();
 
         const hasPat = await hasPatToken();
         setPatConfigured(hasPat);
@@ -132,6 +158,7 @@ export default function SettingsPage() {
         const remote = await getRemoteUrl(workspace, 'origin');
         setRemoteUrl(remote);
         setRemoteInput(remote || '');
+        setRemoteCheck(null);
 
         const [config, verification, branch] = await Promise.all([
           readWorkspaceConfig(),
@@ -167,6 +194,7 @@ export default function SettingsPage() {
       setPatConfigured(true);
       setDisplayPatToken(patToken);
       setPatToken('');
+      setRemoteCheck(null);
       setPatMessage({ type: 'success', text: 'PAT Token 已保存' });
       setShowQRCode(true);
     } catch (error) {
@@ -185,6 +213,7 @@ export default function SettingsPage() {
       setPatConfigured(false);
       setPatToken('');
       setDisplayPatToken('');
+      setRemoteCheck(null);
       setShowQRCode(false);
       setPatMessage({ type: 'success', text: 'PAT Token 已清除' });
     } catch (error) {
@@ -218,6 +247,7 @@ export default function SettingsPage() {
       await storePatToken(token);
       setPatConfigured(true);
       setDisplayPatToken(token);
+      setRemoteCheck(null);
       setShowScanner(false);
       setPatMessage({ type: 'success', text: 'PAT Token 已通过扫描导入' });
     } catch (error) {
@@ -241,13 +271,58 @@ export default function SettingsPage() {
 
     setRemoteConfiguring(true);
     try {
-      await addRemote(workspacePath, 'origin', remoteInput.trim());
-      setRemoteUrl(remoteInput.trim());
-      setSyncStatus({ success: true, message: '远程仓库配置成功' });
+      await ensureWorkspaceInitialized();
+      const normalizedRemoteUrl = normalizeRemoteUrl(remoteInput);
+      await addRemote(workspacePath, 'origin', normalizedRemoteUrl);
+      setRemoteInput(normalizedRemoteUrl);
+      setRemoteUrl(normalizedRemoteUrl);
+      setRemoteCheck(null);
+      setSyncStatus({
+        success: true,
+        message: normalizedRemoteUrl.startsWith('https://github.com/')
+          ? '远程仓库配置成功，将优先使用 HTTPS + PAT 同步'
+          : '远程仓库配置成功',
+      });
     } catch (error) {
       setSyncStatus({ success: false, message: `配置失败: ${error}` });
     } finally {
       setRemoteConfiguring(false);
+    }
+  };
+
+  const handleValidateRemote = async () => {
+    if (!workspacePath) {
+      setSyncStatus({ success: false, message: '无法获取工作区路径' });
+      return;
+    }
+
+    if (!remoteUrl && !remoteInput.trim()) {
+      setSyncStatus({ success: false, message: '请先配置远程仓库 URL' });
+      return;
+    }
+
+    setRemoteChecking(true);
+    setSyncStatus(null);
+
+    try {
+      await ensureWorkspaceInitialized();
+      const pat = await getPatToken();
+      const status = await validateRemoteConnection(
+        workspacePath,
+        'origin',
+        pat || undefined
+      );
+
+      setRemoteCheck(status);
+      setSyncStatus({
+        success: status.ok,
+        message: status.ok ? '远程连接检查通过' : status.message,
+      });
+    } catch (error) {
+      setRemoteCheck(null);
+      setSyncStatus({ success: false, message: `连接检查失败: ${error}` });
+    } finally {
+      setRemoteChecking(false);
     }
   };
 
@@ -298,6 +373,17 @@ export default function SettingsPage() {
 
     try {
       const pat = await getPatToken();
+      const validation = await validateRemoteConnection(workspacePath, 'origin', pat || undefined);
+      setRemoteCheck(validation);
+
+      if (!validation.ok) {
+        setSyncStatus({
+          success: false,
+          message: validation.hint ? `${validation.message} ${validation.hint}` : validation.message,
+        });
+        return;
+      }
+
       const result = await beginSync(workspacePath, 'origin', 'main', pat || undefined);
 
       if (result.success) {
@@ -494,7 +580,7 @@ export default function SettingsPage() {
                       </div>
 
                       {patConfigured ? (
-                        <div className="space-y-3">
+                    <div className="space-y-3">
                           <div
                             className="w-full px-4 py-3 rounded border flex items-center gap-2"
                             style={{
@@ -678,7 +764,10 @@ export default function SettingsPage() {
                   <div className="space-y-3">
                     <input
                       value={remoteInput}
-                      onChange={(e) => setRemoteInput(e.target.value)}
+                      onChange={(e) => {
+                        setRemoteInput(e.target.value);
+                        setRemoteCheck(null);
+                      }}
                       placeholder="https://github.com/your-org/your-repo.git"
                       className="w-full px-4 py-3 rounded border"
                       style={{
@@ -687,22 +776,67 @@ export default function SettingsPage() {
                         color: bodyTextColor,
                       }}
                     />
-                    <div className="flex flex-col items-start gap-2 md:flex-row md:items-center md:justify-between">
-                      <button
-                        onClick={handleConfigureRemote}
-                        disabled={remoteConfiguring}
-                        className="px-4 py-2 rounded border flex items-center gap-2 hover:opacity-80 transition-opacity disabled:opacity-50"
-                        style={{
-                          backgroundColor,
-                          borderColor,
-                          color: accentColor,
-                        }}
-                      >
-                        {remoteConfiguring ? <Loader size={16} className="animate-spin" /> : <Link2 size={16} />}
-                        <span>{remoteUrl ? '更新 origin' : '连接 origin'}</span>
-                      </button>
+                    <div className="space-y-1 text-xs" style={{ color: subduedText }}>
+                      <p>支持粘贴 GitHub 页面链接、HTTPS 或 SSH 地址；保存时会优先规范成适合 PAT 的 HTTPS 地址。</p>
+                      {remoteUrl?.startsWith('git@') || remoteUrl?.startsWith('ssh://') ? (
+                        <p style={{ color: 'rgb(245, 158, 11)' }}>
+                          当前 origin 使用 SSH。若你依赖 PAT 同步，建议改成 HTTPS 地址。
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:justify-between">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={handleConfigureRemote}
+                          disabled={remoteConfiguring}
+                          className="px-4 py-2 rounded border flex items-center gap-2 hover:opacity-80 transition-opacity disabled:opacity-50"
+                          style={{
+                            backgroundColor,
+                            borderColor,
+                            color: accentColor,
+                          }}
+                        >
+                          {remoteConfiguring ? <Loader size={16} className="animate-spin" /> : <Link2 size={16} />}
+                          <span>{remoteUrl ? '更新 origin' : '连接 origin'}</span>
+                        </button>
+                        <button
+                          onClick={handleValidateRemote}
+                          disabled={remoteChecking || (!remoteUrl && !remoteInput.trim())}
+                          className="px-4 py-2 rounded border flex items-center gap-2 hover:opacity-80 transition-opacity disabled:opacity-50"
+                          style={{
+                            backgroundColor,
+                            borderColor,
+                            color: accentColor,
+                          }}
+                        >
+                          {remoteChecking ? <Loader size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                          <span>{remoteChecking ? '检查中...' : '检查连接'}</span>
+                        </button>
+                      </div>
                       {remoteUrl && <span className="text-xs opacity-60">当前 origin 已配置</span>}
                     </div>
+                    {remoteCheck && (
+                      <div
+                        className={`rounded border px-4 py-3 text-sm ${
+                          remoteCheck.ok ? 'border-green-500' : 'border-amber-500'
+                        }`}
+                        style={{ backgroundColor }}
+                      >
+                        <div className="flex items-center gap-2">
+                          {remoteCheck.ok ? (
+                            <CheckCircle size={16} className="text-green-500" />
+                          ) : (
+                            <XCircle size={16} className="text-amber-500" />
+                          )}
+                          <span>{remoteCheck.message}</span>
+                        </div>
+                        <div className="mt-2 text-xs opacity-70">
+                          <p>认证方式: {remoteCheck.auth_mode}</p>
+                          {remoteCheck.remote_url && <p>当前地址: {remoteCheck.remote_url}</p>}
+                          {remoteCheck.hint && <p>建议: {remoteCheck.hint}</p>}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>

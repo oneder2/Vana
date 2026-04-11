@@ -5,7 +5,7 @@
 use crate::git::{
     abort_sync, commit_changes, continue_sync, get_commit_history, get_current_branch,
     get_repository_status, git_gc, init_repository, resolve_conflict, switch_to_branch,
-    verify_repository, ConflictResolutionItem, SyncResult,
+    validate_remote_connection, verify_repository, ConflictResolutionItem, RemoteConnectionStatus, SyncResult,
 };
 use crate::keychain::{store_pat_token, get_pat_token, remove_pat_token, has_pat_token};
 use crate::storage::{
@@ -703,6 +703,23 @@ pub fn add_remote(path: String, name: String, url: String) -> Result<(), String>
 pub fn get_remote_url(path: String, name: String) -> Result<Option<String>, String> {
     crate::git::get_remote_url(PathBuf::from(path).as_path(), &name)
         .map_err(|e| e.to_string())
+}
+
+/// 检查远程仓库连接与认证状态
+///
+/// 前端调用: `invoke('validate_remote_connection', { path: '...', remoteName: 'origin', patToken: '...' })`
+#[tauri::command]
+pub fn validate_remote_connection_command(
+    path: String,
+    remote_name: String,
+    pat_token: Option<String>,
+) -> Result<RemoteConnectionStatus, String> {
+    validate_remote_connection(
+        PathBuf::from(path).as_path(),
+        &remote_name,
+        pat_token.as_deref(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 删除远程仓库配置

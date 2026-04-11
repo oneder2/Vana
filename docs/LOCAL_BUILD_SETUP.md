@@ -137,6 +137,8 @@ Linux AppImage 额外说明：
 - 如果系统没有安装 `librsvg2-dev`，仓库内的 `scripts/pkgconfig/librsvg-2.0.pc` 会作为本地兜底
 - 因此本项目推荐通过 `npm run tauri:build` 或 `npm run tauri -- build --bundles appimage` 触发打包
   不建议直接裸跑 `npx tauri build`，否则可能绕过这个 Linux 本地修复
+- 在 Linux 本机也不要追加 `--target x86_64-unknown-linux-gnu`
+  否则会额外生成 `src-tauri/target/x86_64-unknown-linux-gnu/`，容易与标准输出 `src-tauri/target/release/` 混淆
 
 ## 当前建议
 

@@ -52,56 +52,85 @@ function QuickAccessSection({
   activePath,
   onSelect,
   emptyText,
-  actionLabel,
-  onAction,
+  defaultExpanded = false,
+  renderActions,
+  footer,
 }: {
   title: string;
   items: Array<{ path: string; subtitle?: string }>;
   activePath?: string;
   onSelect: (path: string) => void;
   emptyText: string;
-  actionLabel?: string;
-  onAction?: (path: string) => Promise<void>;
+  defaultExpanded?: boolean;
+  renderActions?: (path: string) => React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   const { theme } = useTheme();
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+
+  useEffect(() => {
+    if (activePath && items.some((item) => item.path === activePath)) {
+      setIsExpanded(true);
+    }
+  }, [activePath, items]);
 
   return (
-    <div className="mb-5">
-      <div className={`text-[10px] ${theme.uiFont} mb-2 opacity-40 uppercase tracking-widest`}>
-        {title}
-      </div>
-      {items.length === 0 ? (
-        <div className="text-[11px] opacity-40 px-2 py-1">{emptyText}</div>
-      ) : (
-        <div className="space-y-1">
-          {items.map((item) => (
-            <div
-              key={item.path}
-              className="flex items-center gap-2 rounded px-2 py-1.5"
-              style={{
-                backgroundColor: activePath === item.path ? getThemeAccentBgColor(theme) + '40' : 'transparent',
-              }}
-            >
-              <button
-                onClick={() => onSelect(item.path)}
-                className="flex-1 text-left min-w-0"
-                style={{ color: getThemeAccentColor(theme) }}
+    <div className="mb-3 rounded-xl border px-2 py-2" style={{ borderColor: getThemeBorderColor(theme) + '80' }}>
+      <button
+        type="button"
+        onClick={() => setIsExpanded((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-2 px-1 py-1 text-left"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <ChevronRight
+            size={12}
+            className={`shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+            style={{ color: getThemeAccentColor(theme) }}
+          />
+          <span className={`text-[10px] ${theme.uiFont} uppercase tracking-[0.24em] opacity-55`}>
+            {title}
+          </span>
+        </div>
+        <span
+          className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] opacity-60"
+          style={{ backgroundColor: getThemeAccentBgColor(theme) + '50', color: getThemeAccentColor(theme) }}
+        >
+          {items.length}
+        </span>
+      </button>
+      {isExpanded && (
+        items.length === 0 ? (
+          <div className="px-6 py-1 text-[11px] opacity-40">{emptyText}</div>
+        ) : (
+          <div className="mt-1 space-y-1">
+            {items.map((item) => (
+              <div
+                key={item.path}
+                className="flex items-start gap-2 rounded-lg px-2 py-1.5"
+                style={{
+                  backgroundColor: activePath === item.path ? getThemeAccentBgColor(theme) + '32' : 'transparent',
+                }}
               >
-                <div className="text-xs truncate">{removeEncSuffix(item.path.split('/').pop() || item.path)}</div>
-                {item.subtitle && <div className="text-[10px] opacity-50 truncate">{item.subtitle}</div>}
-              </button>
-              {actionLabel && onAction && (
                 <button
-                  onClick={() => onAction(item.path)}
-                  className="text-[10px] opacity-70 hover:opacity-100 shrink-0"
+                  onClick={() => onSelect(item.path)}
+                  className="min-w-0 flex-1 text-left"
                   style={{ color: getThemeAccentColor(theme) }}
                 >
-                  {actionLabel}
+                  <div className="truncate text-[12px] leading-5">
+                    {removeEncSuffix(item.path.split('/').pop() || item.path)}
+                  </div>
+                  {item.subtitle && <div className="truncate text-[10px] leading-4 opacity-45">{item.subtitle}</div>}
                 </button>
-              )}
-            </div>
-          ))}
-        </div>
+                {renderActions && (
+                  <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                    {renderActions(item.path)}
+                  </div>
+                )}
+              </div>
+            ))}
+            {footer}
+          </div>
+        )
       )}
     </div>
   );
@@ -481,6 +510,19 @@ export function Sidebar({
   const [focusedItemPath, setFocusedItemPath] = useState<string | null>(null);
   const focusedItemRef = useRef<string | null>(null);
   const visibleFiles = files.filter((item) => !archivedPaths.includes(item.path));
+  const favoriteSet = new Set(favoritePaths);
+  const archivedSet = new Set(archivedPaths);
+  const trashSet = new Set(trashEntries.map(({ path }) => path));
+  const favoriteItems = favoritePaths.slice(0, 6).map((path) => ({ path }));
+  const recentItems = recentPaths
+    .filter((path) => !favoriteSet.has(path) && !archivedSet.has(path) && !trashSet.has(path))
+    .slice(0, 6)
+    .map((path) => ({ path }));
+  const archivedItems = archivedPaths.slice(0, 6).map((path) => ({ path }));
+  const trashItems = trashEntries.slice(0, 6).map(({ path, entry }) => ({
+    path,
+    subtitle: entry.original_path ? `原路径: ${entry.original_path}` : '已移至回收站',
+  }));
 
   // 从缓存加载展开状态
   useEffect(() => {
@@ -1193,64 +1235,73 @@ export function Sidebar({
           <FileTreeSkeleton />
         ) : (
           <>
-            <QuickAccessSection
-              title="Favorites"
-              items={favoritePaths.map((path) => ({ path }))}
-              activePath={currentFilePath}
-              onSelect={(path) => onFileSelect?.(path)}
-              emptyText="暂无收藏文档"
-            />
-            <QuickAccessSection
-              title="Recent"
-              items={recentPaths.map((path) => ({ path }))}
-              activePath={currentFilePath}
-              onSelect={(path) => onFileSelect?.(path)}
-              emptyText="暂无最近文档"
-            />
-            <QuickAccessSection
-              title="Archived"
-              items={archivedPaths.map((path) => ({ path }))}
-              activePath={currentFilePath}
-              onSelect={(path) => onFileSelect?.(path)}
-              emptyText="暂无归档文档"
-            />
-            <QuickAccessSection
-              title="Trash"
-              items={trashEntries.map(({ path, entry }) => ({
-                path,
-                subtitle: entry.original_path ? `原路径: ${entry.original_path}` : '已移至回收站',
-              }))}
-              emptyText="回收站为空"
-              onSelect={() => {}}
-              actionLabel="恢复"
-              onAction={async (path) => {
-                await onRestoreFromTrash?.(path);
-                await refreshFiles();
-              }}
-            />
-            {trashEntries.length > 0 && onDeletePermanently && (
-              <div className="mb-5">
-                <div className={`text-[10px] ${theme.uiFont} mb-2 opacity-40 uppercase tracking-widest`}>
-                  Trash Cleanup
+            {(favoriteItems.length > 0 || recentItems.length > 0 || archivedItems.length > 0 || trashItems.length > 0) && (
+              <div className="mb-4">
+                <div className={`mb-2 px-1 text-[10px] ${theme.uiFont} tracking-[0.22em] opacity-35`}>
+                  快捷访问
                 </div>
-                <div className="space-y-1">
-                  {trashEntries.map(({ path }) => (
-                    <div key={`${path}-delete`} className="flex items-center gap-2 px-2 py-1">
-                      <div className="flex-1 text-[11px] opacity-50 truncate">
-                        {removeEncSuffix(path.split('/').pop() || path)}
-                      </div>
-                      <button
-                        onClick={async () => {
-                          await onDeletePermanently(path);
-                          await refreshFiles();
-                        }}
-                        className="text-[10px] text-red-500 opacity-80 hover:opacity-100"
-                      >
-                        永久删除
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                {favoriteItems.length > 0 && (
+                  <QuickAccessSection
+                    title="收藏"
+                    items={favoriteItems}
+                    activePath={currentFilePath}
+                    onSelect={(path) => onFileSelect?.(path)}
+                    emptyText="暂无收藏文档"
+                    defaultExpanded
+                  />
+                )}
+                {recentItems.length > 0 && (
+                  <QuickAccessSection
+                    title="最近"
+                    items={recentItems}
+                    activePath={currentFilePath}
+                    onSelect={(path) => onFileSelect?.(path)}
+                    emptyText="暂无最近文档"
+                  />
+                )}
+                {archivedItems.length > 0 && (
+                  <QuickAccessSection
+                    title="归档"
+                    items={archivedItems}
+                    activePath={currentFilePath}
+                    onSelect={(path) => onFileSelect?.(path)}
+                    emptyText="暂无归档文档"
+                  />
+                )}
+                {trashItems.length > 0 && (
+                  <QuickAccessSection
+                    title="回收站"
+                    items={trashItems}
+                    emptyText="回收站为空"
+                    onSelect={() => {}}
+                    renderActions={(path) => (
+                      <>
+                        <button
+                          onClick={async () => {
+                            await onRestoreFromTrash?.(path);
+                            await refreshFiles();
+                          }}
+                          className="text-[10px] opacity-70 hover:opacity-100"
+                          style={{ color: getThemeAccentColor(theme) }}
+                        >
+                          恢复
+                        </button>
+                        {onDeletePermanently && (
+                          <button
+                            onClick={async () => {
+                              await onDeletePermanently(path);
+                              await refreshFiles();
+                            }}
+                            className="text-[10px] opacity-70 hover:opacity-100"
+                            style={{ color: '#ef4444' }}
+                          >
+                            删除
+                          </button>
+                        )}
+                      </>
+                    )}
+                  />
+                )}
               </div>
             )}
             {visibleFiles.length === 0 ? (

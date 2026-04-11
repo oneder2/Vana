@@ -456,6 +456,33 @@ export async function removeRemote(path: string, name: string = 'origin'): Promi
   return await invoke<void>('remove_remote', { path, name });
 }
 
+export interface RemoteConnectionStatus {
+  ok: boolean;
+  remote_url: string | null;
+  auth_mode: string;
+  can_fetch: boolean;
+  message: string;
+  hint: string | null;
+}
+
+/**
+ * 检查远程仓库连接状态
+ * @param path 仓库路径
+ * @param remoteName 远程仓库名称（默认 "origin"）
+ * @param patToken PAT Token（可选）
+ */
+export async function validateRemoteConnection(
+  path: string,
+  remoteName: string = 'origin',
+  patToken?: string
+): Promise<RemoteConnectionStatus> {
+  return await invoke<RemoteConnectionStatus>('validate_remote_connection_command', {
+    path,
+    remoteName,
+    patToken,
+  });
+}
+
 // 同步结果接口
 export interface SyncConflictFile {
   path: string;

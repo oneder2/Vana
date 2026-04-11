@@ -77,7 +77,14 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-构建产物位置：`src-tauri/target/release/bundle/`（按平台生成 `deb/AppImage/msi/dmg` 等）
+构建产物位置：
+- 原生 Linux / 通用桌面构建二进制：`src-tauri/target/release/vana`
+- 安装包：`src-tauri/target/release/bundle/`（按平台生成 `deb/AppImage/msi/dmg` 等）
+
+注意：
+- 在 Linux 本机不要再额外传 `--target x86_64-unknown-linux-gnu`
+- 该参数会产生第二套 `src-tauri/target/x86_64-unknown-linux-gnu/` 目录，容易误打开旧产物
+- 当前仓库的 `scripts/run-tauri.mjs` 已自动把这个冗余 target 归一回标准输出目录
 
 ## 存储结构
 
@@ -165,8 +172,8 @@ App_Sandbox_Data/
    - Git GC 操作在移动端不可用，但不影响核心功能
 
 3. **认证支持**
-   - 支持 HTTPS + PAT token 认证
-   - 通过临时更新远程 URL 的方式实现认证
+  - 支持 HTTPS + PAT token 认证
+  - 通过内存凭证回调完成认证，不会把 PAT 写回远程 URL
 
 #### 参考资源
 

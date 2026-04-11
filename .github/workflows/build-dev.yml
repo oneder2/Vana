@@ -1,13 +1,10 @@
-name: Development Build
+name: Development Preview Build
 
 on:
   push:
     branches:
-      - main
-    paths-ignore:
-      - "**.md"
-      - ".gitignore"
-      - "LICENSE"
+      - dev
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -57,8 +54,8 @@ jobs:
       - name: Check Rust
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
-  build-linux:
-    name: Build Linux (Dev)
+  build-linux-preview:
+    name: Build Linux Preview
     runs-on: ubuntu-22.04
     needs: check
 
@@ -103,25 +100,16 @@ jobs:
             wget \
             file
 
-      - name: Set build metadata version
-        id: version
-        run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
-          BUILD_NUM="${{ github.run_number }}"
-          BUILD_VERSION="${BASE_VERSION}+build.${BUILD_NUM}"
-          echo "version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Build version: $BUILD_VERSION"
-
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
+      - name: Build Linux preview bundle
         run: npm run tauri:build
 
-      - name: Upload Linux artifacts
+      - name: Upload Linux preview artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-dev-artifacts
+          name: linux-preview-artifacts
           path: |
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.AppImage
@@ -129,69 +117,8 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  build-windows:
-    name: Build Windows (Dev)
-    runs-on: windows-latest
-    needs: check
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            C:\Users\runneradmin\.cargo\bin\
-            C:\Users\runneradmin\.cargo\registry\index\
-            C:\Users\runneradmin\.cargo\registry\cache\
-            C:\Users\runneradmin\.cargo\git\db\
-            src-tauri\target\
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Set build metadata version
-        id: version
-        shell: pwsh
-        run: |
-          $packageJson = Get-Content package.json | ConvertFrom-Json
-          $baseVersion = $packageJson.version
-          $buildNum = "${{ github.run_number }}"
-          $buildVersion = "$baseVersion+build.$buildNum"
-          $msiVersion = "$baseVersion.$buildNum"
-          "version=$buildVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "msi_version=$msiVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Build Tauri app
-        env:
-          TAURI_WINDOWS_MSI_VERSION: ${{ steps.version.outputs.msi_version }}
-        run: npm run tauri:build
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-dev-artifacts
-          path: |
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.msi
-          if-no-files-found: error
-          retention-days: 7
-
-  build-android:
-    name: Build Android (Dev)
+  build-android-preview:
+    name: Build Android Preview
     runs-on: ubuntu-22.04
     needs: check
 
@@ -242,18 +169,6 @@ jobs:
           fi
 
           TOOLCHAIN_PATH="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          if [ -d "$TOOLCHAIN_PATH" ]; then
-            cd "$TOOLCHAIN_PATH"
-            sudo ln -sf llvm-ranlib aarch64-linux-android-ranlib || true
-            sudo ln -sf llvm-ar aarch64-linux-android-ar || true
-            sudo ln -sf llvm-ranlib armv7a-linux-androideabi-ranlib || true
-            sudo ln -sf llvm-ar armv7a-linux-androideabi-ar || true
-            sudo ln -sf llvm-ranlib i686-linux-android-ranlib || true
-            sudo ln -sf llvm-ar i686-linux-android-ar || true
-            sudo ln -sf llvm-ranlib x86_64-linux-android-ranlib || true
-            sudo ln -sf llvm-ar x86_64-linux-android-ar || true
-          fi
-
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
@@ -274,55 +189,23 @@ jobs:
       - name: Initialize Android project
         run: |
           if [ ! -d "src-tauri/gen/android" ]; then
-            npx tauri android init
+            npx tauri android init --ci --skip-targets-install
           fi
           test -f src-tauri/gen/android/app/build.gradle.kts
 
-      - name: Validate Android signing secrets
-        run: |
-          test -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}"
-          test -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-          test -n "${{ secrets.ANDROID_KEY_ALIAS }}"
-          test -n "${{ secrets.ANDROID_KEY_PASSWORD }}"
-
-      - name: Setup Android keystore
-        run: |
-          mkdir -p android-keystore
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-keystore/keystore.jks
-          test -f android-keystore/keystore.jks
-
-          mkdir -p src-tauri/gen/android/app
-          cat > src-tauri/gen/android/app/keystore.properties << EOF
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          storeFile=$PWD/android-keystore/keystore.jks
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          EOF
-
-      - name: Configure Android signing
-        run: |
-          python3 scripts/configure-android-signing.py
-          grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts
-
-      - name: Build Android APK
+      - name: Build Android debug APK
         run: |
           export AR=aarch64-linux-android-ar
           export RANLIB=aarch64-linux-android-ranlib
-          npx tauri android build --target aarch64 --verbose
+          npx tauri android build --debug --target aarch64 --verbose
           find src-tauri/gen/android -type f \( -name "*.apk" -o -name "*.aab" \) | head -20
 
-      - name: Upload Android artifacts
+      - name: Upload Android preview artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-dev-artifacts
+          name: android-preview-artifacts
           path: |
             src-tauri/gen/android/**/*.apk
             src-tauri/gen/android/**/*.aab
           if-no-files-found: error
           retention-days: 7
-
-      - name: Cleanup keystore
-        if: always()
-        run: |
-          rm -rf android-keystore
-          rm -f src-tauri/gen/android/app/keystore.properties

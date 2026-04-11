@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
-use git2::{Commit, Repository, Signature};
+use git2::{Commit, Direction, Repository, Signature};
 
 /// 验证模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -198,6 +198,64 @@ pub struct GitStatus {
     pub is_clean: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RemoteConnectionStatus {
+    pub ok: bool,
+    pub remote_url: Option<String>,
+    pub auth_mode: String,
+    pub can_fetch: bool,
+    pub message: String,
+    pub hint: Option<String>,
+}
+
+fn map_remote_error_message(error: &str, remote_url: Option<&str>, has_pat: bool) -> (String, Option<String>) {
+    let lower = error.to_lowercase();
+    let is_https = remote_url.map(|url| url.starts_with("https://")).unwrap_or(false);
+    let is_ssh = remote_url
+        .map(|url| url.starts_with("git@") || url.starts_with("ssh://"))
+        .unwrap_or(false);
+
+    if lower.contains("authentication") || lower.contains("credentials") || lower.contains("auth") {
+        if is_https && !has_pat {
+            return (
+                "远程仓库需要认证，但当前未提供 PAT。".to_string(),
+                Some("请保存具有仓库访问权限的 GitHub PAT，再重新检查连接。".to_string()),
+            );
+        }
+
+        if is_ssh {
+            return (
+                "当前远程仓库使用 SSH，但本地 SSH 凭据不可用或未通过验证。".to_string(),
+                Some("若你主要使用 PAT，同步地址建议改成 https://github.com/<owner>/<repo>.git。".to_string()),
+            );
+        }
+
+        return (
+            "远程仓库认证失败。".to_string(),
+            Some("请检查 PAT 是否有效、是否具备目标仓库权限，以及仓库地址是否正确。".to_string()),
+        );
+    }
+
+    if lower.contains("not found") || lower.contains("repository") && lower.contains("not") {
+        return (
+            "找不到远程仓库。".to_string(),
+            Some("请检查 owner/repo 是否正确，以及当前 PAT 是否有访问该私有仓库的权限。".to_string()),
+        );
+    }
+
+    if lower.contains("could not resolve host") || lower.contains("failed to connect") || lower.contains("timed out") {
+        return (
+            "无法连接到远程仓库服务器。".to_string(),
+            Some("请检查当前网络、代理设置，或稍后重试。".to_string()),
+        );
+    }
+
+    (
+        format!("远程连接检查失败: {}", error),
+        Some("请确认远程地址、认证方式和网络环境都正确。".to_string()),
+    )
+}
+
 /// 清理索引锁文件
 fn cleanup_index_lock(repo_path: &Path) -> Result<()> {
     let lock_path = repo_path.join(".git/index.lock");
@@ -313,6 +371,115 @@ pub fn get_remote_url(repo_path: &Path, name: &str) -> Result<Option<String>> {
     }
 }
 
+pub fn validate_remote_connection(
+    repo_path: &Path,
+    remote_name: &str,
+    pat_token: Option<&str>,
+) -> Result<RemoteConnectionStatus> {
+    let repo = Repository::open(repo_path)
+        .context("无法打开 Git 仓库")?;
+
+    let mut remote = repo.find_remote(remote_name)
+        .context(format!("无法找到远程仓库: {}", remote_name))?;
+
+    let remote_url = remote.url().map(|url| url.to_string());
+    let auth_mode = match remote_url.as_deref() {
+        Some(url) if url.starts_with("https://") => "https",
+        Some(url) if url.starts_with("git@") || url.starts_with("ssh://") => "ssh",
+        Some(_) => "custom",
+        None => "unknown",
+    }
+    .to_string();
+
+    let pat_token_owned = pat_token.map(str::to_string);
+    let remote_url_for_error = remote_url.clone();
+
+    let mut callbacks = git2::RemoteCallbacks::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        callbacks.certificate_check(|_cert, _host| {
+            Ok(git2::CertificateCheckStatus::CertificateOk)
+        });
+    }
+
+    if let Ok(mut config) = repo.config() {
+        if let Ok(config_snapshot) = config.snapshot() {
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                if let Some(pat) = pat_token_owned.as_deref() {
+                    if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        return git2::Cred::userpass_plaintext(
+                            username_from_url.unwrap_or("x-access-token"),
+                            pat,
+                        );
+                    }
+                }
+
+                git2::Cred::credential_helper(&config_snapshot, url, username_from_url)
+            });
+        } else {
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                if let Some(pat) = pat_token_owned.as_deref() {
+                    if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        return git2::Cred::userpass_plaintext(
+                            username_from_url.unwrap_or("x-access-token"),
+                            pat,
+                        );
+                    }
+                }
+
+                Err(git2::Error::from_str("无法获取远程认证凭据"))
+            });
+        }
+    } else {
+        callbacks.credentials(move |url, username_from_url, allowed_types| {
+            if let Some(pat) = pat_token_owned.as_deref() {
+                if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                    return git2::Cred::userpass_plaintext(
+                        username_from_url.unwrap_or("x-access-token"),
+                        pat,
+                    );
+                }
+            }
+
+            Err(git2::Error::from_str("无法获取远程认证凭据"))
+        });
+    }
+
+    let connection_result = remote.connect_auth(Direction::Fetch, Some(callbacks), None);
+
+    match connection_result {
+        Ok(connection) => {
+            drop(connection);
+            Ok(RemoteConnectionStatus {
+                ok: true,
+                remote_url,
+                auth_mode,
+                can_fetch: true,
+                message: "远程仓库可访问，认证通过。".to_string(),
+                hint: None,
+            })
+        }
+        Err(error) => {
+            let error_text = error.message().to_string();
+            let (message, hint) = map_remote_error_message(
+                &error_text,
+                remote_url_for_error.as_deref(),
+                pat_token.is_some(),
+            );
+
+            Ok(RemoteConnectionStatus {
+                ok: false,
+                remote_url,
+                auth_mode,
+                can_fetch: false,
+                message,
+                hint,
+            })
+        }
+    }
+}
+
 /// 从远程获取更新
 pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<&str>) -> Result<()> {
     eprintln!("[GitOperation] fetch_from_remote: 开始执行 fetch（使用 git2-rs API），remote_name: {}, repo_path: {:?}", remote_name, repo_path);
@@ -322,41 +489,7 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
 
     let mut remote = repo.find_remote(remote_name)
         .context(format!("无法找到远程仓库: {}", remote_name))?;
-
-    // 如果提供了 PAT token，临时更新远程 URL
-    if let Some(pat) = pat_token {
-        let url = remote.url()
-            .ok_or_else(|| anyhow::anyhow!("远程 URL 为空"))?;
-
-        if url.starts_with("https://") {
-            let url_without_protocol = url.strip_prefix("https://").unwrap_or(url);
-            let authenticated_url = if let Some(at_pos) = url_without_protocol.find('@') {
-                let path_after_at = &url_without_protocol[at_pos + 1..];
-                format!("https://{}@{}", pat, path_after_at)
-            } else {
-                format!("https://{}@{}", pat, url_without_protocol)
-            };
-
-            eprintln!("[GitOperation] fetch_from_remote: 临时更新远程 URL 以包含 PAT 认证");
-            // 先删除再创建以更新 URL
-            // 注意：删除重建会导致 fetch 配置累积，需要在重建后清理
-            repo.remote_delete(remote_name)?;
-            remote = repo.remote(remote_name, &authenticated_url)?;
-
-            // 重建后，清理可能累积的 fetch 配置，只保留一个
-            // 这可以防止 multivar 错误
-            if let Ok(mut config) = repo.config() {
-                let fetch_key = format!("remote.{}.fetch", remote_name);
-                // 删除所有旧的 fetch 配置
-                let _ = config.remove_multivar(&fetch_key, ".*");
-                // 添加单个 fetch 配置
-                let _ = config.set_str(&fetch_key, &format!("+refs/heads/*:refs/remotes/{}/*", remote_name));
-                // 重新获取 remote 对象
-                remote = repo.find_remote(remote_name)
-                    .context(format!("无法重新获取远程仓库: {}", remote_name))?;
-            }
-        }
-    }
+    let remote_url = remote.url().map(|url| url.to_string());
 
     // 执行 fetch
     // 使用 snapshot() 来处理 multivar（重复配置项）问题
@@ -375,20 +508,50 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
         });
     }
 
-    // 尝试使用 snapshot() 来避免 multivar 错误
-    // 如果失败，则跳过 credential helper（依赖 URL 中的 PAT）
+    let pat_token_owned = pat_token.map(str::to_string);
+
+    // 优先使用内存中的 PAT 凭证，避免把 token 写入远程 URL 或 git config
     if let Ok(mut config) = repo.config() {
         if let Ok(config_snapshot) = config.snapshot() {
-            callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-                git2::Cred::credential_helper(&config_snapshot, _url, username_from_url)
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                if let Some(pat) = pat_token_owned.as_deref() {
+                    if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        return git2::Cred::userpass_plaintext(
+                            username_from_url.unwrap_or("x-access-token"),
+                            pat,
+                        );
+                    }
+                }
+
+                git2::Cred::credential_helper(&config_snapshot, url, username_from_url)
             });
         } else {
-            eprintln!("[GitOperation] fetch_from_remote: 警告 - 无法创建配置快照（可能存在 multivar），将跳过 credential helper");
-            eprintln!("[GitOperation] fetch_from_remote: 依赖 URL 中的 PAT 认证");
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                if let Some(pat) = pat_token_owned.as_deref() {
+                    if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        return git2::Cred::userpass_plaintext(
+                            username_from_url.unwrap_or("x-access-token"),
+                            pat,
+                        );
+                    }
+                }
+
+                Err(git2::Error::from_str("无法获取远程认证凭据"))
+            });
         }
     } else {
-        eprintln!("[GitOperation] fetch_from_remote: 警告 - 无法读取 Git 配置（可能存在 multivar），将跳过 credential helper");
-        eprintln!("[GitOperation] fetch_from_remote: 依赖 URL 中的 PAT 认证");
+        callbacks.credentials(move |url, username_from_url, allowed_types| {
+            if let Some(pat) = pat_token_owned.as_deref() {
+                if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                    return git2::Cred::userpass_plaintext(
+                        username_from_url.unwrap_or("x-access-token"),
+                        pat,
+                    );
+                }
+            }
+
+            Err(git2::Error::from_str("无法获取远程认证凭据"))
+        });
     }
 
     let mut fetch_options = git2::FetchOptions::new();
@@ -399,7 +562,11 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
     remote.fetch(&[&refspec], Some(&mut fetch_options), None)
         .context("fetch 失败")?;
 
-    eprintln!("[GitOperation] fetch_from_remote: fetch 完成（使用 git2-rs API）");
+    if let Some(url) = remote_url {
+        eprintln!("[GitOperation] fetch_from_remote: fetch 完成，origin 保持为 {}", url);
+    } else {
+        eprintln!("[GitOperation] fetch_from_remote: fetch 完成（使用 git2-rs API）");
+    }
     Ok(())
 }
 
@@ -412,41 +579,7 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
     
     let mut remote = repo.find_remote(remote_name)
         .context(format!("无法找到远程仓库: {}", remote_name))?;
-    
-    // 如果提供了 PAT token，临时更新远程 URL
-    if let Some(pat) = pat_token {
-        let url = remote.url()
-            .ok_or_else(|| anyhow::anyhow!("远程 URL 为空"))?;
-        
-        if url.starts_with("https://") {
-            let url_without_protocol = url.strip_prefix("https://").unwrap_or(url);
-            let authenticated_url = if let Some(at_pos) = url_without_protocol.find('@') {
-                let path_after_at = &url_without_protocol[at_pos + 1..];
-                format!("https://{}@{}", pat, path_after_at)
-            } else {
-                format!("https://{}@{}", pat, url_without_protocol)
-            };
-            
-            eprintln!("[GitOperation] push_to_remote: 临时更新远程 URL 以包含 PAT 认证");
-            // 先删除再创建以更新 URL
-            // 注意：删除重建会导致 fetch 配置累积，需要在重建后清理
-            repo.remote_delete(remote_name)?;
-            remote = repo.remote(remote_name, &authenticated_url)?;
-            
-            // 重建后，清理可能累积的 fetch 配置，只保留一个
-            // 这可以防止 multivar 错误
-            if let Ok(mut config) = repo.config() {
-                let fetch_key = format!("remote.{}.fetch", remote_name);
-                // 删除所有旧的 fetch 配置
-                let _ = config.remove_multivar(&fetch_key, ".*");
-                // 添加单个 fetch 配置
-                let _ = config.set_str(&fetch_key, &format!("+refs/heads/*:refs/remotes/{}/*", remote_name));
-                // 重新获取 remote 对象
-                remote = repo.find_remote(remote_name)
-                    .context(format!("无法重新获取远程仓库: {}", remote_name))?;
-            }
-        }
-    }
+    let remote_url = remote.url().map(|url| url.to_string());
     
     // 构建 refspec
     let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
@@ -468,20 +601,50 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
         });
     }
 
-    // 尝试使用 snapshot() 来避免 multivar 错误
-    // 如果失败，则跳过 credential helper（依赖 URL 中的 PAT）
+    let pat_token_owned = pat_token.map(str::to_string);
+
+    // 优先使用内存中的 PAT 凭证，避免把 token 写入远程 URL 或 git config
     if let Ok(mut config) = repo.config() {
         if let Ok(config_snapshot) = config.snapshot() {
-            callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-                git2::Cred::credential_helper(&config_snapshot, _url, username_from_url)
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                if let Some(pat) = pat_token_owned.as_deref() {
+                    if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        return git2::Cred::userpass_plaintext(
+                            username_from_url.unwrap_or("x-access-token"),
+                            pat,
+                        );
+                    }
+                }
+
+                git2::Cred::credential_helper(&config_snapshot, url, username_from_url)
             });
         } else {
-            eprintln!("[GitOperation] push_to_remote: 警告 - 无法创建配置快照（可能存在 multivar），将跳过 credential helper");
-            eprintln!("[GitOperation] push_to_remote: 依赖 URL 中的 PAT 认证");
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                if let Some(pat) = pat_token_owned.as_deref() {
+                    if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                        return git2::Cred::userpass_plaintext(
+                            username_from_url.unwrap_or("x-access-token"),
+                            pat,
+                        );
+                    }
+                }
+
+                Err(git2::Error::from_str("无法获取远程认证凭据"))
+            });
         }
     } else {
-        eprintln!("[GitOperation] push_to_remote: 警告 - 无法读取 Git 配置（可能存在 multivar），将跳过 credential helper");
-        eprintln!("[GitOperation] push_to_remote: 依赖 URL 中的 PAT 认证");
+        callbacks.credentials(move |url, username_from_url, allowed_types| {
+            if let Some(pat) = pat_token_owned.as_deref() {
+                if url.starts_with("https://") && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                    return git2::Cred::userpass_plaintext(
+                        username_from_url.unwrap_or("x-access-token"),
+                        pat,
+                    );
+                }
+            }
+
+            Err(git2::Error::from_str("无法获取远程认证凭据"))
+        });
     }
 
     let mut push_options = git2::PushOptions::new();
@@ -490,7 +653,11 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
     remote.push(&[&refspec], Some(&mut push_options))
         .context("push 失败")?;
 
-    eprintln!("[GitOperation] push_to_remote: push 完成（使用 git2-rs API）");
+    if let Some(url) = remote_url {
+        eprintln!("[GitOperation] push_to_remote: push 完成，origin 保持为 {}", url);
+    } else {
+        eprintln!("[GitOperation] push_to_remote: push 完成（使用 git2-rs API）");
+    }
     Ok(())
 }
 
@@ -1400,4 +1567,3 @@ pub fn remove_remote(repo_path: &Path, name: &str) -> Result<()> {
 // NOTE:
 // 旧的 `handle_sync_conflict`（自动创建冲突分支 + hard reset）已废弃。
 // 当前冲突处理走 begin/resolve/continue 的交互式 rebase 流程（返回结构化冲突文件列表给前端弹窗）。
-

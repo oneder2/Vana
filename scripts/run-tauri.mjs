@@ -5,6 +5,7 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const localPkgConfig = path.join(repoRoot, "scripts", "pkgconfig");
 const isLinux = process.platform === "linux";
+const nativeLinuxTarget = process.arch === "x64" ? "x86_64-unknown-linux-gnu" : null;
 const tauriConfigPath = path.join(repoRoot, "src-tauri", "tauri.conf.json");
 
 const env = { ...process.env };
@@ -14,7 +15,40 @@ if (isLinux) {
     : localPkgConfig;
 }
 
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+
+function normalizeArgs(args) {
+  if (!isLinux || !nativeLinuxTarget) {
+    return args;
+  }
+
+  const normalized = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const nextArg = args[index + 1];
+
+    if (arg === "--target" && nextArg === nativeLinuxTarget) {
+      console.warn(
+        `[run-tauri] 检测到本机 Linux 原生 target (${nativeLinuxTarget})，已移除冗余 --target，统一输出到 src-tauri/target/release`
+      );
+      index += 1;
+      continue;
+    }
+
+    if (arg === `--target=${nativeLinuxTarget}`) {
+      console.warn(
+        `[run-tauri] 检测到本机 Linux 原生 target (${nativeLinuxTarget})，已移除冗余 --target，统一输出到 src-tauri/target/release`
+      );
+      continue;
+    }
+
+    normalized.push(arg);
+  }
+
+  return normalized;
+}
+
+const args = normalizeArgs(rawArgs);
 const appImageRequested = isLinux && args.includes("build") && args.includes("appimage");
 
 function getExpectedAppImagePath() {

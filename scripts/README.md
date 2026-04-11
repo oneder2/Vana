@@ -151,18 +151,24 @@ graph TD
 
 **关键步骤**:
 1. **Validate Project**: 先执行 `npm run lint`、`npm run build` 和 `cargo check`
-2. **Sync release version**: 运行 `sync-version.mjs` 对齐前端、Rust 和 Tauri 版本
-3. **Configure Android signing**: 运行 `configure-android-signing.py`
-4. **Build artifacts**: 分平台构建 Linux / Windows / Android
+2. **Ensure main tag**: 校验当前 tag 对应的提交来自 `origin/main`
+3. **Sync release version**: 运行 `sync-version.mjs` 对齐前端、Rust 和 Tauri 版本
+4. **Configure Android signing**: 运行 `configure-android-signing.py`
+5. **Build artifacts**: 分平台构建 Linux / Windows / Android
+6. **Create Draft Release**: 上传产物到 GitHub Draft Release
 
 ---
 
-### Dev 构建流程 (`build-dev.yml`)
+### 分支工作流
 
-与 Release 流程类似，但：
-- 版本号添加构建元数据: `0.5.2+build.123`
-- Artifacts 保留 7 天（Release 保留 30 天）
-- 可选的 Slack 通知
+- `ci.yml`
+  用于 `feat/*`、`fix/*`、`refactor/*`、`chore/*` 和指向 `dev/main` 的 PR，只做轻量校验
+
+- `build-dev.yml`
+  用于 `dev` 分支，输出 Linux 预览包和 Android Debug 预览包，保留 7 天
+
+- `main-verify.yml`
+  用于 `main` 分支，执行发布前校验并输出 Linux 候选包，保留 14 天
 
 ---
 

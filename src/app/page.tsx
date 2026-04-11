@@ -13,6 +13,7 @@ import {
   Shield,
   Layers,
   Database,
+  MoreHorizontal,
   X,
   Archive,
   Clock3,
@@ -130,6 +131,7 @@ function MainApp() {
   const [showAtmospherePreview, setShowAtmospherePreview] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showHistoryTimeline, setShowHistoryTimeline] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [libraryMetadata, setLibraryMetadata] = useState<LibraryMetadata>({ entries: {} });
   const [workspaceInfo, setWorkspaceInfo] = useState<{
     branch: string | null;
@@ -141,6 +143,7 @@ function MainApp() {
     latestCommit: null,
   });
   const fileImportRef = useRef<HTMLInputElement | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -169,6 +172,17 @@ function MainApp() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!moreMenuRef.current?.contains(event.target as Node)) {
+        setShowMoreMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
 
   // 窗口状态记忆（集成 Tauri 窗口 API）
@@ -765,6 +779,12 @@ function MainApp() {
   const currentLibraryEntry = currentRelativePath
     ? getLibraryEntry(libraryMetadata, currentRelativePath)
     : null;
+  const currentFileName = currentFilePath
+    ? currentFilePath.split('/').pop()?.replace('.json', '') || 'Untitled'
+    : 'No Document Selected';
+  const currentFileLocation = currentFilePath
+    ? toRelativeWorkspacePath(workspacePath, currentFilePath).split('/').slice(0, -1).join('/') || 'Workspace Root'
+    : 'Select a file from the sidebar';
 
   const commandPaletteItems: CommandPaletteItem[] = useMemo(() => {
     const items: CommandPaletteItem[] = [
@@ -849,7 +869,7 @@ function MainApp() {
       
       {/* 顶部导航栏 (The Deck) */}
       <header
-        className={`h-14 flex items-center justify-between px-4 z-50 border-b transition-transform duration-300`}
+        className={`h-16 flex items-center justify-between px-4 z-50 border-b transition-transform duration-300`}
         style={{
           backgroundColor: getThemeSurfaceColor(theme),
           borderColor: getThemeBorderColor(theme),
@@ -862,16 +882,33 @@ function MainApp() {
           >
             <Menu size={20} style={{ color: getThemeAccentColor(theme) }} />
           </button>
-          <div
-            className={`flex items-center gap-1 text-[10px] ${theme.uiFont} uppercase tracking-tighter opacity-60 min-w-0`}
-          >
-            <span>STYX-Ω</span>
-            <ChevronRight size={10} />
-            <span className={`${theme.accent} truncate`}>Unit_01</span>
+          <div className="min-w-0">
+            <div
+              className={`flex items-center gap-1 text-[10px] ${theme.uiFont} uppercase tracking-[0.18em] opacity-50 min-w-0`}
+            >
+              <span>STYX-Ω</span>
+              <ChevronRight size={10} />
+              <span className="truncate">{currentFileLocation}</span>
+            </div>
+            <div className="flex items-center gap-2 min-w-0 mt-0.5">
+              <span
+                className="truncate text-sm"
+                style={{ color: getThemeAccentColor(theme) }}
+                title={currentFileName}
+              >
+                {currentFileName}
+              </span>
+              {currentLibraryEntry?.favorite && (
+                <span className="hidden sm:inline text-[10px] uppercase opacity-50">Favorite</span>
+              )}
+              {currentLibraryEntry?.archived_at && (
+                <span className="hidden sm:inline text-[10px] uppercase opacity-50">Archived</span>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-2 max-w-[60vw] overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1 sm:gap-2 max-w-[62vw] overflow-x-auto no-scrollbar">
           {/* 移动端：块插入按钮 */}
           <button
             onClick={() => setShowBlockSelector(true)}
@@ -1028,32 +1065,6 @@ function MainApp() {
               } ${theme.glow}`}
             ></div>
           </div>
-          {/* 氛围协议预览按钮 */}
-          <button
-            onClick={() => setShowAtmospherePreview(true)}
-            className="hidden sm:block p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-            style={{ color: getThemeAccentColor(theme) }}
-            title="氛围协议预览"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              {/* 氛围协议图标：多个重叠的圆形，表示氛围/环境 */}
-              <circle cx="12" cy="12" r="3" opacity="0.6" />
-              <circle cx="12" cy="12" r="6" opacity="0.4" />
-              <circle cx="12" cy="12" r="9" opacity="0.2" />
-              {/* 中心点表示核心 */}
-              <circle cx="12" cy="12" r="1" />
-            </svg>
-          </button>
-
           {/* 搜索按钮 */}
           <button
             onClick={() => setShowSearchModal(true)}
@@ -1073,51 +1084,15 @@ function MainApp() {
             <Command size={18} />
           </button>
 
-          <button
-            onClick={() => setShowHistoryTimeline(true)}
-            className="p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-            style={{ color: getThemeAccentColor(theme) }}
-            title="历史时间线"
-          >
-            <History size={18} />
-          </button>
-
-          <button
-            onClick={triggerMarkdownImport}
-            className="hidden sm:block p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-            style={{ color: getThemeAccentColor(theme) }}
-            title="导入 Markdown"
-          >
-            <Import size={18} />
-          </button>
-
           {currentFilePath && (
-            <>
-              <button
-                onClick={() => handleToggleFavorite(currentFilePath)}
-                className="p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-                style={{ color: getThemeAccentColor(theme) }}
-                title={currentLibraryEntry?.favorite ? '取消收藏' : '收藏'}
-              >
-                <Star size={18} fill={currentLibraryEntry?.favorite ? 'currentColor' : 'none'} />
-              </button>
-              <button
-                onClick={() => handleToggleArchive(currentFilePath)}
-                className="hidden sm:block p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-                style={{ color: getThemeAccentColor(theme) }}
-                title={currentLibraryEntry?.archived_at ? '取消归档' : '归档'}
-              >
-                <Archive size={18} />
-              </button>
-              <button
-                onClick={() => handleMoveToTrash(currentFilePath)}
-                className="hidden sm:block p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-                style={{ color: getThemeAccentColor(theme) }}
-                title="移至回收站"
-              >
-                <Trash2 size={18} />
-              </button>
-            </>
+            <button
+              onClick={() => handleToggleFavorite(currentFilePath)}
+              className="p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
+              style={{ color: getThemeAccentColor(theme) }}
+              title={currentLibraryEntry?.favorite ? '取消收藏' : '收藏'}
+            >
+              <Star size={18} fill={currentLibraryEntry?.favorite ? 'currentColor' : 'none'} />
+            </button>
           )}
 
           {/* 导出按钮 */}
@@ -1199,46 +1174,106 @@ function MainApp() {
             </div>
           )}
 
-          {/* 提交调试按钮 */}
-          {currentFilePath && (
+          <div className="relative shrink-0" ref={moreMenuRef}>
             <button
-              onClick={async () => {
-                console.log('[Debug Commit] 手动触发提交');
-                try {
-                  if (!workspacePath) {
-                    console.error('[Debug Commit] workspacePath 为空');
-                    toast.error('工作区路径为空');
-                    return;
-                  }
-                  
-                  // 全局提交：所有 commit 都在工作区根目录执行，等价于 `git add . && git commit -m "[message]"`
-                  // 固定使用 workspacePath 作为 repo path，确保提交所有文件的变更
-                  const commitPath = workspacePath;
-                  
-                  console.log('[Debug Commit] 提交路径（工作区根目录）:', commitPath);
-                  console.log('[Debug Commit] 当前文件路径:', currentFilePath);
-                  console.log('[Debug Commit] 工作区路径:', workspacePath);
-                  
-                  // 强制触发提交（不检查 hasUnsavedChanges）
-                  await commitChanges(commitPath, 'manual_debug_commit');
-                  console.log('[Debug Commit] 提交成功');
-                  toast.success('提交成功！请查看控制台日志。');
-                } catch (error) {
-                  console.error('[Debug Commit] 提交失败:', error);
-                  toast.error(`提交失败: ${error instanceof Error ? error.message : String(error)}`);
-                }
-              }}
-              className="hidden sm:block p-1.5 border rounded hover:opacity-80 transition-opacity shrink-0"
-              style={{ 
-                color: getThemeAccentColor(theme),
-                borderColor: getThemeBorderColor(theme),
-                backgroundColor: getThemeSurfaceColor(theme),
-              }}
-              title="手动提交（调试）"
+              onClick={() => setShowMoreMenu((open) => !open)}
+              className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
+              style={{ color: getThemeAccentColor(theme) }}
+              title="更多操作"
             >
-              <GitCommit size={16} />
+              <MoreHorizontal size={18} />
             </button>
-          )}
+            {showMoreMenu && (
+              <div
+                className="absolute right-0 top-full mt-2 w-52 rounded border shadow-lg z-50 p-1"
+                style={{
+                  backgroundColor: getThemeSurfaceColor(theme),
+                  borderColor: getThemeBorderColor(theme),
+                }}
+              >
+                <button
+                  onClick={() => {
+                    setShowHistoryTimeline(true);
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                  style={{ color: getThemeAccentColor(theme) }}
+                >
+                  <History size={16} />
+                  <span>历史时间线</span>
+                </button>
+                <button
+                  onClick={() => {
+                    triggerMarkdownImport();
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                  style={{ color: getThemeAccentColor(theme) }}
+                >
+                  <Import size={16} />
+                  <span>导入 Markdown</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAtmospherePreview(true);
+                    setShowMoreMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                  style={{ color: getThemeAccentColor(theme) }}
+                >
+                  <Clock3 size={16} />
+                  <span>氛围预览</span>
+                </button>
+                {currentFilePath && (
+                  <>
+                    <button
+                      onClick={() => {
+                        handleToggleArchive(currentFilePath);
+                        setShowMoreMenu(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      <Archive size={16} />
+                      <span>{currentLibraryEntry?.archived_at ? '取消归档' : '归档文档'}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleMoveToTrash(currentFilePath);
+                        setShowMoreMenu(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      <Trash2 size={16} />
+                      <span>移至回收站</span>
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          if (!workspacePath) {
+                            toast.error('工作区路径为空');
+                            return;
+                          }
+                          await commitChanges(workspacePath, 'manual_debug_commit');
+                          toast.success('提交成功');
+                        } catch (error) {
+                          toast.error(`提交失败: ${error instanceof Error ? error.message : String(error)}`);
+                        } finally {
+                          setShowMoreMenu(false);
+                        }
+                      }}
+                      className="w-full hidden sm:flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      <GitCommit size={16} />
+                      <span>手动提交</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           
           <Link
             href="/settings"

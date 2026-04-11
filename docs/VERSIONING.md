@@ -1,127 +1,113 @@
 # 版本号管理策略
 
+## 总原则
+
+项目采用主干发布制：
+
+- `feat/*`、`fix/*`、`refactor/*`、`chore/*`：功能开发分支，只做轻量 CI
+- `dev`：集成分支，用于测试构建和回归验证
+- `main`：发布候选分支，只保留接近可发布的内容
+- `v*` tag：正式发布入口，只有打在 `main` 提交上的 tag 才允许创建 Release
+
 ## 版本号格式
 
-项目采用**语义化版本（SemVer）**格式：`major.minor.patch`
+项目采用 **SemVer**：`major.minor.patch`
 
-- **源代码版本号**：`0.5.2`（纯版本号，无构建元数据）
-- **开发构建版本号**：`0.5.2+build.123`（带构建元数据）
-- **正式发布版本号**：`0.5.2`（从 Git tag 提取）
+- 源代码常驻版本号示例：`0.6.0`
+- 正式发布 tag 示例：`v0.6.0`
+- 不再默认维护频繁的 `beta/alpha/rc` 子版本流
 
-## 版本号文件
-
-以下文件需要保持版本号一致：
+## 需要保持一致的文件
 
 - `package.json`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 
-## 构建流程
+PR 中如果改动这些文件，会由 [version-check.yml](/home/gellar/Desktop/program/personal/Vana/.github/workflows/version-check.yml) 检查一致性。
 
-### 开发构建（`build-dev.yml`）
+## 工作流分层
 
-**触发条件**：Push 到 `main` 分支
+### 1. 分支 CI (`ci.yml`)
 
-**版本号处理**：
-- 读取源代码中的基础版本号（如 `0.5.2`）
-- 添加构建元数据：`0.5.2+build.${{ github.run_number }}`
-- Windows MSI 特殊处理：`0.5.2.${{ github.run_number }}`（MSI 要求 `major.minor.patch.build` 格式）
+**触发条件**
+- push 到 `feat/*`、`fix/*`、`refactor/*`、`chore/*`
+- PR 指向 `dev` 或 `main`
 
-**产物**：
-- 上传到 GitHub Artifacts
-- 保留 7 天
-- **不创建 Release**
+**执行内容**
+- `npm run lint`
+- `npm run build`
+- `cargo check`
 
-**用途**：内部测试、CI 验证
+**用途**
+- 验证单个功能分支是否破坏主线
+- 不生成正式安装包
+- 不创建 Release
 
-### 正式发布（`release.yml`）
+### 2. Dev 测试构建 (`build-dev.yml`)
 
-**触发条件**：推送 Git tag（格式：`v*`，如 `v0.5.2`）
+**触发条件**
+- push 到 `dev`
 
-**版本号处理**：
-1. 从 tag 提取版本号（移除 `v` 前缀）
-2. 更新所有源代码文件中的版本号
-3. Windows MSI 特殊处理：
-   - 正式发布：`major.minor.patch.0`
-   - 预发布（beta/alpha/rc）：`major.minor.patch.build`（从 tag 提取，如 `v0.5.2-beta.1` → `0.5.2.1`）
+**执行内容**
+- 统一校验
+- Linux 预览包构建
+- Android Debug 预览包构建
+- 上传 GitHub Actions Artifacts（短期保留）
 
-**产物**：
-- 创建 GitHub Release
-- 上传所有平台构建产物
-- 永久保留
+**用途**
+- 用于集成测试、回归测试、内部试用
+- 不创建 GitHub Release
 
-**用途**：正式发布给用户
+### 3. Main 发布前校验 (`main-verify.yml`)
 
-## 版本号更新流程
+**触发条件**
+- push 到 `main`
 
-### 开发阶段
+**执行内容**
+- 统一校验
+- Linux release candidate 构建
+- 上传短期预览 artifacts
 
-1. 在源代码中更新版本号（三个文件保持一致）
-2. 提交并推送到 `main` 分支
-3. 自动触发开发构建（带构建元数据）
+**用途**
+- 验证 `main` 是否达到可发布状态
+- 合并到 `main` 不等于立即发版
 
-### 发布阶段
+### 4. 正式发布 (`release.yml`)
 
-1. 确认代码已测试通过
-2. 创建并推送 Git tag：
-   ```bash
-   git tag v0.5.2
-   git push origin v0.5.2
-   ```
-3. 自动触发正式发布构建
-4. CI/CD 自动提取版本号并更新源代码
-5. 构建完成后自动创建 Release
+**触发条件**
+- 推送 `v*` tag，例如 `v1.0.0`
 
-## 预发布版本
+**执行内容**
+- 校验 tag 对应提交是否来自 `origin/main`
+- 同步版本号
+- Linux / Windows / Android 正式构建
+- 创建 GitHub Draft Release
+- 上传所有构建产物到 GitHub Release
 
-支持预发布版本（beta、alpha、rc）：
+**用途**
+- 唯一正式对外交付入口
+
+## 推荐发布流程
+
+1. 在 `feat/*` 分支开发并通过轻量 CI
+2. 合并到 `dev`
+3. 在 `dev` 上完成测试构建和集成验证
+4. 确认满意后合并到 `main`
+5. 在 `main` 上确认最终状态
+6. 创建正式 tag：
 
 ```bash
-# Beta 版本
-git tag v0.5.2-beta.1
-git push origin v0.5.2-beta.1
-
-# Alpha 版本
-git tag v0.5.2-alpha.1
-git push origin v0.5.2-alpha.1
-
-# Release Candidate
-git tag v0.5.2-rc.1
-git push origin v0.5.2-rc.1
+git checkout main
+git pull
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
-**处理逻辑**：
-- 源代码版本号：`0.5.2-beta.1` → `0.5.2`（提取基础版本）
-- Windows MSI 版本号：`0.5.2.1`（提取 build 号）
-- Release 类型：自动识别为 Pre-release
-
-## 错误构建处理
-
-### 开发构建
-
-- **不影响发布**：开发构建不会创建 Release
-- **自动清理**：Artifacts 7 天后自动删除
-- **可覆盖**：新的构建会覆盖旧的 Artifacts
-
-### 正式发布
-
-- **Tag 不可变**：Git tag 一旦推送不应删除
-- **验证机制**：构建前验证所有必需文件
-- **草稿模式**：可考虑先创建 Draft Release，验证后再发布
-
-## 版本号示例
-
-| 场景 | Tag | 源代码版本 | 开发构建版本 | Windows MSI 版本 | Release 类型 |
-|------|-----|-----------|-------------|-----------------|-------------|
-| 开发构建 | - | `0.5.2` | `0.5.2+build.123` | `0.5.2.123` | - |
-| 正式发布 | `v0.5.2` | `0.5.2` | `0.5.2` | `0.5.2.0` | Release |
-| Beta 发布 | `v0.5.2-beta.1` | `0.5.2` | `0.5.2` | `0.5.2.1` | Pre-release |
-| Alpha 发布 | `v0.5.2-alpha.2` | `0.5.2` | `0.5.2` | `0.5.2.2` | Pre-release |
+7. 由 CI 创建 Draft Release，并上传多端构建产物
 
 ## 注意事项
 
-1. **版本号一致性**：确保三个配置文件中的版本号始终一致
-2. **Tag 命名规范**：必须使用 `v` 前缀（如 `v0.5.2`）
-3. **Windows MSI 限制**：MSI 要求 `major.minor.patch.build` 格式，build 号必须 ≤ 65535
-4. **构建元数据**：开发构建的元数据（`+build.123`）不会影响正式发布版本号
-
+1. `main` 是发布候选分支，不是“每次提交都正式发版”的分支
+2. 只有 `v*` tag 会创建 GitHub Release
+3. 正式 tag 应只打在 `main` 的提交上，工作流也会强制校验这一点
+4. 日常开发阶段尽量减少无意义的小版本号变更
