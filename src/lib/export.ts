@@ -9,6 +9,7 @@ import { Theme } from './themes';
 import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeSurfaceColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
 import { invoke } from '@tauri-apps/api/core';
+import { getDocumentDocxSizes, getDocumentStyleTokens } from './documentStyles';
 
 interface InlineRunSpec {
   text: string;
@@ -53,6 +54,50 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function escapeTypstText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/#/g, '\\#')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\*/g, '\\*')
+    .replace(/_/g, '\\_')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$');
+}
+
+function escapeTypstString(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+}
+
+function escapeTypstCode(text: string): string {
+  return text.replace(/```/g, '``\\`');
+}
+
+function cssColorToHex(color: string, fallback: string): string {
+  const normalized = color.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+
+  const rgbMatch = normalized.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (rgbMatch) {
+    const [, r, g, b] = rgbMatch;
+    return `#${[r, g, b]
+      .map((value) => Number(value).toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase()}`;
+  }
+
+  return fallback;
+}
+
+function typstColor(color: string, fallback: string): string {
+  return `rgb("${cssColorToHex(color, fallback)}")`;
 }
 
 function rgbaToRgb(color: string): string {
@@ -186,12 +231,13 @@ function createPDFRenderRoot(
   theme: Theme,
   filename: string
 ): HTMLDivElement {
-  const background = getThemeBgColor(theme);
-  const surface = getThemeSurfaceColor(theme);
-  const border = rgbaToRgb(getThemeBorderColor(theme));
-  const accent = getThemeAccentColor(theme);
-  const text = theme.id === 'vellum' ? '#1c1917' : '#f5f5f4';
-  const muted = theme.id === 'vellum' ? '#57534e' : '#a8a29e';
+  const tokens = getDocumentStyleTokens(theme);
+  const background = tokens.pageBackgroundColor;
+  const surface = tokens.surfaceColor;
+  const border = tokens.borderColor;
+  const accent = tokens.accentColor;
+  const text = tokens.textColor;
+  const muted = tokens.mutedColor;
   const exportedAt = new Date().toLocaleString();
 
   const host = document.createElement('div');
@@ -217,8 +263,9 @@ function createPDFRenderRoot(
         color: ${text};
         padding: 56px 60px 48px;
         box-sizing: border-box;
+        font-size: ${tokens.bodyFontSizePx}px;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-        line-height: 1.7;
+        line-height: ${tokens.lineHeight};
       }
       #pdf-export-render-root .nv-pdf-header {
         display: flex;
@@ -231,14 +278,14 @@ function createPDFRenderRoot(
       }
       #pdf-export-render-root .nv-pdf-title {
         margin: 0;
-        font-size: 28px;
+        font-size: ${tokens.titleSizeRem}rem;
         line-height: 1.25;
         color: ${accent};
         word-break: break-word;
       }
       #pdf-export-render-root .nv-pdf-meta {
         color: ${muted};
-        font-size: 12px;
+        font-size: ${tokens.metaFontSizeRem}rem;
         text-align: right;
         white-space: nowrap;
       }
@@ -246,48 +293,53 @@ function createPDFRenderRoot(
       #pdf-export-render-root .nv-pdf-content h2,
       #pdf-export-render-root .nv-pdf-content h3 {
         color: ${accent};
-        margin: 1.1em 0 0.45em;
+        margin: ${tokens.headingMarginTopRem}em 0 ${tokens.headingMarginBottomRem}em;
         line-height: 1.3;
         page-break-after: avoid;
       }
-      #pdf-export-render-root .nv-pdf-content h1 { font-size: 24px; }
-      #pdf-export-render-root .nv-pdf-content h2 { font-size: 20px; }
-      #pdf-export-render-root .nv-pdf-content h3 { font-size: 17px; }
+      #pdf-export-render-root .nv-pdf-content h1 { font-size: ${tokens.h1SizeRem}rem; }
+      #pdf-export-render-root .nv-pdf-content h2 { font-size: ${tokens.h2SizeRem}rem; }
+      #pdf-export-render-root .nv-pdf-content h3 { font-size: ${tokens.h3SizeRem}rem; }
       #pdf-export-render-root .nv-pdf-content p,
       #pdf-export-render-root .nv-pdf-content ul,
       #pdf-export-render-root .nv-pdf-content ol,
       #pdf-export-render-root .nv-pdf-content blockquote,
       #pdf-export-render-root .nv-pdf-content pre {
-        margin: 0 0 14px;
-        font-size: 14px;
+        margin: 0 0 ${tokens.paragraphSpacingRem}rem;
+        font-size: ${tokens.bodyFontSizePx}px;
         page-break-inside: avoid;
       }
       #pdf-export-render-root .nv-pdf-content ul,
       #pdf-export-render-root .nv-pdf-content ol {
-        padding-left: 24px;
+        padding-left: ${tokens.listPaddingLeftRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content li {
-        margin-bottom: 6px;
+        margin-bottom: ${tokens.listItemSpacingRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content blockquote {
         margin-left: 0;
-        padding: 12px 16px;
-        border-left: 4px solid ${accent};
-        background: ${surface};
+        padding: ${tokens.blockquotePaddingRem}rem;
+        border-left: ${tokens.blockquoteBorderWidthPx}px solid ${tokens.blockquoteBorderColor};
+        background: ${tokens.blockquoteBackgroundColor};
         color: ${text};
+        border-radius: ${tokens.blockquoteRadiusRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content pre {
-        padding: 14px 16px;
+        padding: ${tokens.codeBlockPaddingRem}rem;
         overflow: hidden;
         white-space: pre-wrap;
         word-break: break-word;
-        border-radius: 10px;
+        border-radius: ${tokens.codeBlockRadiusRem}rem;
         border: 1px solid ${border};
-        background: ${surface};
+        background: ${tokens.codeBlockBackgroundColor};
       }
       #pdf-export-render-root .nv-pdf-content code {
         font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
         font-size: 0.92em;
+        background: ${tokens.inlineCodeBackgroundColor};
+        color: ${tokens.inlineCodeTextColor};
+        padding: ${tokens.codeInlinePaddingYRem}rem ${tokens.codeInlinePaddingXRem}rem;
+        border-radius: ${tokens.codeInlineRadiusRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content strong { font-weight: 700; }
       #pdf-export-render-root .nv-pdf-content em { font-style: italic; }
@@ -306,7 +358,7 @@ function createPDFRenderRoot(
         margin-top: 36px;
         border-top: 1px solid ${border};
         color: ${muted};
-        font-size: 11px;
+        font-size: ${tokens.metaFontSizeRem}rem;
       }
     </style>
     <div class="nv-pdf-page">
@@ -329,8 +381,7 @@ function createPDFRenderRoot(
 }
 
 async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<Blob> {
-  const html2canvas = (await import('html2canvas')).default;
-  const jsPDF = (await import('jspdf')).default;
+  const html2pdf = (await import('html2pdf.js')).default;
 
   const pageElement = renderRoot.querySelector('.nv-pdf-page') as HTMLElement | null;
   if (!pageElement) {
@@ -338,79 +389,183 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
   }
 
   await waitForRenderStability();
+  const pdfOptions: Record<string, unknown> = {
+    margin: [12, 12, 12, 12],
+    filename: 'export.pdf',
+    pagebreak: {
+      mode: ['css', 'legacy', 'avoid-all'],
+      avoid: ['blockquote', 'pre', 'h1', 'h2', 'h3', 'li'],
+    },
+    image: {
+      type: 'png',
+      quality: 1,
+    },
+    html2canvas: {
+      backgroundColor: getThemeBgColor(theme),
+      scale: Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)),
+      useCORS: true,
+      logging: false,
+      windowWidth: pageElement.scrollWidth,
+      windowHeight: pageElement.scrollHeight,
+      scrollX: 0,
+      scrollY: 0,
+    },
+    jsPDF: {
+      unit: 'mm',
+      format: 'a4',
+      orientation: 'portrait',
+    },
+  };
 
-  const canvas = await html2canvas(pageElement, {
-    backgroundColor: getThemeBgColor(theme),
-    scale: Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)),
-    useCORS: true,
-    logging: false,
-    width: pageElement.scrollWidth,
-    height: pageElement.scrollHeight,
-    windowWidth: pageElement.scrollWidth,
-    windowHeight: pageElement.scrollHeight,
-    scrollX: 0,
-    scrollY: 0,
-  });
+  const pdfInstance = html2pdf().set(pdfOptions as any).from(pageElement);
 
-  if (canvas.width === 0 || canvas.height === 0) {
+  const pdfBlob = await pdfInstance.outputPdf('blob');
+
+  if (!pdfBlob || pdfBlob.size === 0) {
     throw new Error('PDF 渲染结果为空');
   }
 
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-    compress: true,
-  });
+  return pdfBlob;
+}
 
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 12;
-  const contentWidth = pageWidth - margin * 2;
-  const contentHeight = pageHeight - margin * 2;
-  const pageHeightPx = Math.floor((canvas.width * contentHeight) / contentWidth);
-  const background = getThemeBgColor(theme);
+function convertInlineContentToTypst(node: JSONContent): string {
+  if (!node) return '';
 
-  let pageIndex = 0;
-  for (let offsetY = 0; offsetY < canvas.height; offsetY += pageHeightPx) {
-    const sliceHeight = Math.min(pageHeightPx, canvas.height - offsetY);
-    const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = canvas.width;
-    pageCanvas.height = sliceHeight;
+  if (node.type === 'text') {
+    let result = escapeTypstText(node.text || '');
 
-    const context = pageCanvas.getContext('2d');
-    if (!context) {
-      throw new Error('无法创建 PDF 分页画布');
+    for (const mark of node.marks || []) {
+      if (mark.type === 'bold') {
+        result = `#strong[${result}]`;
+      } else if (mark.type === 'italic') {
+        result = `#emph[${result}]`;
+      } else if (mark.type === 'underline') {
+        result = `#underline[${result}]`;
+      } else if (mark.type === 'strike') {
+        result = `#strike[${result}]`;
+      } else if (mark.type === 'code') {
+        result = `#raw("${escapeTypstString(node.text || '')}")`;
+      }
     }
 
-    context.fillStyle = background;
-    context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-    context.drawImage(
-      canvas,
-      0,
-      offsetY,
-      canvas.width,
-      sliceHeight,
-      0,
-      0,
-      canvas.width,
-      sliceHeight
-    );
-
-    const renderedHeight = (sliceHeight * contentWidth) / canvas.width;
-    const imageData = pageCanvas.toDataURL('image/png');
-
-    if (pageIndex > 0) {
-      pdf.addPage();
-    }
-
-    pdf.setFillColor(background);
-    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-    pdf.addImage(imageData, 'PNG', margin, margin, contentWidth, renderedHeight, undefined, 'FAST');
-    pageIndex += 1;
+    return result;
   }
 
-  return pdf.output('blob');
+  return (node.content || []).map(convertInlineContentToTypst).join('');
+}
+
+function convertListItemToTypst(item: JSONContent, ordered: boolean, depth = 0): string {
+  const marker = ordered ? '+' : '-';
+  const indent = '  '.repeat(depth);
+  const parts: string[] = [];
+
+  for (const child of item.content || []) {
+    if (child.type === 'paragraph') {
+      const inline = convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child) || ' ');
+      parts.push(`${indent}${marker} ${inline}`);
+      continue;
+    }
+
+    if (child.type === 'bulletList' || child.type === 'orderedList') {
+      for (const nested of child.content || []) {
+        parts.push(convertListItemToTypst(nested, child.type === 'orderedList', depth + 1));
+      }
+      continue;
+    }
+
+    const fallback = convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child));
+    if (fallback) {
+      parts.push(`${indent}${marker} ${fallback}`);
+    }
+  }
+
+  return parts.join('\n');
+}
+
+function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string): string {
+  const tokens = getDocumentStyleTokens(theme);
+  const background = typstColor(tokens.pageBackgroundColor, '#05040A');
+  const surface = typstColor(tokens.surfaceColor, '#13111C');
+  const border = typstColor(tokens.borderColor, '#2E2842');
+  const accent = typstColor(tokens.accentColor, '#A855F7');
+  const text = typstColor(tokens.textColor, '#D6D3D1');
+  const muted = typstColor(tokens.mutedColor, '#A8A29E');
+  const exportedAt = escapeTypstText(new Date().toLocaleString());
+  const title = escapeTypstText(filename);
+  const serifFonts = `(${tokens.typstSerifFonts.map((font) => `"${font}"`).join(', ')})`;
+  const sansFonts = `(${tokens.typstSansFonts.map((font) => `"${font}"`).join(', ')})`;
+  const monoFonts = `(${tokens.typstMonoFonts.map((font) => `"${font}"`).join(', ')})`;
+  const bodyFonts = theme.id === 'terminal' ? monoFonts : serifFonts;
+  const headingFonts = theme.id === 'terminal' ? monoFonts : serifFonts;
+
+  const blocks = (content.content || []).map((block) => {
+    const align = block.attrs?.textAlign;
+    const alignPrefix = align === 'center'
+      ? '#align(center)['
+      : align === 'right'
+      ? '#align(right)['
+      : '';
+    const alignSuffix = alignPrefix ? ']' : '';
+
+    switch (block.type) {
+      case 'heading': {
+        const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
+        const size = level === 1
+          ? `${tokens.h1SizeRem}em`
+          : level === 2
+          ? `${tokens.h2SizeRem}em`
+          : `${tokens.h3SizeRem}em`;
+        const body = convertInlineContentToTypst(block).trim() || 'Untitled';
+        return `${alignPrefix}#block(above: ${tokens.headingMarginTopRem}em, below: ${tokens.headingMarginBottomRem}em)[#text(font: ${headingFonts}, size: ${size}, weight: "bold", tracking: ${tokens.headingLetterSpacingEm}em, fill: ${accent})[${body}]]${alignSuffix}`;
+      }
+      case 'blockquote': {
+        const body = (block.content || [])
+          .map((child) => convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child)))
+          .filter(Boolean)
+          .join('\n\n');
+        return `#block(inset: ${tokens.blockquotePaddingRem}em, fill: ${typstColor(tokens.blockquoteBackgroundColor, tokens.surfaceColor)}, stroke: (${border}), radius: ${tokens.blockquoteRadiusRem}em, above: ${tokens.blockquoteMarginYRem * 0.55}em, below: ${tokens.blockquoteMarginYRem * 0.7}em)[${body || ' '}]`;
+      }
+      case 'codeBlock': {
+        const raw = escapeTypstCode(extractTextFromJSON(block) || '');
+        return `#block(inset: ${tokens.codeBlockPaddingRem}em, fill: ${typstColor(tokens.codeBlockBackgroundColor, tokens.surfaceColor)}, stroke: (${border}), radius: ${tokens.codeBlockRadiusRem}em, above: ${tokens.codeBlockMarginYRem * 0.6}em, below: ${tokens.codeBlockMarginYRem * 0.8}em)[\n\`\`\`text\n${raw}\n\`\`\`\n]`;
+      }
+      case 'bulletList':
+        return (block.content || []).map((item) => convertListItemToTypst(item, false)).join('\n');
+      case 'orderedList':
+        return (block.content || []).map((item) => convertListItemToTypst(item, true)).join('\n');
+      case 'paragraph':
+      default: {
+        const body = convertInlineContentToTypst(block).trim() || escapeTypstText(extractTextFromJSON(block) || ' ');
+        return `${alignPrefix}${body}${alignSuffix}`;
+      }
+    }
+  }).filter(Boolean).join('\n\n');
+
+  const body = blocks || '#text(fill: rgb("#A8A29E"), style: "italic")[文档内容为空]';
+
+  return `
+#set document(title: [${title}])
+#set page(
+  paper: "a4",
+  margin: (top: 18mm, bottom: 18mm, left: 20mm, right: 20mm),
+  fill: ${background},
+  numbering: "1",
+  number-align: center,
+)
+#set text(lang: "zh", region: "cn", font: ${bodyFonts}, fallback: true, size: ${tokens.bodyFontSizePx / 16}em, fill: ${text})
+#set par(justify: false, leading: ${Math.max(tokens.lineHeight - 1, 0.6)}em)
+#show emph: set text(font: ${sansFonts})
+#show strong: set text(font: ${sansFonts})
+#show raw: set text(font: ${monoFonts}, size: ${Math.max(tokens.bodyFontSizePx * 0.82, 12) / 16}em, fill: ${text})
+
+#block(below: ${tokens.headingMarginTopRem}em)[
+  #text(font: ${headingFonts}, size: ${tokens.titleSizeRem}em, weight: "bold", tracking: ${tokens.titleLetterSpacingEm}em, fill: ${accent})[${title}]
+  #linebreak()
+  #text(size: ${tokens.metaFontSizeRem}em, fill: ${muted})[${escapeTypstText(theme.name)} · ${exportedAt}]
+]
+
+${body}
+`.trim();
 }
 
 /**
@@ -428,22 +583,18 @@ export async function exportToPDF(
   let renderRoot: HTMLDivElement | null = null;
 
   try {
-    const htmlContent = convertJSONToHTML(content);
-    renderRoot = createPDFRenderRoot(htmlContent, theme, filename);
-    document.body.appendChild(renderRoot);
-
-    const pdfBlob = await renderPDFToBlob(renderRoot, theme);
-
     if (isTauriEnvironment()) {
-      const arrayBuffer = await pdfBlob.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(arrayBuffer));
-
-      await invoke<string>('save_export_file', {
+      const typstSource = convertJSONToTypst(content, theme, filename);
+      await invoke<string>('export_pdf_with_typst', {
         filename,
-        content: bytes,
-        fileType: 'pdf',
+        typstSource,
       });
     } else {
+      const htmlContent = convertJSONToHTML(content);
+      renderRoot = createPDFRenderRoot(htmlContent, theme, filename);
+      document.body.appendChild(renderRoot);
+
+      const pdfBlob = await renderPDFToBlob(renderRoot, theme);
       const downloadUrl = URL.createObjectURL(pdfBlob);
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;
@@ -510,15 +661,15 @@ export async function exportToDOCX(
   filename: string
 ): Promise<void> {
   const paragraphs: Paragraph[] = [];
+  const tokens = getDocumentStyleTokens(theme);
+  const docxSizes = getDocumentDocxSizes(theme);
 
-  // 获取主题颜色（DOCX 使用十六进制颜色，不带 # 号）
-  const accentColorHex = toDocxHexColor(getThemeAccentColor(theme));
-  const textColorHex = toDocxHexColor(theme.id === 'vellum' ? '#292524' : '#D6D3D1');
+  const accentColorHex = toDocxHexColor(tokens.accentColor);
+  const textColorHex = toDocxHexColor(tokens.textColor);
+  const bgColorHex = toDocxHexColor(tokens.pageBackgroundColor);
+  const blockquoteBgHex = toDocxHexColor(tokens.blockquoteBackgroundColor);
+  const codeBgHex = toDocxHexColor(tokens.codeBlockBackgroundColor);
 
-  // 获取背景颜色（DOCX 使用十六进制颜色，不带 # 号）
-  const bgColorHex = getThemeBgColor(theme).replace('#', '');
-
-  // 遍历文档内容
   if (content.content && Array.isArray(content.content)) {
     for (const block of content.content) {
       const text = extractTextFromJSON(block);
@@ -537,8 +688,6 @@ export async function exportToDOCX(
       if (block.type === 'heading') {
         const level = block.attrs?.level || 1;
         const textRuns = convertToTextRuns(block, accentColorHex);
-
-        // 为标题的所有 TextRun 添加粗体和大小
         const headingRuns = textRuns.map((run) => new TextRun({
           text: run.text,
           color: run.color,
@@ -547,7 +696,7 @@ export async function exportToDOCX(
           strike: run.strike,
           bold: true,
           font: run.font,
-          size: level === 1 ? 32 : level === 2 ? 28 : 24,
+          size: level === 1 ? docxSizes.h1 : level === 2 ? docxSizes.h2 : docxSizes.h3,
         }));
 
         paragraphs.push(
@@ -559,7 +708,7 @@ export async function exportToDOCX(
               ? HeadingLevel.HEADING_2
               : HeadingLevel.HEADING_3,
             alignment,
-            spacing: { after: 200 },
+            spacing: { after: 180, before: level === 1 ? 240 : 200 },
             shading: {
               fill: bgColorHex,
             },
@@ -573,23 +722,21 @@ export async function exportToDOCX(
             children: textRuns.map((run) => new TextRun(run)),
             alignment,
             indent: { left: 720 }, // 0.5 inch
-            spacing: { after: 120 },
+            spacing: { after: 160 },
             border: {
               left: {
                 color: accentColorHex,
                 space: 1,
                 style: BorderStyle.SINGLE,
-                size: 24,
+                size: Math.max(tokens.blockquoteBorderWidthPx * 8, 18),
               },
             },
             shading: {
-              fill: bgColorHex,
+              fill: blockquoteBgHex,
             },
           })
         );
       } else if (block.type === 'codeBlock') {
-        const codeBgHex = theme.id === 'vellum' ? 'e9e4d9' : '1a1a1a';
-        // 代码块不应用文本格式化，使用纯文本
         paragraphs.push(
           new Paragraph({
             children: [
@@ -597,22 +744,27 @@ export async function exportToDOCX(
                 text,
                 font: 'Courier New',
                 color: textColorHex,
+                size: docxSizes.body - 2,
               }),
             ],
             alignment: AlignmentType.LEFT,
             shading: {
               fill: codeBgHex,
             },
-            spacing: { after: 120 },
+            spacing: { after: 160 },
           })
         );
       } else {
-        // 普通段落 - 使用带格式的文本
         const textRuns = convertToTextRuns(block, textColorHex);
 
         paragraphs.push(
           new Paragraph({
-            children: textRuns.length > 0 ? textRuns.map((run) => new TextRun(run)) : [new TextRun({ text: '', color: textColorHex })],
+            children: textRuns.length > 0
+              ? textRuns.map((run) => new TextRun({
+                  ...run,
+                  size: docxSizes.body,
+                }))
+              : [new TextRun({ text: '', color: textColorHex, size: docxSizes.body })],
             alignment,
             spacing: { after: 120 },
             shading: {

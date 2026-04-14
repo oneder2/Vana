@@ -30,6 +30,7 @@ import { EditorSkeleton } from './Skeleton';
 import { Plus } from 'lucide-react';
 import { useToast } from './ToastProvider';
 import { getThemeAccentColor, getThemeSurfaceColor, getThemeBorderColor } from '@/lib/themeStyles';
+import { getDocumentStyleCssVars } from '@/lib/documentStyles';
 import { saveFileState, loadFileState } from '@/lib/cache';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
@@ -1299,6 +1300,7 @@ export function Editor({ filePath, initialContent, onContentChange, workspacePat
         onContextMenu={handleContextMenu}
         onMouseDown={handleMouseDown}
         onClick={handleContainerClick}
+        style={getDocumentStyleCssVars(theme)}
       >
         {/* 编辑器内容 - 每个块独立对齐（通过 TextAlign 扩展） */}
         <div className="w-full">

@@ -50,3 +50,4 @@ Thumbs.db
 .augment/
 tsconfig.tsbuildinfo
 src-tauri/gen/android/.gradle/
+openspec/

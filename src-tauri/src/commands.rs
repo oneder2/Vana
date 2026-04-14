@@ -13,6 +13,7 @@ use crate::storage::{
     move_file_or_directory, read_encrypted_file, rename_file_or_directory, write_encrypted_file, FileInfo,
     search_files, SearchResult,
 };
+use crate::typst_export::compile_typst_source_to_pdf;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -870,18 +871,38 @@ pub async fn save_export_file(
     content: Vec<u8>,
     file_type: String,
 ) -> Result<String, String> {
+    save_export_bytes(&filename, &content, &file_type)
+}
+
+#[tauri::command]
+pub async fn export_pdf_with_typst(
+    filename: String,
+    typst_source: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let pdf_bytes = compile_typst_source_to_pdf(&typst_source)
+            .map_err(|e| e.to_string())?;
+
+        save_export_bytes(&filename, &pdf_bytes, "pdf")
+    })
+    .await
+    .map_err(|e| format!("PDF 导出任务执行失败: {}", e))?
+}
+
+fn save_export_bytes(
+    filename: &str,
+    content: &[u8],
+    file_type: &str,
+) -> Result<String, String> {
     use std::fs;
 
-    // 获取 Documents 目录
     let docs_dir = dirs::document_dir()
         .ok_or_else(|| "无法获取 Documents 目录".to_string())?;
 
-    // 创建 vana 子目录
     let vana_dir = docs_dir.join("vana");
     fs::create_dir_all(&vana_dir)
         .map_err(|e| format!("创建 vana 目录失败: {}", e))?;
 
-    // 处理文件名冲突（自动递增）
     let mut final_path = vana_dir.join(format!("{}.{}", filename, file_type));
     let mut counter = 1;
     while final_path.exists() {
@@ -889,10 +910,8 @@ pub async fn save_export_file(
         counter += 1;
     }
 
-    // 保存文件
     fs::write(&final_path, content)
         .map_err(|e| format!("保存文件失败: {}", e))?;
 
-    // 返回保存的文件路径
     Ok(final_path.to_string_lossy().to_string())
 }

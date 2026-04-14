@@ -9,6 +9,7 @@ mod crypto;
 mod git;
 mod keychain;
 mod storage;
+mod typst_export;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -195,6 +196,7 @@ pub fn run() {
             commands::search_files_command,
             // 导出命令
             commands::save_export_file,
+            commands::export_pdf_with_typst,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
