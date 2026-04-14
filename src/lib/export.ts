@@ -55,6 +55,44 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function escapeTypstText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/#/g, '\\#')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]')
+    .replace(/\*/g, '\\*')
+    .replace(/_/g, '\\_')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$');
+}
+
+function escapeTypstCode(text: string): string {
+  return text.replace(/```/g, '``\\`');
+}
+
+function cssColorToHex(color: string, fallback: string): string {
+  const normalized = color.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+
+  const rgbMatch = normalized.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (rgbMatch) {
+    const [, r, g, b] = rgbMatch;
+    return `#${[r, g, b]
+      .map((value) => Number(value).toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase()}`;
+  }
+
+  return fallback;
+}
+
+function typstColor(color: string, fallback: string): string {
+  return `rgb("${cssColorToHex(color, fallback)}")`;
+}
+
 function rgbaToRgb(color: string): string {
   const rgbaMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
   if (!rgbaMatch) {
@@ -329,8 +367,7 @@ function createPDFRenderRoot(
 }
 
 async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<Blob> {
-  const html2canvas = (await import('html2canvas')).default;
-  const jsPDF = (await import('jspdf')).default;
+  const html2pdf = (await import('html2pdf.js')).default;
 
   const pageElement = renderRoot.querySelector('.nv-pdf-page') as HTMLElement | null;
   if (!pageElement) {
@@ -338,79 +375,174 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
   }
 
   await waitForRenderStability();
+  const pdfOptions: Record<string, unknown> = {
+    margin: [12, 12, 12, 12],
+    filename: 'export.pdf',
+    pagebreak: {
+      mode: ['css', 'legacy', 'avoid-all'],
+      avoid: ['blockquote', 'pre', 'h1', 'h2', 'h3', 'li'],
+    },
+    image: {
+      type: 'png',
+      quality: 1,
+    },
+    html2canvas: {
+      backgroundColor: getThemeBgColor(theme),
+      scale: Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)),
+      useCORS: true,
+      logging: false,
+      windowWidth: pageElement.scrollWidth,
+      windowHeight: pageElement.scrollHeight,
+      scrollX: 0,
+      scrollY: 0,
+    },
+    jsPDF: {
+      unit: 'mm',
+      format: 'a4',
+      orientation: 'portrait',
+    },
+  };
 
-  const canvas = await html2canvas(pageElement, {
-    backgroundColor: getThemeBgColor(theme),
-    scale: Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)),
-    useCORS: true,
-    logging: false,
-    width: pageElement.scrollWidth,
-    height: pageElement.scrollHeight,
-    windowWidth: pageElement.scrollWidth,
-    windowHeight: pageElement.scrollHeight,
-    scrollX: 0,
-    scrollY: 0,
-  });
+  const pdfInstance = html2pdf().set(pdfOptions as any).from(pageElement);
 
-  if (canvas.width === 0 || canvas.height === 0) {
+  const pdfBlob = await pdfInstance.outputPdf('blob');
+
+  if (!pdfBlob || pdfBlob.size === 0) {
     throw new Error('PDF 渲染结果为空');
   }
 
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-    compress: true,
-  });
+  return pdfBlob;
+}
 
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 12;
-  const contentWidth = pageWidth - margin * 2;
-  const contentHeight = pageHeight - margin * 2;
-  const pageHeightPx = Math.floor((canvas.width * contentHeight) / contentWidth);
-  const background = getThemeBgColor(theme);
+function convertInlineContentToTypst(node: JSONContent): string {
+  if (!node) return '';
 
-  let pageIndex = 0;
-  for (let offsetY = 0; offsetY < canvas.height; offsetY += pageHeightPx) {
-    const sliceHeight = Math.min(pageHeightPx, canvas.height - offsetY);
-    const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = canvas.width;
-    pageCanvas.height = sliceHeight;
+  if (node.type === 'text') {
+    let result = escapeTypstText(node.text || '');
 
-    const context = pageCanvas.getContext('2d');
-    if (!context) {
-      throw new Error('无法创建 PDF 分页画布');
+    for (const mark of node.marks || []) {
+      if (mark.type === 'bold') {
+        result = `#strong[${result}]`;
+      } else if (mark.type === 'italic') {
+        result = `#emph[${result}]`;
+      } else if (mark.type === 'underline') {
+        result = `#underline[${result}]`;
+      } else if (mark.type === 'strike') {
+        result = `#strike[${result}]`;
+      }
     }
 
-    context.fillStyle = background;
-    context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-    context.drawImage(
-      canvas,
-      0,
-      offsetY,
-      canvas.width,
-      sliceHeight,
-      0,
-      0,
-      canvas.width,
-      sliceHeight
-    );
-
-    const renderedHeight = (sliceHeight * contentWidth) / canvas.width;
-    const imageData = pageCanvas.toDataURL('image/png');
-
-    if (pageIndex > 0) {
-      pdf.addPage();
-    }
-
-    pdf.setFillColor(background);
-    pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-    pdf.addImage(imageData, 'PNG', margin, margin, contentWidth, renderedHeight, undefined, 'FAST');
-    pageIndex += 1;
+    return result;
   }
 
-  return pdf.output('blob');
+  return (node.content || []).map(convertInlineContentToTypst).join('');
+}
+
+function convertListItemToTypst(item: JSONContent, ordered: boolean, depth = 0): string {
+  const marker = ordered ? '+' : '-';
+  const indent = '  '.repeat(depth);
+  const parts: string[] = [];
+
+  for (const child of item.content || []) {
+    if (child.type === 'paragraph') {
+      const inline = convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child) || ' ');
+      parts.push(`${indent}${marker} ${inline}`);
+      continue;
+    }
+
+    if (child.type === 'bulletList' || child.type === 'orderedList') {
+      for (const nested of child.content || []) {
+        parts.push(convertListItemToTypst(nested, child.type === 'orderedList', depth + 1));
+      }
+      continue;
+    }
+
+    const fallback = convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child));
+    if (fallback) {
+      parts.push(`${indent}${marker} ${fallback}`);
+    }
+  }
+
+  return parts.join('\n');
+}
+
+function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string): string {
+  const background = typstColor(getThemeBgColor(theme), '#05040A');
+  const surface = typstColor(getThemeSurfaceColor(theme), '#13111C');
+  const border = typstColor(rgbaToRgb(getThemeBorderColor(theme)), '#2E2842');
+  const accent = typstColor(getThemeAccentColor(theme), '#A855F7');
+  const text = typstColor(theme.id === 'vellum' ? '#292524' : '#D6D3D1', '#D6D3D1');
+  const muted = typstColor(theme.id === 'vellum' ? '#57534E' : '#A8A29E', '#A8A29E');
+  const exportedAt = escapeTypstText(new Date().toLocaleString());
+  const title = escapeTypstText(filename);
+  const serifFonts = '("Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif CJK JP", "Noto Serif SC", "Songti SC", "SimSun", "Libertinus Serif", "DejaVu Serif")';
+  const sansFonts = '("Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "DejaVu Sans")';
+  const monoFonts = '("Sarasa Mono SC", "Noto Sans Mono CJK SC", "Noto Sans Mono CJK JP", "Source Han Mono SC", "DejaVu Sans Mono", "Liberation Mono")';
+
+  const blocks = (content.content || []).map((block) => {
+    const align = block.attrs?.textAlign;
+    const alignPrefix = align === 'center'
+      ? '#align(center)['
+      : align === 'right'
+      ? '#align(right)['
+      : '';
+    const alignSuffix = alignPrefix ? ']' : '';
+
+    switch (block.type) {
+      case 'heading': {
+        const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
+        const size = level === 1 ? '20pt' : level === 2 ? '16pt' : '13pt';
+        const body = convertInlineContentToTypst(block).trim() || 'Untitled';
+        return `${alignPrefix}#block(above: 1.2em, below: 0.55em)[#text(size: ${size}, weight: "bold", fill: ${accent})[${body}]]${alignSuffix}`;
+      }
+      case 'blockquote': {
+        const body = (block.content || [])
+          .map((child) => convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child)))
+          .filter(Boolean)
+          .join('\n\n');
+        return `#block(inset: 10pt, fill: ${surface}, stroke: (${border}), radius: 6pt, above: 0.6em, below: 0.8em)[${body || ' '}]`;
+      }
+      case 'codeBlock': {
+        const raw = escapeTypstCode(extractTextFromJSON(block) || '');
+        return `#block(inset: 10pt, fill: ${surface}, stroke: (${border}), radius: 6pt, above: 0.6em, below: 0.8em)[\n\`\`\`text\n${raw}\n\`\`\`\n]`;
+      }
+      case 'bulletList':
+        return (block.content || []).map((item) => convertListItemToTypst(item, false)).join('\n');
+      case 'orderedList':
+        return (block.content || []).map((item) => convertListItemToTypst(item, true)).join('\n');
+      case 'paragraph':
+      default: {
+        const body = convertInlineContentToTypst(block).trim() || escapeTypstText(extractTextFromJSON(block) || ' ');
+        return `${alignPrefix}${body}${alignSuffix}`;
+      }
+    }
+  }).filter(Boolean).join('\n\n');
+
+  const body = blocks || '#text(fill: rgb("#A8A29E"), style: "italic")[文档内容为空]';
+
+  return `
+#set document(title: [${title}])
+#set page(
+  paper: "a4",
+  margin: (top: 18mm, bottom: 18mm, left: 20mm, right: 20mm),
+  fill: ${background},
+  numbering: "1",
+  number-align: center,
+)
+#set text(lang: "zh", region: "cn", font: ${serifFonts}, fallback: true, size: 11pt, fill: ${text})
+#set par(justify: false, leading: 0.78em)
+#show emph: set text(font: ${sansFonts})
+#show strong: set text(font: ${sansFonts})
+#show raw: set text(font: ${monoFonts}, size: 9.5pt, fill: ${text})
+
+#block(below: 1.2em)[
+  #text(size: 24pt, weight: "bold", fill: ${accent})[${title}]
+  #linebreak()
+  #text(size: 9pt, fill: ${muted})[${escapeTypstText(theme.name)} · ${exportedAt}]
+]
+
+${body}
+`.trim();
 }
 
 /**
@@ -428,22 +560,18 @@ export async function exportToPDF(
   let renderRoot: HTMLDivElement | null = null;
 
   try {
-    const htmlContent = convertJSONToHTML(content);
-    renderRoot = createPDFRenderRoot(htmlContent, theme, filename);
-    document.body.appendChild(renderRoot);
-
-    const pdfBlob = await renderPDFToBlob(renderRoot, theme);
-
     if (isTauriEnvironment()) {
-      const arrayBuffer = await pdfBlob.arrayBuffer();
-      const bytes = Array.from(new Uint8Array(arrayBuffer));
-
-      await invoke<string>('save_export_file', {
+      const typstSource = convertJSONToTypst(content, theme, filename);
+      await invoke<string>('export_pdf_with_typst', {
         filename,
-        content: bytes,
-        fileType: 'pdf',
+        typstSource,
       });
     } else {
+      const htmlContent = convertJSONToHTML(content);
+      renderRoot = createPDFRenderRoot(htmlContent, theme, filename);
+      document.body.appendChild(renderRoot);
+
+      const pdfBlob = await renderPDFToBlob(renderRoot, theme);
       const downloadUrl = URL.createObjectURL(pdfBlob);
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;

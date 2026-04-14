@@ -17,12 +17,10 @@ import {
   X,
   Archive,
   Clock3,
-  Command,
   History,
   Import,
   Star,
   Trash2,
-  FileText,
 } from 'lucide-react';
 import { TextSelection } from 'prosemirror-state';
 import { useTheme } from '@/components/ThemeProvider';
@@ -34,7 +32,6 @@ import { RadialMenu } from '@/components/RadialMenu';
 import { BlockTypeSelector } from '@/components/BlockTypeSelector';
 import { SearchModal } from '@/components/SearchModal';
 import { AtmospherePreviewModal } from '@/components/AtmospherePreviewModal';
-import { CommandPalette, type CommandPaletteItem } from '@/components/CommandPalette';
 import { HistoryTimelineModal } from '@/components/HistoryTimelineModal';
 import { TitleBar } from '@/components/TitleBar';
 import { getAllThemes, getThemeIcon } from '@/lib/themes';
@@ -130,7 +127,6 @@ function MainApp() {
   const [syncMessage, setSyncMessage] = useState<string>('');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showAtmospherePreview, setShowAtmospherePreview] = useState(false);
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showHistoryTimeline, setShowHistoryTimeline] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -378,10 +374,6 @@ function MainApp() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault();
         setShowSearchModal(true);
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setShowCommandPalette(true);
       }
       if (e.key === 'Escape' && showSearchModal) {
         setShowSearchModal(false);
@@ -881,82 +873,6 @@ function MainApp() {
   const dashboardRecentItems = recentItems.slice(0, 5);
   const dashboardFavoriteItems = favoriteItems.slice(0, 5);
 
-  const commandPaletteItems: CommandPaletteItem[] = useMemo(() => {
-    const items: CommandPaletteItem[] = [
-      {
-        id: 'search',
-        title: '搜索文档内容',
-        group: 'Navigation',
-        keywords: ['find', 'search'],
-        onSelect: () => setShowSearchModal(true),
-      },
-      {
-        id: 'history',
-        title: '打开历史时间线',
-        group: 'Navigation',
-        keywords: ['history', 'commits', 'timeline'],
-        onSelect: () => setShowHistoryTimeline(true),
-      },
-      {
-        id: 'import-markdown',
-        title: '导入 Markdown',
-        group: 'Content',
-        keywords: ['markdown', 'import'],
-        onSelect: triggerMarkdownImport,
-      },
-      {
-        id: 'create-document',
-        title: '新建文档',
-        group: 'Content',
-        keywords: ['new', 'create', 'document'],
-        onSelect: handleCreateDocumentFromDashboard,
-      },
-      {
-        id: 'settings',
-        title: '打开设置',
-        group: 'Navigation',
-        onSelect: () => {
-          window.location.href = '/settings';
-        },
-      },
-    ];
-
-    if (currentFilePath) {
-      items.push(
-        {
-          id: 'favorite',
-          title: currentLibraryEntry?.favorite ? '取消收藏当前文档' : '收藏当前文档',
-          group: 'Current File',
-          onSelect: () => handleToggleFavorite(currentFilePath),
-        },
-        {
-          id: 'archive',
-          title: currentLibraryEntry?.archived_at ? '取消归档当前文档' : '归档当前文档',
-          group: 'Current File',
-          onSelect: () => handleToggleArchive(currentFilePath),
-        },
-        {
-          id: 'trash',
-          title: '将当前文档移至回收站',
-          group: 'Current File',
-          onSelect: () => handleMoveToTrash(currentFilePath),
-        }
-      );
-    }
-
-    recentItems.slice(0, 8).forEach((path) => {
-      items.push({
-        id: `open:${path}`,
-        title: `打开 ${path.split('/').pop()}`,
-        subtitle: path,
-        group: 'Recent Files',
-        onSelect: () => handleFileSelect(path),
-      });
-    });
-
-    return items;
-  }, [currentFilePath, currentLibraryEntry?.archived_at, currentLibraryEntry?.favorite, recentItems, workspacePath]);
-
   return (
     <div
       className={`fixed inset-0 flex flex-col transition-colors duration-700 ${theme.font} ${
@@ -1183,15 +1099,6 @@ function MainApp() {
             <Search size={18} />
           </button>
 
-          <button
-            onClick={() => setShowCommandPalette(true)}
-            className="p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-            style={{ color: getThemeAccentColor(theme) }}
-            title="命令面板 (Ctrl+K / Cmd+K)"
-          >
-            <Command size={18} />
-          </button>
-
           {currentFilePath && (
             <button
               onClick={() => handleToggleFavorite(currentFilePath)}
@@ -1305,34 +1212,6 @@ function MainApp() {
                   <Clock3 size={16} />
                   <span>氛围预览</span>
                 </button>
-                {currentFilePath && (
-                  <>
-                    <button
-                      onClick={handleExportPDF}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                      style={{ color: getThemeAccentColor(theme) }}
-                    >
-                      <FileDown size={16} />
-                      <span>导出为 PDF</span>
-                    </button>
-                    <button
-                      onClick={handleExportDOCX}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                      style={{ color: getThemeAccentColor(theme) }}
-                    >
-                      <FileText size={16} />
-                      <span>导出为 DOCX</span>
-                    </button>
-                    <button
-                      onClick={handleExportMarkdown}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                      style={{ color: getThemeAccentColor(theme) }}
-                    >
-                      <Import size={16} />
-                      <span>导出为 Markdown</span>
-                    </button>
-                  </>
-                )}
                 {currentFilePath && (
                   <>
                     <button
@@ -1597,14 +1476,14 @@ function MainApp() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowCommandPalette(true)}
+                      onClick={() => setIsSidebarOpen(true)}
                       className="rounded-full border px-4 py-2 text-sm transition-opacity hover:opacity-85"
                       style={{
                         borderColor: getThemeBorderColor(theme),
                         color: getThemeAccentColor(theme),
                       }}
                     >
-                      打开命令面板
+                      打开侧边栏
                     </button>
                   </div>
 
@@ -1780,12 +1659,6 @@ function MainApp() {
         onClose={() => setShowSearchModal(false)}
         workspacePath={workspacePath}
         onFileSelect={handleFileSelect}
-      />
-
-      <CommandPalette
-        isOpen={showCommandPalette}
-        onClose={() => setShowCommandPalette(false)}
-        items={commandPaletteItems}
       />
 
       <HistoryTimelineModal
