@@ -10,6 +10,17 @@ import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeSurf
 import { JSONContent } from '@tiptap/core';
 import { invoke } from '@tauri-apps/api/core';
 
+interface InlineRunSpec {
+  text: string;
+  color: string;
+  bold?: boolean;
+  italics?: boolean;
+  underline?: { type: 'single' };
+  strike?: boolean;
+  font?: string;
+  size?: number;
+}
+
 /**
  * 从 Tiptap JSON 内容中提取纯文本
  */
@@ -52,6 +63,23 @@ function rgbaToRgb(color: string): string {
 
   const [, r, g, b] = rgbaMatch;
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+function toDocxHexColor(color: string): string {
+  const hex = color.trim().replace('#', '');
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+    return hex.toUpperCase();
+  }
+
+  const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!rgbMatch) {
+    return 'D6D3D1';
+  }
+
+  const [, r, g, b] = rgbMatch;
+  return [r, g, b]
+    .map((value) => Number(value).toString(16).padStart(2, '0').toUpperCase())
+    .join('');
 }
 
 function convertInlineContentToHTML(content: JSONContent): string {
@@ -169,13 +197,14 @@ function createPDFRenderRoot(
   const host = document.createElement('div');
   host.id = 'pdf-export-render-root';
   host.style.cssText = `
-    position: fixed;
-    left: -10000px;
+    position: absolute;
+    left: -100000px;
     top: 0;
     width: 794px;
     padding: 0;
     margin: 0;
     opacity: 1;
+    visibility: visible;
     pointer-events: none;
     z-index: -1;
   `;
@@ -315,8 +344,12 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
     scale: Math.max(2, Math.ceil((window.devicePixelRatio || 1) * 1.5)),
     useCORS: true,
     logging: false,
+    width: pageElement.scrollWidth,
+    height: pageElement.scrollHeight,
     windowWidth: pageElement.scrollWidth,
     windowHeight: pageElement.scrollHeight,
+    scrollX: 0,
+    scrollY: 0,
   });
 
   if (canvas.width === 0 || canvas.height === 0) {
@@ -365,7 +398,7 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
     );
 
     const renderedHeight = (sliceHeight * contentWidth) / canvas.width;
-    const imageData = pageCanvas.toDataURL('image/jpeg', 0.92);
+    const imageData = pageCanvas.toDataURL('image/png');
 
     if (pageIndex > 0) {
       pdf.addPage();
@@ -373,7 +406,7 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
 
     pdf.setFillColor(background);
     pdf.rect(0, 0, pageWidth, pageHeight, 'F');
-    pdf.addImage(imageData, 'JPEG', margin, margin, contentWidth, renderedHeight, undefined, 'FAST');
+    pdf.addImage(imageData, 'PNG', margin, margin, contentWidth, renderedHeight, undefined, 'FAST');
     pageIndex += 1;
   }
 
@@ -430,10 +463,10 @@ export async function exportToPDF(
  * 将 Tiptap JSON 内容转换为 DOCX TextRun 数组
  * 支持粗体、斜体、下划线、删除线
  */
-function convertToTextRuns(content: JSONContent, defaultColor: string): TextRun[] {
+function convertToTextRuns(content: JSONContent, defaultColor: string): InlineRunSpec[] {
   if (!content) return [];
 
-  const runs: TextRun[] = [];
+  const runs: InlineRunSpec[] = [];
 
   if (content.type === 'text') {
     const text = content.text || '';
@@ -444,14 +477,14 @@ function convertToTextRuns(content: JSONContent, defaultColor: string): TextRun[
     const isUnderline = content.marks?.some(m => m.type === 'underline') || false;
     const isStrike = content.marks?.some(m => m.type === 'strike') || false;
 
-    runs.push(new TextRun({
+    runs.push({
       text,
       color: defaultColor,
       bold: isBold,
       italics: isItalic,
       underline: isUnderline ? { type: 'single' } : undefined,
       strike: isStrike,
-    }));
+    });
 
     return runs;
   }
@@ -479,15 +512,8 @@ export async function exportToDOCX(
   const paragraphs: Paragraph[] = [];
 
   // 获取主题颜色（DOCX 使用十六进制颜色，不带 # 号）
-  const accentColorHex = theme.id === 'arcane'
-    ? '8b5cf6' // violet-500
-    : theme.id === 'terminal'
-    ? '00ff41' // terminal green
-    : theme.id === 'rusty'
-    ? 'c2410c' // orange-700
-    : '292524'; // stone-800 for vellum
-
-  const textColorHex = theme.id === 'vellum' ? '292524' : 'd6d3d1';
+  const accentColorHex = toDocxHexColor(getThemeAccentColor(theme));
+  const textColorHex = toDocxHexColor(theme.id === 'vellum' ? '#292524' : '#D6D3D1');
 
   // 获取背景颜色（DOCX 使用十六进制颜色，不带 # 号）
   const bgColorHex = getThemeBgColor(theme).replace('#', '');
@@ -513,9 +539,14 @@ export async function exportToDOCX(
         const textRuns = convertToTextRuns(block, accentColorHex);
 
         // 为标题的所有 TextRun 添加粗体和大小
-        const headingRuns = textRuns.map(run => new TextRun({
-          ...run,
+        const headingRuns = textRuns.map((run) => new TextRun({
+          text: run.text,
+          color: run.color,
+          italics: run.italics,
+          underline: run.underline,
+          strike: run.strike,
           bold: true,
+          font: run.font,
           size: level === 1 ? 32 : level === 2 ? 28 : 24,
         }));
 
@@ -539,7 +570,7 @@ export async function exportToDOCX(
 
         paragraphs.push(
           new Paragraph({
-            children: textRuns,
+            children: textRuns.map((run) => new TextRun(run)),
             alignment,
             indent: { left: 720 }, // 0.5 inch
             spacing: { after: 120 },
@@ -581,7 +612,7 @@ export async function exportToDOCX(
 
         paragraphs.push(
           new Paragraph({
-            children: textRuns.length > 0 ? textRuns : [new TextRun({ text: '', color: textColorHex })],
+            children: textRuns.length > 0 ? textRuns.map((run) => new TextRun(run)) : [new TextRun({ text: '', color: textColorHex })],
             alignment,
             spacing: { after: 120 },
             shading: {

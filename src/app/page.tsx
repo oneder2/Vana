@@ -22,6 +22,7 @@ import {
   Import,
   Star,
   Trash2,
+  FileText,
 } from 'lucide-react';
 import { TextSelection } from 'prosemirror-state';
 import { useTheme } from '@/components/ThemeProvider';
@@ -131,6 +132,7 @@ function MainApp() {
   const [showAtmospherePreview, setShowAtmospherePreview] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showHistoryTimeline, setShowHistoryTimeline] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [libraryMetadata, setLibraryMetadata] = useState<LibraryMetadata>({ entries: {} });
   const [workspaceInfo, setWorkspaceInfo] = useState<{
@@ -143,6 +145,7 @@ function MainApp() {
     latestCommit: null,
   });
   const fileImportRef = useRef<HTMLInputElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -176,6 +179,9 @@ function MainApp() {
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
       if (!moreMenuRef.current?.contains(event.target as Node)) {
         setShowMoreMenu(false);
       }
@@ -580,6 +586,45 @@ function MainApp() {
     }
   };
 
+  const getExportFilename = () => {
+    const rawName = currentFilePath?.split('/').pop() || 'document';
+    return rawName.replace(/\.enc$/i, '').replace(/\.json$/i, '') || 'document';
+  };
+
+  const handleExportPDF = async () => {
+    try {
+      await exportToPDF(editorContent, theme, getExportFilename());
+      toast.success('PDF 导出成功');
+      setShowExportMenu(false);
+    } catch (error) {
+      console.error('导出 PDF 失败:', error);
+      toast.error(`导出 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleExportDOCX = async () => {
+    try {
+      await exportToDOCX(editorContent, theme, getExportFilename());
+      toast.success('DOCX 导出成功');
+      setShowExportMenu(false);
+    } catch (error) {
+      console.error('导出 DOCX 失败:', error);
+      toast.error(`导出 DOCX 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const handleExportMarkdown = async () => {
+    try {
+      const markdown = exportToMarkdown(editorContent);
+      await saveMarkdownExport(getExportFilename(), markdown);
+      toast.success('Markdown 导出成功');
+      setShowExportMenu(false);
+    } catch (error) {
+      console.error('导出 Markdown 失败:', error);
+      toast.error(`导出 Markdown 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   // 清仓同步：应用关闭前执行队列中的 Push 任务（根据 Sync Protocol.md）
   useEffect(() => {
     const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
@@ -908,7 +953,7 @@ function MainApp() {
           </div>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-2 max-w-[62vw] overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1 sm:gap-2 max-w-[62vw] overflow-x-auto md:overflow-visible no-scrollbar">
           {/* 移动端：块插入按钮 */}
           <button
             onClick={() => setShowBlockSelector(true)}
@@ -1097,11 +1142,12 @@ function MainApp() {
 
           {/* 导出按钮 */}
           {currentFilePath && editorContent && (
-            <div className="relative group hidden sm:block shrink-0">
-              {/* 扩大悬停判定区域 */}
-              <div className="absolute -inset-2 group-hover:block hidden" />
-
+            <div className="relative hidden sm:block shrink-0" ref={exportMenuRef}>
               <button
+                onClick={() => {
+                  setShowExportMenu((open) => !open);
+                  setShowMoreMenu(false);
+                }}
                 className="p-1.5 transition-opacity opacity-50 hover:opacity-100 relative z-10"
                 style={{ color: getThemeAccentColor(theme) }}
                 title="导出文档"
@@ -1109,74 +1155,46 @@ function MainApp() {
                 <FileDown size={18} />
               </button>
 
-              {/* 导出菜单 - 添加过渡区域 */}
-              <div
-                className="absolute right-0 top-full pt-2 hidden group-hover:block z-50"
-              >
+              {showExportMenu && (
                 <div
-                  className="rounded border shadow-lg"
+                  className="absolute right-0 top-full mt-2 rounded border shadow-lg z-50"
                   style={{
                     backgroundColor: getThemeSurfaceColor(theme),
                     borderColor: getThemeBorderColor(theme),
                   }}
                 >
                   <button
-                    onClick={async () => {
-                      try {
-                        const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
-                        await exportToPDF(editorContent, theme, filename);
-                        toast.success('PDF 导出成功');
-                      } catch (error) {
-                        console.error('导出 PDF 失败:', error);
-                        toast.error(`导出 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
-                      }
-                    }}
+                    onClick={handleExportPDF}
                     className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
                     style={{ color: getThemeAccentColor(theme) }}
                   >
                     导出为 PDF
                   </button>
                   <button
-                    onClick={async () => {
-                      try {
-                        const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
-                        await exportToDOCX(editorContent, theme, filename);
-                        toast.success('DOCX 导出成功');
-                      } catch (error) {
-                        console.error('导出 DOCX 失败:', error);
-                        toast.error(`导出 DOCX 失败: ${error instanceof Error ? error.message : String(error)}`);
-                      }
-                    }}
+                    onClick={handleExportDOCX}
                     className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
                     style={{ color: getThemeAccentColor(theme) }}
                   >
                     导出为 DOCX
                   </button>
                   <button
-                    onClick={async () => {
-                      try {
-                        const filename = currentFilePath.split('/').pop()?.replace('.json', '') || 'document';
-                        const markdown = exportToMarkdown(editorContent);
-                        await saveMarkdownExport(filename, markdown);
-                        toast.success('Markdown 导出成功');
-                      } catch (error) {
-                        console.error('导出 Markdown 失败:', error);
-                        toast.error(`导出 Markdown 失败: ${error instanceof Error ? error.message : String(error)}`);
-                      }
-                    }}
+                    onClick={handleExportMarkdown}
                     className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
                     style={{ color: getThemeAccentColor(theme) }}
                   >
                     导出为 Markdown
                   </button>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
           <div className="relative shrink-0" ref={moreMenuRef}>
             <button
-              onClick={() => setShowMoreMenu((open) => !open)}
+              onClick={() => {
+                setShowMoreMenu((open) => !open);
+                setShowExportMenu(false);
+              }}
               className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
               style={{ color: getThemeAccentColor(theme) }}
               title="更多操作"
@@ -1224,6 +1242,34 @@ function MainApp() {
                   <Clock3 size={16} />
                   <span>氛围预览</span>
                 </button>
+                {currentFilePath && (
+                  <>
+                    <button
+                      onClick={handleExportPDF}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      <FileDown size={16} />
+                      <span>导出为 PDF</span>
+                    </button>
+                    <button
+                      onClick={handleExportDOCX}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      <FileText size={16} />
+                      <span>导出为 DOCX</span>
+                    </button>
+                    <button
+                      onClick={handleExportMarkdown}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      <Import size={16} />
+                      <span>导出为 Markdown</span>
+                    </button>
+                  </>
+                )}
                 {currentFilePath && (
                   <>
                     <button
