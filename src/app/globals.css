@@ -34,6 +34,10 @@
 /* Tiptap 编辑器基础样式 */
 .tiptap-editor {
   outline: none;
+  color: var(--doc-text-color, currentColor);
+  font-size: var(--doc-body-font-size, 17px);
+  line-height: var(--doc-line-height, 1.72);
+  font-family: var(--doc-body-font-family, inherit);
   /* 确保光标可见 */
   caret-color: currentColor;
   /* 确保可以选中文本 */
@@ -102,7 +106,7 @@
 }
 
 .tiptap-editor p {
-  margin: 0.5rem 0;
+  margin: 0 0 var(--doc-paragraph-space, 0.8rem);
   word-wrap: break-word; /* 允许换行 */
   overflow-wrap: break-word;
 }
@@ -131,7 +135,7 @@
 
 /* Placeholder 扩展的占位符样式 */
 .tiptap-editor.is-editor-empty::before {
-  color: #78716c;
+  color: var(--doc-muted-color, #78716c);
   content: '铭刻...';
   float: left;
   height: 0;
@@ -141,33 +145,60 @@
 /* 占位符只显示在当前选中的空节点（由 Placeholder 扩展的 showOnlyCurrent 控制） */
 
 .tiptap-editor h1 {
-  font-size: 2rem;
+  font-size: var(--doc-h1-size, 2.15rem);
   font-weight: bold;
-  margin: 2rem 0 1rem 0;
+  line-height: 1.25;
+  margin: var(--doc-heading-margin-top, 1.45rem) 0 var(--doc-heading-margin-bottom, 0.65rem) 0;
+  color: var(--doc-accent-color, currentColor);
+  font-family: var(--doc-heading-font-family, inherit);
+  letter-spacing: var(--doc-heading-letter-spacing, 0.01em);
+}
+
+.tiptap-editor h2 {
+  font-size: var(--doc-h2-size, 1.6rem);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: var(--doc-heading-margin-top, 1.45rem) 0 var(--doc-heading-margin-bottom, 0.65rem) 0;
+  color: var(--doc-accent-color, currentColor);
+  font-family: var(--doc-heading-font-family, inherit);
+  letter-spacing: var(--doc-heading-letter-spacing, 0.01em);
+}
+
+.tiptap-editor h3 {
+  font-size: var(--doc-h3-size, 1.25rem);
+  font-weight: 700;
+  line-height: 1.35;
+  margin: calc(var(--doc-heading-margin-top, 1.45rem) * 0.9) 0 var(--doc-heading-margin-bottom, 0.65rem) 0;
+  color: var(--doc-accent-color, currentColor);
+  font-family: var(--doc-heading-font-family, inherit);
+  letter-spacing: var(--doc-heading-letter-spacing, 0.01em);
 }
 
 .tiptap-editor blockquote {
-  border-left: 2px solid;
-  padding-left: 1rem;
-  margin: 2rem 0;
+  border-left: var(--doc-blockquote-border-width, 3px) solid var(--doc-blockquote-border, currentColor);
+  padding: var(--doc-blockquote-padding, 1rem);
+  margin: var(--doc-blockquote-margin-y, 1.15rem) 0;
   font-style: italic;
+  background-color: var(--doc-blockquote-bg, transparent);
+  border-radius: var(--doc-blockquote-radius, 0.8rem);
 }
 
 .tiptap-editor ul,
 .tiptap-editor ol {
-  padding-left: 1.5rem;
-  margin: 1rem 0;
+  padding-left: var(--doc-list-padding-left, 1.45rem);
+  margin: 0 0 var(--doc-paragraph-space, 0.8rem);
 }
 
 .tiptap-editor li {
-  margin: 0.25rem 0;
+  margin: 0 0 var(--doc-list-item-space, 0.35rem);
 }
 
 .tiptap-editor code {
-  background-color: rgba(0, 0, 0, 0.1);
-  border-radius: 0.25rem;
-  padding: 0.125rem 0.25rem;
-  font-family: monospace;
+  background-color: var(--doc-inline-code-bg, rgba(0, 0, 0, 0.1));
+  color: var(--doc-inline-code-color, currentColor);
+  border-radius: var(--doc-code-inline-radius, 0.35rem);
+  padding: var(--doc-code-inline-pad-y, 0.08rem) var(--doc-code-inline-pad-x, 0.35rem);
+  font-family: var(--doc-mono-font-family, monospace);
 }
 
 /* 文本格式化样式 */
@@ -188,11 +219,13 @@
 }
 
 .tiptap-editor pre {
-  background-color: rgba(0, 0, 0, 0.1);
-  border-radius: 0.25rem;
-  padding: 1rem;
-  margin: 1rem 0;
+  background-color: var(--doc-code-bg, rgba(0, 0, 0, 0.1));
+  border: 1px solid var(--doc-border-color, currentColor);
+  border-radius: var(--doc-code-block-radius, 0.8rem);
+  padding: var(--doc-code-block-padding, 1rem);
+  margin: var(--doc-code-block-margin-y, 1rem) 0;
   overflow-x: auto;
+  font-family: var(--doc-mono-font-family, monospace);
 }
 
 .tiptap-editor pre code {
@@ -209,13 +242,3 @@
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
-
-/* 主题特定样式 */
-.tiptap-editor.theme-arcane h1 {
-  letter-spacing: 0.1em;
-}
-
-.tiptap-editor.theme-terminal {
-  font-family: 'Courier New', monospace;
-}
-

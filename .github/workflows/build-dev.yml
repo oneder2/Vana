@@ -117,6 +117,54 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-windows-preview:
+    name: Build Windows Preview
+    runs-on: windows-latest
+    needs: check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Users\runneradmin\.cargo\bin\
+            C:\Users\runneradmin\.cargo\registry\index\
+            C:\Users\runneradmin\.cargo\registry\cache\
+            C:\Users\runneradmin\.cargo\git\db\
+            src-tauri\target\
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Windows preview bundle
+        shell: pwsh
+        run: npm run tauri:build
+
+      - name: Upload Windows preview artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-preview-artifacts
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error
+          retention-days: 7
+
   build-android-preview:
     name: Build Android Preview
     runs-on: ubuntu-22.04

@@ -9,6 +9,7 @@ import { Theme } from './themes';
 import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeSurfaceColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
 import { invoke } from '@tauri-apps/api/core';
+import { getDocumentDocxSizes, getDocumentStyleTokens } from './documentStyles';
 
 interface InlineRunSpec {
   text: string;
@@ -65,6 +66,12 @@ function escapeTypstText(text: string): string {
     .replace(/_/g, '\\_')
     .replace(/`/g, '\\`')
     .replace(/\$/g, '\\$');
+}
+
+function escapeTypstString(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
 }
 
 function escapeTypstCode(text: string): string {
@@ -224,12 +231,13 @@ function createPDFRenderRoot(
   theme: Theme,
   filename: string
 ): HTMLDivElement {
-  const background = getThemeBgColor(theme);
-  const surface = getThemeSurfaceColor(theme);
-  const border = rgbaToRgb(getThemeBorderColor(theme));
-  const accent = getThemeAccentColor(theme);
-  const text = theme.id === 'vellum' ? '#1c1917' : '#f5f5f4';
-  const muted = theme.id === 'vellum' ? '#57534e' : '#a8a29e';
+  const tokens = getDocumentStyleTokens(theme);
+  const background = tokens.pageBackgroundColor;
+  const surface = tokens.surfaceColor;
+  const border = tokens.borderColor;
+  const accent = tokens.accentColor;
+  const text = tokens.textColor;
+  const muted = tokens.mutedColor;
   const exportedAt = new Date().toLocaleString();
 
   const host = document.createElement('div');
@@ -255,8 +263,9 @@ function createPDFRenderRoot(
         color: ${text};
         padding: 56px 60px 48px;
         box-sizing: border-box;
+        font-size: ${tokens.bodyFontSizePx}px;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-        line-height: 1.7;
+        line-height: ${tokens.lineHeight};
       }
       #pdf-export-render-root .nv-pdf-header {
         display: flex;
@@ -269,14 +278,14 @@ function createPDFRenderRoot(
       }
       #pdf-export-render-root .nv-pdf-title {
         margin: 0;
-        font-size: 28px;
+        font-size: ${tokens.titleSizeRem}rem;
         line-height: 1.25;
         color: ${accent};
         word-break: break-word;
       }
       #pdf-export-render-root .nv-pdf-meta {
         color: ${muted};
-        font-size: 12px;
+        font-size: ${tokens.metaFontSizeRem}rem;
         text-align: right;
         white-space: nowrap;
       }
@@ -284,48 +293,53 @@ function createPDFRenderRoot(
       #pdf-export-render-root .nv-pdf-content h2,
       #pdf-export-render-root .nv-pdf-content h3 {
         color: ${accent};
-        margin: 1.1em 0 0.45em;
+        margin: ${tokens.headingMarginTopRem}em 0 ${tokens.headingMarginBottomRem}em;
         line-height: 1.3;
         page-break-after: avoid;
       }
-      #pdf-export-render-root .nv-pdf-content h1 { font-size: 24px; }
-      #pdf-export-render-root .nv-pdf-content h2 { font-size: 20px; }
-      #pdf-export-render-root .nv-pdf-content h3 { font-size: 17px; }
+      #pdf-export-render-root .nv-pdf-content h1 { font-size: ${tokens.h1SizeRem}rem; }
+      #pdf-export-render-root .nv-pdf-content h2 { font-size: ${tokens.h2SizeRem}rem; }
+      #pdf-export-render-root .nv-pdf-content h3 { font-size: ${tokens.h3SizeRem}rem; }
       #pdf-export-render-root .nv-pdf-content p,
       #pdf-export-render-root .nv-pdf-content ul,
       #pdf-export-render-root .nv-pdf-content ol,
       #pdf-export-render-root .nv-pdf-content blockquote,
       #pdf-export-render-root .nv-pdf-content pre {
-        margin: 0 0 14px;
-        font-size: 14px;
+        margin: 0 0 ${tokens.paragraphSpacingRem}rem;
+        font-size: ${tokens.bodyFontSizePx}px;
         page-break-inside: avoid;
       }
       #pdf-export-render-root .nv-pdf-content ul,
       #pdf-export-render-root .nv-pdf-content ol {
-        padding-left: 24px;
+        padding-left: ${tokens.listPaddingLeftRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content li {
-        margin-bottom: 6px;
+        margin-bottom: ${tokens.listItemSpacingRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content blockquote {
         margin-left: 0;
-        padding: 12px 16px;
-        border-left: 4px solid ${accent};
-        background: ${surface};
+        padding: ${tokens.blockquotePaddingRem}rem;
+        border-left: ${tokens.blockquoteBorderWidthPx}px solid ${tokens.blockquoteBorderColor};
+        background: ${tokens.blockquoteBackgroundColor};
         color: ${text};
+        border-radius: ${tokens.blockquoteRadiusRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content pre {
-        padding: 14px 16px;
+        padding: ${tokens.codeBlockPaddingRem}rem;
         overflow: hidden;
         white-space: pre-wrap;
         word-break: break-word;
-        border-radius: 10px;
+        border-radius: ${tokens.codeBlockRadiusRem}rem;
         border: 1px solid ${border};
-        background: ${surface};
+        background: ${tokens.codeBlockBackgroundColor};
       }
       #pdf-export-render-root .nv-pdf-content code {
         font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
         font-size: 0.92em;
+        background: ${tokens.inlineCodeBackgroundColor};
+        color: ${tokens.inlineCodeTextColor};
+        padding: ${tokens.codeInlinePaddingYRem}rem ${tokens.codeInlinePaddingXRem}rem;
+        border-radius: ${tokens.codeInlineRadiusRem}rem;
       }
       #pdf-export-render-root .nv-pdf-content strong { font-weight: 700; }
       #pdf-export-render-root .nv-pdf-content em { font-style: italic; }
@@ -344,7 +358,7 @@ function createPDFRenderRoot(
         margin-top: 36px;
         border-top: 1px solid ${border};
         color: ${muted};
-        font-size: 11px;
+        font-size: ${tokens.metaFontSizeRem}rem;
       }
     </style>
     <div class="nv-pdf-page">
@@ -429,6 +443,8 @@ function convertInlineContentToTypst(node: JSONContent): string {
         result = `#underline[${result}]`;
       } else if (mark.type === 'strike') {
         result = `#strike[${result}]`;
+      } else if (mark.type === 'code') {
+        result = `#raw("${escapeTypstString(node.text || '')}")`;
       }
     }
 
@@ -467,17 +483,20 @@ function convertListItemToTypst(item: JSONContent, ordered: boolean, depth = 0):
 }
 
 function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string): string {
-  const background = typstColor(getThemeBgColor(theme), '#05040A');
-  const surface = typstColor(getThemeSurfaceColor(theme), '#13111C');
-  const border = typstColor(rgbaToRgb(getThemeBorderColor(theme)), '#2E2842');
-  const accent = typstColor(getThemeAccentColor(theme), '#A855F7');
-  const text = typstColor(theme.id === 'vellum' ? '#292524' : '#D6D3D1', '#D6D3D1');
-  const muted = typstColor(theme.id === 'vellum' ? '#57534E' : '#A8A29E', '#A8A29E');
+  const tokens = getDocumentStyleTokens(theme);
+  const background = typstColor(tokens.pageBackgroundColor, '#05040A');
+  const surface = typstColor(tokens.surfaceColor, '#13111C');
+  const border = typstColor(tokens.borderColor, '#2E2842');
+  const accent = typstColor(tokens.accentColor, '#A855F7');
+  const text = typstColor(tokens.textColor, '#D6D3D1');
+  const muted = typstColor(tokens.mutedColor, '#A8A29E');
   const exportedAt = escapeTypstText(new Date().toLocaleString());
   const title = escapeTypstText(filename);
-  const serifFonts = '("Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif CJK JP", "Noto Serif SC", "Songti SC", "SimSun", "Libertinus Serif", "DejaVu Serif")';
-  const sansFonts = '("Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "DejaVu Sans")';
-  const monoFonts = '("Sarasa Mono SC", "Noto Sans Mono CJK SC", "Noto Sans Mono CJK JP", "Source Han Mono SC", "DejaVu Sans Mono", "Liberation Mono")';
+  const serifFonts = `(${tokens.typstSerifFonts.map((font) => `"${font}"`).join(', ')})`;
+  const sansFonts = `(${tokens.typstSansFonts.map((font) => `"${font}"`).join(', ')})`;
+  const monoFonts = `(${tokens.typstMonoFonts.map((font) => `"${font}"`).join(', ')})`;
+  const bodyFonts = theme.id === 'terminal' ? monoFonts : serifFonts;
+  const headingFonts = theme.id === 'terminal' ? monoFonts : serifFonts;
 
   const blocks = (content.content || []).map((block) => {
     const align = block.attrs?.textAlign;
@@ -491,20 +510,24 @@ function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string
     switch (block.type) {
       case 'heading': {
         const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
-        const size = level === 1 ? '20pt' : level === 2 ? '16pt' : '13pt';
+        const size = level === 1
+          ? `${tokens.h1SizeRem}em`
+          : level === 2
+          ? `${tokens.h2SizeRem}em`
+          : `${tokens.h3SizeRem}em`;
         const body = convertInlineContentToTypst(block).trim() || 'Untitled';
-        return `${alignPrefix}#block(above: 1.2em, below: 0.55em)[#text(size: ${size}, weight: "bold", fill: ${accent})[${body}]]${alignSuffix}`;
+        return `${alignPrefix}#block(above: ${tokens.headingMarginTopRem}em, below: ${tokens.headingMarginBottomRem}em)[#text(font: ${headingFonts}, size: ${size}, weight: "bold", tracking: ${tokens.headingLetterSpacingEm}em, fill: ${accent})[${body}]]${alignSuffix}`;
       }
       case 'blockquote': {
         const body = (block.content || [])
           .map((child) => convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child)))
           .filter(Boolean)
           .join('\n\n');
-        return `#block(inset: 10pt, fill: ${surface}, stroke: (${border}), radius: 6pt, above: 0.6em, below: 0.8em)[${body || ' '}]`;
+        return `#block(inset: ${tokens.blockquotePaddingRem}em, fill: ${typstColor(tokens.blockquoteBackgroundColor, tokens.surfaceColor)}, stroke: (${border}), radius: ${tokens.blockquoteRadiusRem}em, above: ${tokens.blockquoteMarginYRem * 0.55}em, below: ${tokens.blockquoteMarginYRem * 0.7}em)[${body || ' '}]`;
       }
       case 'codeBlock': {
         const raw = escapeTypstCode(extractTextFromJSON(block) || '');
-        return `#block(inset: 10pt, fill: ${surface}, stroke: (${border}), radius: 6pt, above: 0.6em, below: 0.8em)[\n\`\`\`text\n${raw}\n\`\`\`\n]`;
+        return `#block(inset: ${tokens.codeBlockPaddingRem}em, fill: ${typstColor(tokens.codeBlockBackgroundColor, tokens.surfaceColor)}, stroke: (${border}), radius: ${tokens.codeBlockRadiusRem}em, above: ${tokens.codeBlockMarginYRem * 0.6}em, below: ${tokens.codeBlockMarginYRem * 0.8}em)[\n\`\`\`text\n${raw}\n\`\`\`\n]`;
       }
       case 'bulletList':
         return (block.content || []).map((item) => convertListItemToTypst(item, false)).join('\n');
@@ -529,16 +552,16 @@ function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string
   numbering: "1",
   number-align: center,
 )
-#set text(lang: "zh", region: "cn", font: ${serifFonts}, fallback: true, size: 11pt, fill: ${text})
-#set par(justify: false, leading: 0.78em)
+#set text(lang: "zh", region: "cn", font: ${bodyFonts}, fallback: true, size: ${tokens.bodyFontSizePx / 16}em, fill: ${text})
+#set par(justify: false, leading: ${Math.max(tokens.lineHeight - 1, 0.6)}em)
 #show emph: set text(font: ${sansFonts})
 #show strong: set text(font: ${sansFonts})
-#show raw: set text(font: ${monoFonts}, size: 9.5pt, fill: ${text})
+#show raw: set text(font: ${monoFonts}, size: ${Math.max(tokens.bodyFontSizePx * 0.82, 12) / 16}em, fill: ${text})
 
-#block(below: 1.2em)[
-  #text(size: 24pt, weight: "bold", fill: ${accent})[${title}]
+#block(below: ${tokens.headingMarginTopRem}em)[
+  #text(font: ${headingFonts}, size: ${tokens.titleSizeRem}em, weight: "bold", tracking: ${tokens.titleLetterSpacingEm}em, fill: ${accent})[${title}]
   #linebreak()
-  #text(size: 9pt, fill: ${muted})[${escapeTypstText(theme.name)} · ${exportedAt}]
+  #text(size: ${tokens.metaFontSizeRem}em, fill: ${muted})[${escapeTypstText(theme.name)} · ${exportedAt}]
 ]
 
 ${body}
@@ -638,15 +661,15 @@ export async function exportToDOCX(
   filename: string
 ): Promise<void> {
   const paragraphs: Paragraph[] = [];
+  const tokens = getDocumentStyleTokens(theme);
+  const docxSizes = getDocumentDocxSizes(theme);
 
-  // 获取主题颜色（DOCX 使用十六进制颜色，不带 # 号）
-  const accentColorHex = toDocxHexColor(getThemeAccentColor(theme));
-  const textColorHex = toDocxHexColor(theme.id === 'vellum' ? '#292524' : '#D6D3D1');
+  const accentColorHex = toDocxHexColor(tokens.accentColor);
+  const textColorHex = toDocxHexColor(tokens.textColor);
+  const bgColorHex = toDocxHexColor(tokens.pageBackgroundColor);
+  const blockquoteBgHex = toDocxHexColor(tokens.blockquoteBackgroundColor);
+  const codeBgHex = toDocxHexColor(tokens.codeBlockBackgroundColor);
 
-  // 获取背景颜色（DOCX 使用十六进制颜色，不带 # 号）
-  const bgColorHex = getThemeBgColor(theme).replace('#', '');
-
-  // 遍历文档内容
   if (content.content && Array.isArray(content.content)) {
     for (const block of content.content) {
       const text = extractTextFromJSON(block);
@@ -665,8 +688,6 @@ export async function exportToDOCX(
       if (block.type === 'heading') {
         const level = block.attrs?.level || 1;
         const textRuns = convertToTextRuns(block, accentColorHex);
-
-        // 为标题的所有 TextRun 添加粗体和大小
         const headingRuns = textRuns.map((run) => new TextRun({
           text: run.text,
           color: run.color,
@@ -675,7 +696,7 @@ export async function exportToDOCX(
           strike: run.strike,
           bold: true,
           font: run.font,
-          size: level === 1 ? 32 : level === 2 ? 28 : 24,
+          size: level === 1 ? docxSizes.h1 : level === 2 ? docxSizes.h2 : docxSizes.h3,
         }));
 
         paragraphs.push(
@@ -687,7 +708,7 @@ export async function exportToDOCX(
               ? HeadingLevel.HEADING_2
               : HeadingLevel.HEADING_3,
             alignment,
-            spacing: { after: 200 },
+            spacing: { after: 180, before: level === 1 ? 240 : 200 },
             shading: {
               fill: bgColorHex,
             },
@@ -701,23 +722,21 @@ export async function exportToDOCX(
             children: textRuns.map((run) => new TextRun(run)),
             alignment,
             indent: { left: 720 }, // 0.5 inch
-            spacing: { after: 120 },
+            spacing: { after: 160 },
             border: {
               left: {
                 color: accentColorHex,
                 space: 1,
                 style: BorderStyle.SINGLE,
-                size: 24,
+                size: Math.max(tokens.blockquoteBorderWidthPx * 8, 18),
               },
             },
             shading: {
-              fill: bgColorHex,
+              fill: blockquoteBgHex,
             },
           })
         );
       } else if (block.type === 'codeBlock') {
-        const codeBgHex = theme.id === 'vellum' ? 'e9e4d9' : '1a1a1a';
-        // 代码块不应用文本格式化，使用纯文本
         paragraphs.push(
           new Paragraph({
             children: [
@@ -725,22 +744,27 @@ export async function exportToDOCX(
                 text,
                 font: 'Courier New',
                 color: textColorHex,
+                size: docxSizes.body - 2,
               }),
             ],
             alignment: AlignmentType.LEFT,
             shading: {
               fill: codeBgHex,
             },
-            spacing: { after: 120 },
+            spacing: { after: 160 },
           })
         );
       } else {
-        // 普通段落 - 使用带格式的文本
         const textRuns = convertToTextRuns(block, textColorHex);
 
         paragraphs.push(
           new Paragraph({
-            children: textRuns.length > 0 ? textRuns.map((run) => new TextRun(run)) : [new TextRun({ text: '', color: textColorHex })],
+            children: textRuns.length > 0
+              ? textRuns.map((run) => new TextRun({
+                  ...run,
+                  size: docxSizes.body,
+                }))
+              : [new TextRun({ text: '', color: textColorHex, size: docxSizes.body })],
             alignment,
             spacing: { after: 120 },
             shading: {
