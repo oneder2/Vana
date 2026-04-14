@@ -135,6 +135,7 @@ function MainApp() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [libraryMetadata, setLibraryMetadata] = useState<LibraryMetadata>({ entries: {} });
+  const [workspaceRootItemCount, setWorkspaceRootItemCount] = useState(0);
   const [workspaceInfo, setWorkspaceInfo] = useState<{
     branch: string | null;
     commitCount: number;
@@ -333,6 +334,7 @@ function MainApp() {
           commitCount: verification?.commit_count ?? 0,
           latestCommit: verification?.latest_commit_message ?? null,
         });
+        await refreshWorkspaceRootItemCount(path);
         
         // 应用冷启动时执行 Fetch（根据 Sync Protocol.md）
         try {
@@ -427,9 +429,29 @@ function MainApp() {
     return () => window.removeEventListener('online', handleOnline);
   }, [workspacePath]);
 
+  useEffect(() => {
+    if (currentFilePath) return;
+
+    setEditorInstance(null);
+    setEditorTriggerCommit(undefined);
+    setHasUnsavedChanges(false);
+    setShowBlockSelector(false);
+    setShowRadial(false);
+  }, [currentFilePath]);
+
   const persistLibraryState = async (next: LibraryMetadata) => {
     setLibraryMetadata(next);
     await saveLibraryMetadata(next);
+  };
+
+  const refreshWorkspaceRootItemCount = async (path = workspacePath) => {
+    if (!path) {
+      setWorkspaceRootItemCount(0);
+      return;
+    }
+
+    const items = await listDirectory(path);
+    setWorkspaceRootItemCount(items.length);
   };
 
   const refreshWorkspaceInfo = async () => {
@@ -460,6 +482,7 @@ function MainApp() {
       setCurrentFilePath(newPath);
     }
     await refreshWorkspaceInfo();
+    await refreshWorkspaceRootItemCount();
   };
 
   const handleToggleFavorite = async (path: string) => {
@@ -515,6 +538,7 @@ function MainApp() {
     }
     toast.info('已移至回收站');
     await refreshWorkspaceInfo();
+    await refreshWorkspaceRootItemCount();
   };
 
   const handleRestoreFromTrash = async (trashPath: string) => {
@@ -545,6 +569,7 @@ function MainApp() {
     await persistLibraryState(next);
     toast.success('文档已恢复');
     await refreshWorkspaceInfo();
+    await refreshWorkspaceRootItemCount();
   };
 
   const handleDeletePermanently = async (path: string) => {
@@ -562,6 +587,7 @@ function MainApp() {
     await persistLibraryState(next);
     toast.info('已永久删除');
     await refreshWorkspaceInfo();
+    await refreshWorkspaceRootItemCount();
   };
 
   const triggerMarkdownImport = () => {
@@ -579,10 +605,30 @@ function MainApp() {
       const content = JSON.stringify(markdownToTiptapJSON(markdown), null, 2);
       await createFile(path, content);
       toast.success('Markdown 导入成功');
+      await refreshWorkspaceRootItemCount();
     } catch (error) {
       toast.error(`Markdown 导入失败: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       event.target.value = '';
+    }
+  };
+
+  const handleCreateDocumentFromDashboard = async () => {
+    if (!workspacePath) {
+      toast.error('工作区尚未初始化');
+      return;
+    }
+
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const path = `${workspacePath}/Untitled-${timestamp}.enc`;
+      const defaultContent: JSONContent = { type: 'doc', content: [] };
+      await createFile(path, JSON.stringify(defaultContent, null, 2));
+      await refreshWorkspaceRootItemCount();
+      await handleFileSelect(path);
+      toast.success('已创建新文档');
+    } catch (error) {
+      toast.error(`创建文档失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -830,6 +876,10 @@ function MainApp() {
   const currentFileLocation = currentFilePath
     ? toRelativeWorkspacePath(workspacePath, currentFilePath).split('/').slice(0, -1).join('/') || 'Workspace Root'
     : 'Select a file from the sidebar';
+  const hasActiveDocument = Boolean(currentFilePath);
+  const isWorkspaceEmpty = workspaceRootItemCount === 0;
+  const dashboardRecentItems = recentItems.slice(0, 5);
+  const dashboardFavoriteItems = favoriteItems.slice(0, 5);
 
   const commandPaletteItems: CommandPaletteItem[] = useMemo(() => {
     const items: CommandPaletteItem[] = [
@@ -853,6 +903,13 @@ function MainApp() {
         group: 'Content',
         keywords: ['markdown', 'import'],
         onSelect: triggerMarkdownImport,
+      },
+      {
+        id: 'create-document',
+        title: '新建文档',
+        group: 'Content',
+        keywords: ['new', 'create', 'document'],
+        onSelect: handleCreateDocumentFromDashboard,
       },
       {
         id: 'settings',
@@ -898,7 +955,7 @@ function MainApp() {
     });
 
     return items;
-  }, [currentFilePath, currentLibraryEntry?.archived_at, currentLibraryEntry?.favorite, recentItems]);
+  }, [currentFilePath, currentLibraryEntry?.archived_at, currentLibraryEntry?.favorite, recentItems, workspacePath]);
 
   return (
     <div
@@ -955,22 +1012,25 @@ function MainApp() {
 
         <div className="flex items-center gap-1 sm:gap-2 max-w-[62vw] overflow-x-auto md:overflow-visible no-scrollbar">
           {/* 移动端：块插入按钮 */}
-          <button
-            onClick={() => setShowBlockSelector(true)}
-            className="md:hidden"
-            style={{ color: getThemeAccentColor(theme) }}
-            title="插入新块"
-          >
-            <Plus size={20} />
-          </button>
+          {hasActiveDocument && (
+            <button
+              onClick={() => setShowBlockSelector(true)}
+              className="md:hidden"
+              style={{ color: getThemeAccentColor(theme) }}
+              title="插入新块"
+            >
+              <Plus size={20} />
+            </button>
+          )}
           
           {/* 文本格式化按钮组 */}
-          <div className="hidden md:flex items-center gap-1 border rounded"
-            style={{
-              borderColor: getThemeBorderColor(theme),
-              backgroundColor: getThemeSurfaceColor(theme),
-            }}
-          >
+          {hasActiveDocument && (
+            <div className="hidden md:flex items-center gap-1 border rounded"
+              style={{
+                borderColor: getThemeBorderColor(theme),
+                backgroundColor: getThemeSurfaceColor(theme),
+              }}
+            >
             <button
               onClick={() => {
                 if (editorInstance) {
@@ -1035,15 +1095,17 @@ function MainApp() {
             >
               <Strikethrough size={16} />
             </button>
-          </div>
+            </div>
+          )}
 
           {/* 文本对齐按钮组 - 每个块独立对齐 */}
-          <div className="hidden md:flex items-center gap-1 border rounded"
-            style={{
-              borderColor: getThemeBorderColor(theme),
-              backgroundColor: getThemeSurfaceColor(theme),
-            }}
-          >
+          {hasActiveDocument && (
+            <div className="hidden md:flex items-center gap-1 border rounded"
+              style={{
+                borderColor: getThemeBorderColor(theme),
+                backgroundColor: getThemeSurfaceColor(theme),
+              }}
+            >
             <button
               onClick={() => {
                 if (editorInstance) {
@@ -1092,7 +1154,8 @@ function MainApp() {
             >
               <AlignRight size={16} />
             </button>
-          </div>
+            </div>
+          )}
           
           <div className="flex items-center gap-2" title={syncMessage || '同步状态'}>
             <span
@@ -1470,18 +1533,139 @@ function MainApp() {
             }
           }}
         >
-          <div className={isPrivate ? '' : 'blur-xl select-none opacity-20'}>
-            <Editor
-              filePath={currentFilePath}
-              initialContent={editorContent}
-              onContentChange={setEditorContent}
-              workspacePath={workspacePath}
-              onEditorReady={(editor, triggerCommit) => {
-                setEditorInstance(editor);
-                setEditorTriggerCommit(() => triggerCommit);
-              }}
-              onUnsavedChangesChange={setHasUnsavedChanges}
-            />
+          <div className={isPrivate ? 'h-full' : 'h-full blur-xl select-none opacity-20'}>
+            {hasActiveDocument ? (
+              <Editor
+                filePath={currentFilePath}
+                initialContent={editorContent}
+                onContentChange={setEditorContent}
+                workspacePath={workspacePath}
+                onEditorReady={(editor, triggerCommit) => {
+                  setEditorInstance(editor);
+                  setEditorTriggerCommit(() => triggerCommit);
+                }}
+                onUnsavedChangesChange={setHasUnsavedChanges}
+              />
+            ) : (
+              <main className="mx-auto flex min-h-full w-full max-w-5xl items-center px-6 py-10">
+                <section
+                  className="w-full rounded-3xl border p-6 md:p-10"
+                  style={{
+                    backgroundColor: getThemeSurfaceColor(theme),
+                    borderColor: getThemeBorderColor(theme),
+                  }}
+                >
+                  <div className="max-w-2xl">
+                    <div
+                      className={`text-[11px] uppercase tracking-[0.24em] opacity-50 ${theme.uiFont}`}
+                      style={{ color: getThemeAccentColor(theme) }}
+                    >
+                      Workspace Dashboard
+                    </div>
+                    <h1 className="mt-3 text-2xl md:text-4xl" style={{ color: getThemeAccentColor(theme) }}>
+                      {isWorkspaceEmpty ? '工作区还是空的' : '选择一个文档开始编辑'}
+                    </h1>
+                    <p className="mt-3 max-w-xl text-sm leading-7 opacity-70">
+                      {isWorkspaceEmpty
+                        ? '先创建一个文档，或者导入现有 Markdown。编辑器相关控件会在选中文档后出现。'
+                        : '当前没有选中文档。你可以从左侧列表打开已有内容，或者直接在这里创建新文档。'}
+                    </p>
+                  </div>
+
+                  <div className="mt-8 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={handleCreateDocumentFromDashboard}
+                      className="rounded-full px-4 py-2 text-sm transition-opacity hover:opacity-85"
+                      style={{
+                        backgroundColor: getThemeAccentBgColor(theme),
+                        color: getThemeAccentColor(theme),
+                      }}
+                    >
+                      新建文档
+                    </button>
+                    <button
+                      type="button"
+                      onClick={triggerMarkdownImport}
+                      className="rounded-full border px-4 py-2 text-sm transition-opacity hover:opacity-85"
+                      style={{
+                        borderColor: getThemeBorderColor(theme),
+                        color: getThemeAccentColor(theme),
+                      }}
+                    >
+                      导入 Markdown
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCommandPalette(true)}
+                      className="rounded-full border px-4 py-2 text-sm transition-opacity hover:opacity-85"
+                      style={{
+                        borderColor: getThemeBorderColor(theme),
+                        color: getThemeAccentColor(theme),
+                      }}
+                    >
+                      打开命令面板
+                    </button>
+                  </div>
+
+                  <div className="mt-10 grid gap-4 md:grid-cols-2">
+                    <section
+                      className="rounded-2xl border p-4"
+                      style={{ borderColor: getThemeBorderColor(theme) + '80' }}
+                    >
+                      <div className={`text-[11px] uppercase tracking-[0.22em] opacity-55 ${theme.uiFont}`}>最近文档</div>
+                      <div className="mt-3 space-y-2">
+                        {dashboardRecentItems.length > 0 ? (
+                          dashboardRecentItems.map((path) => (
+                            <button
+                              key={path}
+                              type="button"
+                              onClick={() => handleFileSelect(path)}
+                              className="block w-full rounded-xl px-3 py-2 text-left transition-opacity hover:opacity-85"
+                              style={{ backgroundColor: getThemeAccentBgColor(theme) + '24', color: getThemeAccentColor(theme) }}
+                            >
+                              <div className="truncate text-sm">{path.split('/').pop()?.replace(/\.enc$/i, '')}</div>
+                              <div className="truncate text-[11px] opacity-45">
+                                {toRelativeWorkspacePath(workspacePath, path)}
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="text-sm opacity-45">还没有最近文档记录</div>
+                        )}
+                      </div>
+                    </section>
+
+                    <section
+                      className="rounded-2xl border p-4"
+                      style={{ borderColor: getThemeBorderColor(theme) + '80' }}
+                    >
+                      <div className={`text-[11px] uppercase tracking-[0.22em] opacity-55 ${theme.uiFont}`}>收藏文档</div>
+                      <div className="mt-3 space-y-2">
+                        {dashboardFavoriteItems.length > 0 ? (
+                          dashboardFavoriteItems.map((path) => (
+                            <button
+                              key={path}
+                              type="button"
+                              onClick={() => handleFileSelect(path)}
+                              className="block w-full rounded-xl px-3 py-2 text-left transition-opacity hover:opacity-85"
+                              style={{ backgroundColor: getThemeAccentBgColor(theme) + '24', color: getThemeAccentColor(theme) }}
+                            >
+                              <div className="truncate text-sm">{path.split('/').pop()?.replace(/\.enc$/i, '')}</div>
+                              <div className="truncate text-[11px] opacity-45">
+                                {toRelativeWorkspacePath(workspacePath, path)}
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="text-sm opacity-45">还没有收藏文档</div>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                </section>
+              </main>
+            )}
           </div>
         </div>
       </div>
@@ -1581,7 +1765,7 @@ function MainApp() {
 
 
       {/* 移动端：块类型选择器（底部上拉框） */}
-      {showBlockSelector && (
+      {hasActiveDocument && showBlockSelector && (
         <BlockTypeSelector
           editor={editorInstance}
           onClose={() => setShowBlockSelector(false)}
