@@ -48,9 +48,6 @@ jobs:
       - name: Run lint
         run: npm run lint
 
-      - name: Build frontend
-        run: npm run build
-
       - name: Check Rust
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
@@ -247,7 +244,7 @@ jobs:
 
       - name: Build Android debug APK
         run: |
-          npx tauri android build --debug --target aarch64 --verbose
+          npx tauri android build --debug --target aarch64
           find src-tauri/gen/android -type f \( -name "*.apk" -o -name "*.aab" \) | head -20
 
       - name: Upload Android preview artifacts

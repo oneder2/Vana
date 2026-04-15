@@ -9,7 +9,6 @@ const nativeLinuxTarget = process.arch === "x64" ? "x86_64-unknown-linux-gnu" : 
 const tauriConfigPath = path.join(repoRoot, "src-tauri", "tauri.conf.json");
 
 const env = { ...process.env };
-const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
 if (isLinux) {
   env.PKG_CONFIG_PATH = env.PKG_CONFIG_PATH
     ? `${localPkgConfig}:${env.PKG_CONFIG_PATH}`
@@ -148,12 +147,20 @@ function recoverAppImageBundle() {
   return fs.existsSync(expectedPath);
 }
 
-const child = spawn(npxCommand, ["tauri", ...args], {
-  cwd: repoRoot,
-  env,
-  stdio: "inherit",
-  shell: false,
-});
+const child =
+  process.platform === "win32"
+    ? spawn("cmd.exe", ["/d", "/s", "/c", "npx", "tauri", ...args], {
+        cwd: repoRoot,
+        env,
+        stdio: "inherit",
+        shell: false,
+      })
+    : spawn("npx", ["tauri", ...args], {
+        cwd: repoRoot,
+        env,
+        stdio: "inherit",
+        shell: false,
+      });
 
 child.on("exit", (code, signal) => {
   if (signal) {
