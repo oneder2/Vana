@@ -6,14 +6,14 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://127.0.0.1:3000",
     "frontendDist": "../out"
   },
   "app": {
     "windows": [
       {
         "label": "main",
-        "title": "No Visitors - Git-based Arcane Archive",
+        "title": "No Visitors",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

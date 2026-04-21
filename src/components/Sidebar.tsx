@@ -327,7 +327,7 @@ function FolderItem({
       {/* 树状结构竖线：显示层级关系 */}
       {level > 0 && (
         <div
-          className="absolute left-0 top-0 bottom-0 w-px"
+          className="hidden md:block absolute left-0 top-0 bottom-0 w-px"
           style={{
             backgroundColor: getThemeBorderColor(theme),
             opacity: 0.3,
@@ -345,13 +345,13 @@ function FolderItem({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-all duration-200 relative ${
+        className={`flex items-center gap-2 px-2.5 py-2.5 md:p-2 rounded-xl cursor-pointer transition-all duration-200 relative min-w-0 ${
           item.is_directory
             ? 'hover:bg-stone-800/20'
             : 'opacity-50 hover:opacity-100'
         } ${isDragging ? 'opacity-30 scale-95' : ''} ${isDragOver ? 'bg-stone-800/40 scale-[1.02]' : ''}`}
         style={{ 
-          paddingLeft: `${level * 1 + 0.5}rem`,
+          paddingLeft: `${Math.min(level, 4) * 0.75 + 0.75}rem`,
           ...(isDragOver ? { 
             outline: `2px solid ${getThemeAccentColor(theme)}`,
             outlineOffset: '2px',
@@ -370,7 +370,7 @@ function FolderItem({
         {Array.from({ length: level }).map((_, idx) => (
           <div
             key={idx}
-            className="absolute top-0 bottom-0 w-px"
+            className="hidden md:block absolute top-0 bottom-0 w-px"
             style={{
               backgroundColor: getThemeBorderColor(theme),
               opacity: 0.3,
@@ -393,7 +393,7 @@ function FolderItem({
             <FileText size={16} />
           </>
         )}
-        <span className="text-xs truncate flex-1">{removeEncSuffix(item.name)}</span>
+        <span className="text-[13px] md:text-xs truncate flex-1 min-w-0 whitespace-nowrap">{removeEncSuffix(item.name)}</span>
         {/* 目录主题颜色标识 */}
         {item.is_directory && itemThemeId && (
           <div className="flex items-center gap-1 flex-shrink-0">
@@ -931,13 +931,13 @@ export function Sidebar({
         return;
       }
 
-      // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
+      // 兼容旧同步封装的占位读取；当前主线通常走本地删除
       const patToken = await getPatToken();
       const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
       
-      // 如果配置了远程仓库和 PAT，使用带 Git 同步的删除
+      // 若旧同步兼容层仍返回远端配置，则沿用兼容删除入口
       if (remoteUrl && patToken) {
-        console.log('[删除] 使用 Git 同步删除');
+        console.log('[删除] 使用兼容同步删除');
         if (item.is_directory) {
           await deleteDirectoryWithGitSync(
             workspacePath,
@@ -960,8 +960,8 @@ export function Sidebar({
           );
         }
       } else {
-        // 否则只执行删除（不推送）
-        console.log('[删除] 仅执行删除（未配置远程仓库或 PAT）');
+        // 默认只执行本地删除
+        console.log('[删除] 执行本地删除');
         if (item.is_directory) {
           await deleteDirectory(item.path);
           // 删除目录时，也清除主题缓存
@@ -1087,13 +1087,13 @@ export function Sidebar({
           setIsRenaming(true);
           
           try {
-            // 获取 PAT Token 和远程仓库 URL（用于 Git 同步）
+            // 兼容旧同步封装的占位读取；当前主线通常走本地重命名
             const patToken = await getPatToken();
             const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
             
-            // 如果配置了远程仓库和 PAT，使用带 Git 同步的重命名
+            // 若旧同步兼容层仍返回远端配置，则沿用兼容重命名入口
             if (remoteUrl && patToken) {
-              console.log('[重命名] 使用 Git 同步重命名');
+              console.log('[重命名] 使用兼容同步重命名');
               await renameFileWithGitSync(
                 workspacePath,
                 item.path,
@@ -1102,10 +1102,10 @@ export function Sidebar({
                 'main',
                 patToken
               );
-              console.log('[重命名] Git 同步重命名完成');
+              console.log('[重命名] 兼容同步重命名完成');
             } else {
-              // 否则只执行重命名（不推送）
-              console.log('[重命名] 仅执行重命名（未配置远程仓库或 PAT）');
+              // 默认只执行本地重命名
+              console.log('[重命名] 执行本地重命名');
               await renameFileOrDirectory(item.path, newPath);
               console.log('[重命名] 重命名完成');
             }
@@ -1164,8 +1164,8 @@ export function Sidebar({
   return (
     <aside
       className={`
-        ${isOpen ? 'translate-x-0 w-[85vw] max-w-xs md:w-64' : '-translate-x-full w-0'} 
-        fixed md:relative z-40 h-full border-r 
+        ${isOpen ? 'translate-x-0 w-[88vw] max-w-sm md:w-64 pointer-events-auto' : '-translate-x-full w-0 pointer-events-none md:pointer-events-auto'} 
+        fixed md:relative z-40 h-full border-r overflow-hidden
         transition-all duration-300 ease-in-out flex flex-col
       `}
       style={{
@@ -1179,7 +1179,7 @@ export function Sidebar({
       }}
     >
       <div 
-        className="p-4 flex-1 overflow-y-auto transition-colors"
+        className={`p-3 md:p-4 flex-1 overflow-y-auto transition-all duration-200 ${isOpen ? 'opacity-100' : 'opacity-0 md:opacity-100'}`}
         onDragOver={handleRootDragOver}
         onDragLeave={handleRootDragLeave}
         onDrop={handleRootDrop}
@@ -1206,8 +1206,8 @@ export function Sidebar({
           } : {}),
         }}
       >
-        <div className={`text-[10px] ${theme.uiFont} mb-4 opacity-40 uppercase tracking-widest flex items-center justify-between`}>
-          <span>归档单元</span>
+        <div className={`text-[10px] ${theme.uiFont} mb-3 md:mb-4 opacity-50 uppercase tracking-[0.22em] flex items-center justify-between`}>
+          <span>{isOpen ? 'workspace' : ''}</span>
           {/* 创建文件/文件夹按钮 - 点击后显示根目录右键菜单 */}
           <button
             onClick={(e) => {
@@ -1236,8 +1236,8 @@ export function Sidebar({
         ) : (
           <>
             {(favoriteItems.length > 0 || recentItems.length > 0 || archivedItems.length > 0 || trashItems.length > 0) && (
-              <div className="mb-4">
-                <div className={`mb-2 px-1 text-[10px] ${theme.uiFont} tracking-[0.22em] opacity-35`}>
+              <div className="mb-3 md:mb-4">
+                <div className={`mb-2 px-1 text-[10px] ${theme.uiFont} tracking-[0.18em] opacity-30`}>
                   快捷访问
                 </div>
                 {favoriteItems.length > 0 && (

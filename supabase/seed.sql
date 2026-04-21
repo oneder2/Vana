@@ -1,0 +1,2 @@
+-- Intentionally empty for now.
+-- Vana seeds its first local document in SQLite, not in Supabase.

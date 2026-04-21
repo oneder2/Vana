@@ -243,6 +243,13 @@ fn map_remote_error_message(error: &str, remote_url: Option<&str>, has_pat: bool
         );
     }
 
+    if lower.contains("ssl certificate") || lower.contains("certificate is invalid") || lower.contains("tls") {
+        return (
+            "远程仓库 TLS/SSL 证书校验失败。".to_string(),
+            Some("Android 端当前使用内置 TLS 栈，部分环境下会误判 HTTPS 证书；若仓库地址与 PAT 正确，可继续检查应用版本是否已包含移动端证书兼容修复。".to_string()),
+        );
+    }
+
     if lower.contains("could not resolve host") || lower.contains("failed to connect") || lower.contains("timed out") {
         return (
             "无法连接到远程仓库服务器。".to_string(),
@@ -396,9 +403,10 @@ pub fn validate_remote_connection(
 
     let mut callbacks = git2::RemoteCallbacks::new();
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "android"))]
     {
-        callbacks.certificate_check(|_cert, _host| {
+        callbacks.certificate_check(|_cert, host| {
+            eprintln!("[GitOperation] validate_remote_connection: {} 平台 - 跳过 HTTPS 证书校验，host={:?}", std::env::consts::OS, host);
             Ok(git2::CertificateCheckStatus::CertificateOk)
         });
     }
@@ -498,12 +506,10 @@ pub fn fetch_from_remote(repo_path: &Path, remote_name: &str, pat_token: Option<
     // Windows 平台：配置证书检查回调以解决 Schannel SSL 证书验证问题
     // 在 Windows 上，libgit2 使用 Schannel 作为 SSL 后端，可能会遇到证书吊销检查失败的问题
     // 参考：https://github.com/libgit2/libgit2/issues/6724
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "android"))]
     {
-        callbacks.certificate_check(|_cert, _host| {
-            // 对于 HTTPS 连接，接受所有证书（因为我们使用 PAT 认证）
-            // 这解决了 Windows 上 "certificate revocation status could not be verified" 的问题
-            eprintln!("[GitOperation] fetch_from_remote: Windows 平台 - 跳过证书吊销检查");
+        callbacks.certificate_check(|_cert, host| {
+            eprintln!("[GitOperation] fetch_from_remote: {} 平台 - 跳过 HTTPS 证书校验，host={:?}", std::env::consts::OS, host);
             Ok(git2::CertificateCheckStatus::CertificateOk)
         });
     }
@@ -591,12 +597,10 @@ pub fn push_to_remote(repo_path: &Path, remote_name: &str, branch_name: &str, pa
     // Windows 平台：配置证书检查回调以解决 Schannel SSL 证书验证问题
     // 在 Windows 上，libgit2 使用 Schannel 作为 SSL 后端，可能会遇到证书吊销检查失败的问题
     // 参考：https://github.com/libgit2/libgit2/issues/6724
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "android"))]
     {
-        callbacks.certificate_check(|_cert, _host| {
-            // 对于 HTTPS 连接，接受所有证书（因为我们使用 PAT 认证）
-            // 这解决了 Windows 上 "certificate revocation status could not be verified" 的问题
-            eprintln!("[GitOperation] push_to_remote: Windows 平台 - 跳过证书吊销检查");
+        callbacks.certificate_check(|_cert, host| {
+            eprintln!("[GitOperation] push_to_remote: {} 平台 - 跳过 HTTPS 证书校验，host={:?}", std::env::consts::OS, host);
             Ok(git2::CertificateCheckStatus::CertificateOk)
         });
     }

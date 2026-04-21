@@ -69,12 +69,12 @@ fi
 
 echo ""
 
-# 4. 检查 Next.js 构建
-echo "4. 检查 Next.js 构建..."
+# 4. 检查 Vite 前端构建
+echo "4. 检查 Vite 前端构建..."
 if npm run build > /dev/null 2>&1; then
-    echo "  ✓ Next.js 构建成功"
+    echo "  ✓ Vite 构建成功"
 else
-    echo "  ✗ Next.js 构建失败"
+    echo "  ✗ Vite 构建失败"
     exit 1
 fi
 
@@ -83,7 +83,7 @@ echo ""
 # 5. 检查敏感文件
 echo "5. 检查敏感文件..."
 if [ -f "secrets/.pat" ]; then
-    echo "  ⚠ secrets/.pat 存在（确保已添加到 .gitignore）"
+    echo "  ⚠ secrets/.pat 存在（旧 Git/PAT 分支遗留文件，请确认不会被提交）"
 else
     echo "  ✓ 无敏感文件泄露风险"
 fi

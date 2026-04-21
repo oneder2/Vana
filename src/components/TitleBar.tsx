@@ -8,15 +8,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { Minus, Square, X, Maximize2 } from 'lucide-react';
-import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { useTheme } from '@/components/ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
 import { isMobile } from '@/lib/platform';
+import { getCurrentTauriWindow, type TauriWindowHandle } from '@/lib/tauriWindow';
 
 export function TitleBar() {
   const { theme } = useTheme();
   const [isMaximized, setIsMaximized] = useState(false);
-  const [appWindow, setAppWindow] = useState<Window | null>(null);
+  const [appWindow, setAppWindow] = useState<TauriWindowHandle | null>(null);
   const [shouldHide, setShouldHide] = useState(false);
 
   // 初始化窗口对象（仅在 Tauri 环境中）
@@ -30,10 +30,10 @@ export function TitleBar() {
         }
 
         // 检查是否在 Tauri 环境中
-        if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-          const windowObj = getCurrentWindow();
+        const windowObj = await getCurrentTauriWindow();
+        if (windowObj) {
           setAppWindow(windowObj);
-          
+
           // 检查窗口是否最大化
           const maximized = await windowObj.isMaximized();
           setIsMaximized(maximized);
@@ -49,13 +49,9 @@ export function TitleBar() {
     initWindow();
   }, []);
 
-  if (shouldHide) {
-    return null;
-  }
-
   // 监听窗口状态变化
   useEffect(() => {
-    if (!appWindow) return;
+    if (shouldHide || !appWindow) return;
 
     const checkMaximized = async () => {
       try {
@@ -74,7 +70,11 @@ export function TitleBar() {
     return () => {
       unlistenPromise.then((cleanup) => cleanup()).catch(() => {});
     };
-  }, [appWindow]);
+  }, [appWindow, shouldHide]);
+
+  if (shouldHide) {
+    return null;
+  }
 
   const handleMinimize = async () => {
     if (!appWindow) return;
@@ -158,7 +158,7 @@ export function TitleBar() {
         {/* 关闭 */}
         <button
           onClick={handleClose}
-          className="w-8 h-8 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors rounded"
+          className="w-8 h-8 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors"
           style={{ color: getThemeAccentColor(theme) }}
           title="关闭"
         >

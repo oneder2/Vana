@@ -7,9 +7,15 @@
 
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Scissors, Clipboard, MousePointer2, Trash2, FileText, Folder, Palette } from 'lucide-react';
+import { Copy, Scissors, Clipboard, MousePointer2, Trash2, FileText, Folder, Palette, type LucideIcon } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
+
+export interface ContextMenuItem {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+}
 
 // 右键菜单属性
 interface ContextMenuProps {
@@ -17,6 +23,7 @@ interface ContextMenuProps {
   y: number;
   onClose: () => void;
   onAction?: (action: string) => void;
+  items?: ContextMenuItem[];
   hasSelection?: boolean;
   isBlock?: boolean;
   isFile?: boolean; // 是否为文件操作菜单
@@ -39,6 +46,7 @@ export function ContextMenu({
   y,
   onClose,
   onAction,
+  items,
   hasSelection = false,
   isBlock = false,
   isFile = false,
@@ -155,7 +163,7 @@ export function ContextMenu({
     ...(isBlock ? [{ id: 'delete', label: '删除块', icon: Trash2 }] : []),
   ];
 
-  const menuItems = isFile ? fileMenuItems : blockMenuItems;
+  const menuItems = items ?? (isFile ? fileMenuItems : blockMenuItems);
 
   // 使用 Portal 将菜单渲染到 document.body，避免受父元素 transform 影响
   // 这样可以确保 fixed 定位相对于视口，而不是相对于有 transform 的父元素

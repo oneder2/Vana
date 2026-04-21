@@ -13,6 +13,20 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val env = System.getenv()
+val releaseStoreFile = env["VANA_ANDROID_KEYSTORE_PATH"]
+val releaseStorePassword = env["VANA_ANDROID_KEYSTORE_PASSWORD"]
+val releaseKeyAlias = env["VANA_ANDROID_KEY_ALIAS"]
+val releaseKeyPassword = env["VANA_ANDROID_KEY_PASSWORD"]
+val useDebugSigning = env["VANA_ANDROID_USE_DEBUG_SIGNING"] == "1"
+val debugKeystorePath = System.getProperty("user.home") + "/.android/debug.keystore"
+val debugKeystore = file(debugKeystorePath)
+val hasReleaseSigning = !releaseStoreFile.isNullOrBlank() &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+val hasDebugSigning = useDebugSigning && debugKeystore.exists()
+
 android {
     compileSdk = 36
     namespace = "com.vana.no_visitors"
@@ -24,13 +38,32 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    signingConfigs {
+        create("vanaRelease") {
+            when {
+                hasReleaseSigning -> {
+                    storeFile = file(releaseStoreFile!!)
+                    storePassword = releaseStorePassword
+                    keyAlias = releaseKeyAlias
+                    keyPassword = releaseKeyPassword
+                }
+                hasDebugSigning -> {
+                    storeFile = debugKeystore
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                }
+            }
+        }
+    }
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
+            packaging {
+                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86_64/*.so")
@@ -38,6 +71,9 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            if (hasReleaseSigning || hasDebugSigning) {
+                signingConfig = signingConfigs.getByName("vanaRelease")
+            }
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))

@@ -1,1682 +1,1160 @@
-/**
- * No Visitors - 主页面
- * 集成所有组件的主应用界面
- * 包含顶部导航、侧边栏、编辑器和底部状态栏
- */
-
 'use client';
 
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { JSONContent } from '@tiptap/core';
 import {
-  Menu,
-  ChevronRight,
-  Shield,
-  Layers,
-  Database,
-  MoreHorizontal,
-  X,
   Archive,
+  ChevronRight,
   Clock3,
-  History,
+  Download,
+  FilePlus2,
+  FileText,
+  Folder,
+  FolderOpen,
+  Heart,
   Import,
-  Star,
+  LayoutTemplate,
+  Menu,
+  Plus,
+  RefreshCw,
+  Settings,
+  Tag,
   Trash2,
+  X,
 } from 'lucide-react';
-import { TextSelection } from 'prosemirror-state';
+import { TitleBar } from '@/components/TitleBar';
+import { Editor } from '@/components/Editor';
+import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
+import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
+import { InputModal } from '@/components/InputModal';
 import { useTheme } from '@/components/ThemeProvider';
 import { useToast } from '@/components/ToastProvider';
-import { Modal } from '@/components/Modal';
-import { Sidebar } from '@/components/Sidebar';
-import { Editor } from '@/components/Editor';
-import { RadialMenu } from '@/components/RadialMenu';
-import { BlockTypeSelector } from '@/components/BlockTypeSelector';
-import { SearchModal } from '@/components/SearchModal';
-import { AtmospherePreviewModal } from '@/components/AtmospherePreviewModal';
-import { HistoryTimelineModal } from '@/components/HistoryTimelineModal';
-import { TitleBar } from '@/components/TitleBar';
-import { getAllThemes, getThemeIcon } from '@/lib/themes';
-import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
 import {
-  readFile,
-  getWorkspacePath,
+  createDocument,
   ensureWorkspaceInitialized,
-  fetchFromRemote,
-  getRemoteUrl,
-  getPatToken,
-  commitChanges,
-  readWorkspaceConfig,
-  createFile,
-  deleteDirectory,
-  deleteFile,
-  gitGc,
-  getCurrentBranch,
-  listDirectory,
-  moveFileOrDirectory,
-  type LibraryMetadata,
-  verifyRepository,
-  writeWorkspaceConfig,
+  getAppState,
+  getDocument,
+  importLegacyWorkspace,
+  listDocuments,
+  listTags,
+  moveDocument,
+  saveDocument,
+  setDocumentStatus,
+  toggleFavorite,
+  type AppState,
+  type DocumentRecord,
+  type DocumentSummary,
+  type TagRecord,
 } from '@/lib/api';
-import { retryFailedPushTasks, getQueueSize } from '@/lib/syncQueue';
-import { loadAtmosphereConfig, findThemeForFile } from '@/lib/atmosphere';
-import { loadWindowState, saveWindowState } from '@/lib/windowState';
-import { exportToPDF, exportToDOCX, exportToMarkdown, saveMarkdownExport } from '@/lib/export';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Plus, AlignCenter, AlignLeft, AlignRight, Settings, GitCommit, Search, FileDown, Bold, Italic, Underline, Strikethrough } from 'lucide-react';
-import Link from 'next/link';
-import type { Editor as TiptapEditor } from '@tiptap/react';
-import type { JSONContent } from '@tiptap/core';
-import type { EditorLayout } from '@/components/Editor';
+import { exportToDOCX, exportToMarkdown, exportToPDF, saveMarkdownExport } from '@/lib/export';
+import { runSupabaseSync } from '@/lib/supabaseSync';
 import {
-  createRestoreTargetPath,
-  createTrashTargetPath,
-  deleteLibraryEntry,
-  getLibraryEntry,
-  listArchivedEntries,
-  listFavoriteEntries,
-  listRecentEntries,
-  listTrashEntries,
-  loadLibraryMetadata,
-  markFileOpened,
-  normalizePath,
-  renameLibraryEntries,
-  saveLibraryMetadata,
-  toRelativeWorkspacePath,
-  upsertLibraryEntry,
-} from '@/lib/library';
-import { markdownToTiptapJSON } from '@/lib/markdown';
-import { isMobile as detectMobilePlatform } from '@/lib/platform';
+  getThemeAccentBgColor,
+  getThemeAccentColor,
+  getThemeBgColor,
+  getThemeBorderColor,
+  getThemeSurfaceColor,
+} from '@/lib/themeStyles';
+import { AppLink } from '@/lib/router';
 
-/**
- * 计算 JSONContent 中的字数
- */
-function countWords(content: JSONContent): number {
-  if (!content.content) return 0;
-  
-  let count = 0;
-  const traverse = (node: JSONContent) => {
-    if (node.type === 'text' && node.text) {
-      count += node.text.length;
-    }
-    if (node.content && Array.isArray(node.content)) {
-      node.content.forEach(traverse);
-    }
-  };
-  
-  traverse(content);
-  return count;
+type StatusFilter = 'active' | 'archived' | 'trashed';
+
+function parseContent(raw: string): JSONContent {
+  try {
+    return JSON.parse(raw) as JSONContent;
+  } catch {
+    return { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
+  }
 }
 
-// 主应用组件（需要在 ThemeProvider 内部）
-function MainApp() {
-  const { theme, setTheme } = useTheme();
-  const toast = useToast();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isCompactLayout, setIsCompactLayout] = useState(false);
-  const [showRadial, setShowRadial] = useState(false);
-  const [radialPos, setRadialPos] = useState({ x: 0, y: 0 });
-  const [isPrivate, setIsPrivate] = useState(true);
-  const [currentFilePath, setCurrentFilePath] = useState<string | undefined>();
-  const [editorContent, setEditorContent] = useState<JSONContent>({ type: 'doc', content: [] });
-  const [workspacePath, setWorkspacePath] = useState<string>('');
-  const [showBlockSelector, setShowBlockSelector] = useState(false);
-  const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
-  const [editorLayout, setEditorLayout] = useState<EditorLayout>('center');
-  const [editorTriggerCommit, setEditorTriggerCommit] = useState<(() => Promise<void>) | undefined>(undefined);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
-  const [syncMessage, setSyncMessage] = useState<string>('');
-  const [showSearchModal, setShowSearchModal] = useState(false);
-  const [showAtmospherePreview, setShowAtmospherePreview] = useState(false);
-  const [showHistoryTimeline, setShowHistoryTimeline] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [libraryMetadata, setLibraryMetadata] = useState<LibraryMetadata>({ entries: {} });
-  const [workspaceRootItemCount, setWorkspaceRootItemCount] = useState(0);
-  const [workspaceInfo, setWorkspaceInfo] = useState<{
-    branch: string | null;
-    commitCount: number;
-    latestCommit: string | null;
-  }>({
-    branch: null,
-    commitCount: 0,
-    latestCommit: null,
-  });
-  const fileImportRef = useRef<HTMLInputElement | null>(null);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
-  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+function extractPlainText(node?: JSONContent): string {
+  if (!node) return '';
+  if (node.type === 'text') return node.text ?? '';
+  return (node.content ?? []).map(extractPlainText).join('');
+}
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
+function documentDisplaySegments(document: DocumentSummary | DocumentRecord | null): string[] {
+  if (!document) return [];
+  return [document.title].map((segment) => segment.trim()).filter(Boolean);
+}
 
-    const media = window.matchMedia('(max-width: 767px)');
-    const applyViewportState = (compact: boolean) => {
-      setIsCompactLayout(compact);
-      setIsSidebarOpen((prev) => (compact ? false : prev));
-    };
+function documentLeafTitle(document: DocumentSummary | DocumentRecord | null): string {
+  const segments = documentDisplaySegments(document);
+  return segments[segments.length - 1] ?? document?.title ?? 'Untitled';
+}
 
-    applyViewportState(media.matches);
-    const handleChange = (event: MediaQueryListEvent) => {
-      applyViewportState(event.matches);
-    };
+function formatTimestamp(value?: string | null): string {
+  if (!value) return '尚未记录';
+  return new Date(value).toLocaleString();
+}
 
-    media.addEventListener('change', handleChange);
-    return () => media.removeEventListener('change', handleChange);
-  }, []);
+function collectFolderTargets(
+  documents: DocumentSummary[],
+  target: DocumentSummary | null
+): Array<{ id: string | null; title: string; depth: number }> {
+  const folders = documents.filter((document) => document.node_kind === 'folder');
 
-  useEffect(() => {
-    detectMobilePlatform()
-      .then((mobile) => {
-        if (mobile) {
-          setIsCompactLayout(true);
-          setIsSidebarOpen(false);
-        }
-      })
-      .catch(() => {});
-  }, []);
+  if (!target) {
+    return [{ id: null, title: '根目录', depth: 0 }, ...folders.map((folder) => ({ id: folder.id, title: folder.title, depth: folder.depth }))];
+  }
 
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!exportMenuRef.current?.contains(event.target as Node)) {
-        setShowExportMenu(false);
-      }
-      if (!moreMenuRef.current?.contains(event.target as Node)) {
-        setShowMoreMenu(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, []);
-
-  // 窗口状态记忆（集成 Tauri 窗口 API）
-  useEffect(() => {
-    const restoreWindowState = async () => {
-      try {
-        const savedState = loadWindowState();
-        if (!savedState) {
-          console.log('[windowState] 没有保存的窗口状态');
-          return;
-        }
-        
-        console.log('[windowState] 恢复窗口状态:', savedState);
-        const appWindow = getCurrentWindow();
-        
-        // 恢复窗口大小
-        if (savedState.width && savedState.height) {
-          // Tauri v2 使用 LogicalSize 类型
-          const { LogicalSize } = await import('@tauri-apps/api/window');
-          await appWindow.setSize(new LogicalSize(savedState.width, savedState.height));
-          console.log('[windowState] 窗口大小已恢复:', savedState.width, 'x', savedState.height);
-        }
-        
-        // 恢复窗口位置
-        if (savedState.x !== undefined && savedState.y !== undefined) {
-          // Tauri v2 使用 LogicalPosition 类型
-          const { LogicalPosition } = await import('@tauri-apps/api/window');
-          await appWindow.setPosition(new LogicalPosition(savedState.x, savedState.y));
-          console.log('[windowState] 窗口位置已恢复:', savedState.x, ',', savedState.y);
-        }
-        
-        // 恢复最大化状态
-        if (savedState.maximized) {
-          await appWindow.maximize();
-          console.log('[windowState] 窗口已最大化');
-        }
-      } catch (error) {
-        console.warn('[windowState] 恢复窗口状态失败:', error);
-        // 在非 Tauri 环境中（如开发模式），忽略错误
-      }
-    };
-    
-    restoreWindowState();
-  }, []);
-
-  // 保存窗口状态（在窗口大小/位置改变时）
-  useEffect(() => {
-    const saveWindowStateAsync = async () => {
-      try {
-        const appWindow = getCurrentWindow();
-        const size = await appWindow.innerSize();
-        const position = await appWindow.innerPosition();
-        const isMaximized = await appWindow.isMaximized();
-        
-        const state = {
-          width: size.width,
-          height: size.height,
-          x: position.x,
-          y: position.y,
-          maximized: isMaximized,
-        };
-        
-        saveWindowState(state);
-        console.log('[windowState] 窗口状态已保存:', state);
-      } catch (error) {
-        // 在非 Tauri 环境中，使用 fallback
-        const state = {
-          width: window.innerWidth,
-          height: window.innerHeight,
-        };
-        saveWindowState(state);
-        console.warn('[windowState] 使用 fallback 保存窗口状态:', error);
-      }
-    };
-
-    // 防抖保存
-    let timeoutId: NodeJS.Timeout;
-    const debouncedSave = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(saveWindowStateAsync, 500);
-    };
-
-    window.addEventListener('resize', debouncedSave);
-    
-    // 监听窗口移动（仅在 Tauri 环境中）
-    let moveListenerCleanup: (() => void) | null = null;
-    (async () => {
-      try {
-        const appWindow = getCurrentWindow();
-        const cleanup = await appWindow.onMoved(() => {
-          debouncedSave();
-        });
-        moveListenerCleanup = cleanup;
-      } catch (error) {
-        // 非 Tauri 环境或权限不足，忽略
-        console.warn('[windowState] 无法监听窗口移动事件:', error);
-      }
-    })();
-    
-    return () => {
-      window.removeEventListener('resize', debouncedSave);
-      clearTimeout(timeoutId);
-      if (moveListenerCleanup) {
-        moveListenerCleanup();
-      }
-    };
-  }, []);
-
-  // 初始化工作区（仅执行一次）
-  useEffect(() => {
-    let isMounted = true;
-    let hasInitialized = false;
-    
-    const initWorkspace = async () => {
-      // 防止重复执行
-      if (hasInitialized) {
-        console.log('[initWorkspace] 已初始化，跳过重复执行');
-        return;
-      }
-      hasInitialized = true;
-      
-      try {
-        // 获取工作区路径
-        const path = await getWorkspacePath();
-        if (!isMounted) return;
-        
-        setWorkspacePath(path);
-        
-        // 确保工作区已初始化
-        await ensureWorkspaceInitialized();
-        if (!isMounted) return;
-
-        const [metadata, branch, verification] = await Promise.all([
-          loadLibraryMetadata(),
-          getCurrentBranch(path).catch(() => null),
-          verifyRepository(path).catch(() => null),
-        ]);
-        if (!isMounted) return;
-        setLibraryMetadata(metadata);
-        setWorkspaceInfo({
-          branch,
-          commitCount: verification?.commit_count ?? 0,
-          latestCommit: verification?.latest_commit_message ?? null,
-        });
-        await refreshWorkspaceRootItemCount(path);
-        
-        // 应用冷启动时执行 Fetch（根据 Sync Protocol.md）
-        try {
-          const remoteUrl = await getRemoteUrl(path, 'origin');
-          const patToken = await getPatToken();
-          
-          if (!isMounted) return;
-          
-          if (remoteUrl && patToken) {
-            console.log('[initWorkspace] 应用启动：执行 Fetch');
-            await fetchFromRemote(path, 'origin', patToken);
-            if (isMounted) {
-            console.log('[initWorkspace] Fetch 完成');
+  const byId = new Map(documents.map((document) => [document.id, document]));
+  const blocked = new Set<string>([target.id]);
+  if (target.node_kind === 'folder') {
+    const queue = [target.id];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const document of documents) {
+        if (document.parent_id === current) {
+          if (!blocked.has(document.id)) {
+            blocked.add(document.id);
+            if (document.node_kind === 'folder') {
+              queue.push(document.id);
             }
-          } else {
-            console.log('[initWorkspace] 未配置远程仓库或 PAT，跳过 Fetch');
-          }
-        } catch (fetchError) {
-          if (isMounted) {
-          console.error('[initWorkspace] Fetch 失败:', fetchError);
-          // Fetch 失败不影响应用启动
           }
         }
-      } catch (error) {
-        if (isMounted) {
-        console.error('初始化工作区失败:', error);
+      }
+    }
+  }
+
+  return [
+    { id: null, title: '根目录', depth: 0 },
+    ...folders
+      .filter((folder) => !blocked.has(folder.id))
+      .map((folder) => {
+        let safeDepth = folder.depth;
+        let cursor = folder.parent_id;
+        let guard = 0;
+        while (cursor && guard < 16) {
+          const parent = byId.get(cursor);
+          if (!parent) break;
+          safeDepth = parent.depth + 1;
+          cursor = parent.parent_id;
+          guard += 1;
         }
-      }
-    };
-    
-    initWorkspace();
-    
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+        return {
+          id: folder.id,
+          title: folder.title,
+          depth: safeDepth,
+        };
+      }),
+  ];
+}
 
-  // 快捷键支持：Ctrl+F / Cmd+F 打开搜索
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-        e.preventDefault();
-        setShowSearchModal(true);
-      }
-      if (e.key === 'Escape' && showSearchModal) {
-        setShowSearchModal(false);
-      }
-    };
+function ExplorerSection({
+  title,
+  count,
+  expanded,
+  onToggle,
+  children,
+}: {
+  title: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  const { theme } = useTheme();
+  const accent = getThemeAccentColor(theme);
+  const accentBg = getThemeAccentBgColor(theme);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [showSearchModal]);
+  return (
+    <section className="border-b px-2 py-2" style={{ borderColor: `${getThemeBorderColor(theme)}80` }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left"
+        style={{ color: accent }}
+      >
+        <div className="flex items-center gap-2">
+          <ChevronRight size={12} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
+          <span className={`text-[10px] uppercase tracking-[0.24em] opacity-60 ${theme.uiFont}`}>{title}</span>
+        </div>
+        <span
+          className="rounded-full px-1.5 py-0.5 text-[10px] opacity-70"
+          style={{ backgroundColor: `${accentBg}55`, color: accent }}
+        >
+          {count}
+        </span>
+      </button>
+      {expanded && <div className="mt-1">{children}</div>}
+    </section>
+  );
+}
 
-  // 网络恢复时执行 Fetch 和重试 Push（根据 Sync Protocol.md）
-  useEffect(() => {
-    if (!workspacePath) return;
+export default function HomePage() {
+  const { theme } = useTheme();
+  const toast = useToast();
+  const accent = getThemeAccentColor(theme);
+  const border = getThemeBorderColor(theme);
+  const surface = getThemeSurfaceColor(theme);
+  const background = getThemeBgColor(theme);
+  const accentBg = getThemeAccentBgColor(theme);
 
-    const handleOnline = async () => {
-      console.log('[网络恢复] 检测到网络连接恢复');
-      try {
-        const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
-        const patToken = await getPatToken();
-        
-        if (remoteUrl && patToken) {
-          console.log('[网络恢复] 执行 Fetch');
-          await fetchFromRemote(workspacePath, 'origin', patToken);
-          console.log('[网络恢复] Fetch 完成');
-          
-          // 网络恢复后，重试失败的 Push 任务
-          try {
-            console.log('[网络恢复] 开始重试失败的 Push 任务');
-            const retryResult = await retryFailedPushTasks();
-            console.log('[网络恢复] Push 任务重试完成:', retryResult);
-          } catch (retryError) {
-            console.error('[网络恢复] 重试 Push 任务失败:', retryError);
-          }
-        } else {
-          console.log('[网络恢复] 未配置远程仓库或 PAT，跳过 Fetch');
-        }
-      } catch (error) {
-        console.error('[网络恢复] Fetch 失败:', error);
-      }
-    };
-    
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [workspacePath]);
+  const [appState, setAppState] = useState<AppState | null>(null);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [tags, setTags] = useState<TagRecord[]>([]);
+  const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('active');
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [currentDocument, setCurrentDocument] = useState<DocumentRecord | null>(null);
+  const [content, setContent] = useState<JSONContent>({ type: 'doc', content: [{ type: 'paragraph', content: [] }] });
+  const [documentTags, setDocumentTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    favorites: true,
+    recent: true,
+    explorer: true,
+  });
+  const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number; items: ContextMenuItem[]; action: (action: string) => void } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<DocumentSummary | null>(null);
+  const [moveTarget, setMoveTarget] = useState<DocumentSummary | null>(null);
+  const [moveModeSource, setMoveModeSource] = useState<DocumentSummary | null>(null);
+  const syncInFlightRef = useRef(false);
 
-  useEffect(() => {
-    if (currentFilePath) return;
+  const refresh = useCallback(
+    async (preferredId?: string | null) => {
+      const [nextState, nextDocs, nextTags] = await Promise.all([getAppState(), listDocuments(), listTags()]);
+      setAppState(nextState);
+      setDocuments(nextDocs);
+      setTags(nextTags);
 
-    setEditorInstance(null);
-    setEditorTriggerCommit(undefined);
-    setHasUnsavedChanges(false);
-    setShowBlockSelector(false);
-    setShowRadial(false);
-  }, [currentFilePath]);
+      const preferredDocumentId = preferredId
+        ? nextDocs.find((doc) => doc.id === preferredId && doc.node_kind === 'document')?.id ?? null
+        : null;
+      const currentSelectedDocumentId = selectedId
+        ? nextDocs.find((doc) => doc.id === selectedId && doc.node_kind === 'document')?.id ?? null
+        : null;
+      const fallbackId =
+        preferredDocumentId ??
+        currentSelectedDocumentId ??
+        nextDocs.find((doc) => doc.status === 'active' && doc.node_kind === 'document')?.id ??
+        nextDocs.find((doc) => doc.node_kind === 'document')?.id ??
+        null;
 
-  const persistLibraryState = async (next: LibraryMetadata) => {
-    setLibraryMetadata(next);
-    await saveLibraryMetadata(next);
-  };
-
-  const refreshWorkspaceRootItemCount = async (path = workspacePath) => {
-    if (!path) {
-      setWorkspaceRootItemCount(0);
-      return;
-    }
-
-    const items = await listDirectory(path);
-    setWorkspaceRootItemCount(items.length);
-  };
-
-  const refreshWorkspaceInfo = async () => {
-    if (!workspacePath) return;
-    const [branch, verification] = await Promise.all([
-      getCurrentBranch(workspacePath).catch(() => null),
-      verifyRepository(workspacePath).catch(() => null),
-    ]);
-    setWorkspaceInfo({
-      branch,
-      commitCount: verification?.commit_count ?? 0,
-      latestCommit: verification?.latest_commit_message ?? null,
-    });
-  };
-
-  const handlePathRename = async (oldPath: string, newPath: string) => {
-    if (!workspacePath) return;
-    const next = {
-      entries: { ...libraryMetadata.entries },
-    };
-    renameLibraryEntries(
-      next,
-      toRelativeWorkspacePath(workspacePath, oldPath),
-      toRelativeWorkspacePath(workspacePath, newPath)
-    );
-    await persistLibraryState(next);
-    if (currentFilePath === oldPath) {
-      setCurrentFilePath(newPath);
-    }
-    await refreshWorkspaceInfo();
-    await refreshWorkspaceRootItemCount();
-  };
-
-  const handleToggleFavorite = async (path: string) => {
-    if (!workspacePath) return;
-    const relativePath = toRelativeWorkspacePath(workspacePath, path);
-    const next = {
-      entries: { ...libraryMetadata.entries },
-    };
-    const current = getLibraryEntry(next, relativePath);
-    upsertLibraryEntry(next, relativePath, {
-      favorite: !current.favorite,
-    });
-    await persistLibraryState(next);
-  };
-
-  const handleToggleArchive = async (path: string) => {
-    if (!workspacePath) return;
-    const relativePath = toRelativeWorkspacePath(workspacePath, path);
-    const next = {
-      entries: { ...libraryMetadata.entries },
-    };
-    const current = getLibraryEntry(next, relativePath);
-    upsertLibraryEntry(next, relativePath, {
-      archived_at: current.archived_at ? null : new Date().toISOString(),
-    });
-    await persistLibraryState(next);
-  };
-
-  const handleMoveToTrash = async (path: string) => {
-    if (!workspacePath) return;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const trashPath = createTrashTargetPath(workspacePath, path, timestamp);
-    await moveFileOrDirectory(path, trashPath);
-
-    const relativePath = toRelativeWorkspacePath(workspacePath, path);
-    const trashRelativePath = toRelativeWorkspacePath(workspacePath, trashPath);
-    const next = {
-      entries: { ...libraryMetadata.entries },
-    };
-    const current = getLibraryEntry(next, relativePath);
-    deleteLibraryEntry(next, relativePath);
-    upsertLibraryEntry(next, trashRelativePath, {
-      ...current,
-      trashed_at: new Date().toISOString(),
-      original_path: relativePath,
-      last_opened_at: current.last_opened_at,
-    });
-    await persistLibraryState(next);
-
-    if (currentFilePath === path) {
-      setCurrentFilePath(undefined);
-      setEditorContent({ type: 'doc', content: [] });
-    }
-    toast.info('已移至回收站');
-    await refreshWorkspaceInfo();
-    await refreshWorkspaceRootItemCount();
-  };
-
-  const handleRestoreFromTrash = async (trashPath: string) => {
-    if (!workspacePath) return;
-    const trashRelativePath = toRelativeWorkspacePath(workspacePath, trashPath);
-    const entry = libraryMetadata.entries[trashRelativePath];
-    const originalRelativePath = entry?.original_path;
-    if (!originalRelativePath) return;
-
-    const targetPath = `${workspacePath}/${originalRelativePath}`;
-    let restoredPath = targetPath;
-    try {
-      await moveFileOrDirectory(trashPath, targetPath);
-    } catch {
-      restoredPath = createRestoreTargetPath(targetPath, Date.now().toString());
-      await moveFileOrDirectory(trashPath, restoredPath);
-    }
-
-    const next = {
-      entries: { ...libraryMetadata.entries },
-    };
-    deleteLibraryEntry(next, trashRelativePath);
-    upsertLibraryEntry(next, toRelativeWorkspacePath(workspacePath, restoredPath), {
-      ...entry,
-      trashed_at: null,
-      original_path: null,
-    });
-    await persistLibraryState(next);
-    toast.success('文档已恢复');
-    await refreshWorkspaceInfo();
-    await refreshWorkspaceRootItemCount();
-  };
-
-  const handleDeletePermanently = async (path: string) => {
-    if (path.endsWith('.enc')) {
-      await deleteFile(path);
-    } else {
-      await deleteDirectory(path);
-    }
-
-    if (!workspacePath) return;
-    const next = {
-      entries: { ...libraryMetadata.entries },
-    };
-    deleteLibraryEntry(next, toRelativeWorkspacePath(workspacePath, path));
-    await persistLibraryState(next);
-    toast.info('已永久删除');
-    await refreshWorkspaceInfo();
-    await refreshWorkspaceRootItemCount();
-  };
-
-  const triggerMarkdownImport = () => {
-    fileImportRef.current?.click();
-  };
-
-  const handleMarkdownImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !workspacePath) return;
-
-    try {
-      const markdown = await file.text();
-      const filename = file.name.replace(/\.md$/i, '') || 'imported';
-      const path = `${workspacePath}/${filename}`;
-      const content = JSON.stringify(markdownToTiptapJSON(markdown), null, 2);
-      await createFile(path, content);
-      toast.success('Markdown 导入成功');
-      await refreshWorkspaceRootItemCount();
-    } catch (error) {
-      toast.error(`Markdown 导入失败: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      event.target.value = '';
-    }
-  };
-
-  const handleCreateDocumentFromDashboard = async () => {
-    if (!workspacePath) {
-      toast.error('工作区尚未初始化');
-      return;
-    }
-
-    try {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const path = `${workspacePath}/Untitled-${timestamp}.enc`;
-      const defaultContent: JSONContent = { type: 'doc', content: [] };
-      await createFile(path, JSON.stringify(defaultContent, null, 2));
-      await refreshWorkspaceRootItemCount();
-      await handleFileSelect(path);
-      toast.success('已创建新文档');
-    } catch (error) {
-      toast.error(`创建文档失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const getExportFilename = () => {
-    const rawName = currentFilePath?.split('/').pop() || 'document';
-    return rawName.replace(/\.enc$/i, '').replace(/\.json$/i, '') || 'document';
-  };
-
-  const handleExportPDF = async () => {
-    try {
-      await exportToPDF(editorContent, theme, getExportFilename());
-      toast.success('PDF 导出成功');
-      setShowExportMenu(false);
-    } catch (error) {
-      console.error('导出 PDF 失败:', error);
-      toast.error(`导出 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleExportDOCX = async () => {
-    try {
-      await exportToDOCX(editorContent, theme, getExportFilename());
-      toast.success('DOCX 导出成功');
-      setShowExportMenu(false);
-    } catch (error) {
-      console.error('导出 DOCX 失败:', error);
-      toast.error(`导出 DOCX 失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const handleExportMarkdown = async () => {
-    try {
-      const markdown = exportToMarkdown(editorContent);
-      await saveMarkdownExport(getExportFilename(), markdown);
-      toast.success('Markdown 导出成功');
-      setShowExportMenu(false);
-    } catch (error) {
-      console.error('导出 Markdown 失败:', error);
-      toast.error(`导出 Markdown 失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  // 清仓同步：应用关闭前执行队列中的 Push 任务（根据 Sync Protocol.md）
-  useEffect(() => {
-    const handleBeforeUnload = async (event: BeforeUnloadEvent) => {
-      console.log('[页面关闭] ===== page.tsx beforeunload 事件触发 =====');
-      console.log('[页面关闭] 时间:', new Date().toISOString());
-      console.log('[页面关闭] workspacePath:', workspacePath);
-      
-      const queueSize = getQueueSize();
-      console.log('[页面关闭] 队列大小:', queueSize);
-      
-      if (queueSize > 0 && workspacePath) {
-        console.log('[页面关闭] [队列处理] 检测到应用即将关闭，队列中有', queueSize, '个待处理任务');
-        console.log('[页面关闭] [队列处理] 注意：beforeunload 中的异步操作可能被浏览器终止');
-        
-        // 注意：beforeunload 中的异步操作可能被浏览器终止
-        // 使用 sendBeacon 或同步方式尝试最后一次同步
-        // 这里我们尝试快速执行，但不阻塞关闭
-        try {
-          console.log('[页面关闭] [队列处理] 尝试获取远程配置...');
-          const remoteUrl = await getRemoteUrl(workspacePath, 'origin');
-          const patToken = await getPatToken();
-          
-          console.log('[页面关闭] [队列处理] 远程配置状态 - URL:', remoteUrl ? '已配置' : '未配置', 'PAT:', patToken ? '已配置' : '未配置');
-          
-          if (remoteUrl && patToken) {
-            // 使用 navigator.sendBeacon 发送同步请求（如果支持）
-            // 或者尝试快速同步（但可能被中断）
-            console.log('[页面关闭] [队列处理] ⚠️ 由于 beforeunload 的限制，队列任务无法在此处处理');
-            console.log('[页面关闭] [队列处理] ⚠️ 队列任务将在下次应用启动时通过网络恢复机制重试');
-            // 由于 beforeunload 的限制，这里只记录日志
-            // 实际的清仓同步应该在 Tauri 层面处理
-          } else {
-            console.log('[页面关闭] [队列处理] ⏭️ 跳过队列处理：未配置远程仓库或 PAT');
-          }
-        } catch (error) {
-          console.error('[页面关闭] [队列处理] ❌ 队列处理失败:', error);
+      if (fallbackId) {
+        const detail = await getDocument(fallbackId);
+        if (detail && detail.node_kind === 'document') {
+          setSelectedId(fallbackId);
+          setCurrentDocument(detail);
+          setContent(parseContent(detail.content_json));
+          setDocumentTags(detail.tags);
+          setTagDraft('');
         }
       } else {
-        if (queueSize === 0) {
-          console.log('[页面关闭] 队列为空，无需处理');
-        }
-        if (!workspacePath) {
-          console.log('[页面关闭] workspacePath 为空，跳过队列处理');
-        }
+        setSelectedId(null);
+        setCurrentDocument(null);
+        setContent({ type: 'doc', content: [{ type: 'paragraph', content: [] }] });
+        setDocumentTags([]);
+        setTagDraft('');
       }
-      
-      console.log('[页面关闭] ===== page.tsx beforeunload 处理完成 =====');
-    };
-    
-    console.log('[页面关闭] 注册 beforeunload 事件监听器');
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      console.log('[页面关闭] 卸载 beforeunload 事件监听器');
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [workspacePath]);
+    },
+    [selectedId]
+  );
 
-  // 加载文件
-  const handleFileSelect = async (path: string) => {
-    // 直接执行文件选择，自动保存当前文件（如果有未保存的更改）
-    await performFileSelect(path);
-    if (isCompactLayout) {
-      setIsSidebarOpen(false);
-    }
-  };
-
-  // 执行文件选择（实际加载文件）
-  const performFileSelect = async (path: string) => {
-    try {
-      // 关闭旧文件时自动触发 Tier 2 提交（如果有旧文件且存在未保存的更改）
-      if (currentFilePath && currentFilePath !== path && editorTriggerCommit && hasUnsavedChanges) {
-        console.log('[handleFileSelect] 切换文件前自动保存并提交');
-        try {
-          await editorTriggerCommit();
-          setHasUnsavedChanges(false); // 提交成功后清除未保存标记
-        } catch (error) {
-          console.error('[handleFileSelect] 切换文件时的自动保存失败:', error);
-          // 即使 Commit 失败，也继续切换文件（不阻塞用户操作）
-        }
-      }
-
-      const content = await readFile(path);
-      
-      // 尝试解析为 JSON（Tiptap 格式）
-      let parsedContent: JSONContent;
+  const triggerAutoSync = useCallback(
+    async (reason: string, force = false, preferredId?: string | null) => {
       try {
-        parsedContent = JSON.parse(content);
-        // 验证是否为有效的 Tiptap JSON 格式
-        if (!parsedContent.type || parsedContent.type !== 'doc') {
-          throw new Error('Invalid Tiptap JSON format');
-        }
-      } catch (jsonError) {
-        // 如果不是 JSON，尝试作为旧格式文本解析（向后兼容）
-        console.warn('文件不是 JSON 格式，尝试解析为旧格式文本:', jsonError);
-        const lines = content.split('\n\n').filter((line) => line.trim());
-        const contentArray: JSONContent[] = lines.map((line) => {
-          if (line.startsWith('# ')) {
-            return {
-              type: 'heading',
-              attrs: { level: 1 },
-              content: [{ type: 'text', text: line.substring(2).trim() }],
-            };
-          } else if (line.startsWith('> ')) {
-            return {
-              type: 'blockquote',
-              content: [{
-                type: 'paragraph',
-                content: [{ type: 'text', text: line.substring(2).trim() }],
-              }],
-            };
-          } else {
-            return {
-              type: 'paragraph',
-              content: [{ type: 'text', text: line.trim() }],
-            };
-          }
-        });
-        
-        parsedContent = {
-          type: 'doc',
-          content: contentArray.length > 0 ? contentArray : [{ type: 'paragraph', content: [] }],
-        };
-      }
+        const state = await getAppState();
+        setAppState(state);
 
-      setEditorContent(parsedContent);
-      setCurrentFilePath(path);
-      if (workspacePath) {
-        const next = {
-          entries: { ...libraryMetadata.entries },
-        };
-        markFileOpened(next, toRelativeWorkspacePath(workspacePath, path), new Date().toISOString());
-        await persistLibraryState(next);
-      }
-      
-      // 加载文件时，使用主题继承查找逻辑（从文件向上查找最近的.vnode.json）
-      try {
-        const fileTheme = await findThemeForFile(path);
-        setTheme(fileTheme.id);
+        const canSync =
+          state.account_mode === 'authenticated' &&
+          Boolean(state.supabase.url) &&
+          state.sync.auto_sync_enabled;
+        if (!canSync || syncInFlightRef.current) {
+          return;
+        }
+
+        const shouldPull =
+          !state.sync.last_pulled_at ||
+          Date.now() - new Date(state.sync.last_pulled_at).getTime() > 60_000;
+        const shouldRun = force || state.sync.pending_jobs > 0 || shouldPull;
+        if (!shouldRun) {
+          return;
+        }
+
+        syncInFlightRef.current = true;
+        setIsSyncing(true);
+        const snapshot = await runSupabaseSync();
+        await refresh(preferredId ?? selectedId);
+        setAppState((current) => (current ? { ...current, sync: snapshot } : current));
+        console.info(`[sync] ${reason} completed`);
       } catch (error) {
-        console.error('加载文件主题失败:', error);
-        // 主题加载失败不影响文件加载，使用当前主题
+        console.error(`[sync] ${reason} failed`, error);
+        try {
+          await refresh(preferredId ?? selectedId);
+        } catch (refreshError) {
+          console.error('[sync] refresh after failure failed', refreshError);
+        }
+      } finally {
+        syncInFlightRef.current = false;
+        setIsSyncing(false);
       }
-      await refreshWorkspaceInfo();
-    } catch (error) {
-      console.error('加载文件失败:', error);
-      toast.error(`加载文件失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
+    },
+    [refresh, selectedId]
+  );
 
+  useEffect(() => {
+    const init = async () => {
+      try {
+        await ensureWorkspaceInitialized();
+        await refresh();
+      } catch (error) {
+        console.error(error);
+        toast.error('初始化失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void init();
+  }, [refresh, toast]);
 
-  // 处理块点击（显示环形菜单）
-  const handleBlockClick = (e: React.MouseEvent) => {
-    setRadialPos({ x: e.clientX, y: e.clientY });
-    setShowRadial(true);
-  };
+  useEffect(() => {
+    if (loading) return;
 
-  // 处理目录切换，加载氛围协议
-  const handleDirectoryChange = async (path: string) => {
+    const interval = window.setInterval(() => {
+      void triggerAutoSync('interval');
+    }, 90_000);
+
+    const onFocus = () => void triggerAutoSync('focus');
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void triggerAutoSync('visible');
+      }
+    };
+    const onOnline = () => void triggerAutoSync('online', true);
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibility);
+    void triggerAutoSync('init');
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [loading, triggerAutoSync]);
+
+  const filteredDocuments = useMemo(
+    () =>
+      documents.filter((document) => {
+        if (document.status !== selectedStatus) return false;
+        if (selectedTag && !document.tags.includes(selectedTag)) return false;
+        return true;
+      }),
+    [documents, selectedStatus, selectedTag]
+  );
+
+  const favoriteDocuments = useMemo(
+    () => documents.filter((document) => document.node_kind === 'document' && document.is_favorite && document.status === 'active').slice(0, 6),
+    [documents]
+  );
+
+  const recentDocuments = useMemo(
+    () =>
+        [...documents]
+        .filter((document) => document.node_kind === 'document' && document.status === 'active')
+        .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+        .slice(0, 8),
+    [documents]
+  );
+
+  useEffect(() => {
+    setExpandedFolders((current) => {
+      if (current.size > 0) {
+        return current;
+      }
+      return new Set(
+        filteredDocuments.filter((document) => document.node_kind === 'folder').map((document) => document.id)
+      );
+    });
+  }, [filteredDocuments]);
+
+  const handleSelectDocument = useCallback(async (id: string) => {
+    const detail = await getDocument(id);
+    if (!detail || detail.node_kind !== 'document') return;
+    setSelectedId(id);
+    setCurrentDocument(detail);
+    setContent(parseContent(detail.content_json));
+    setDocumentTags(detail.tags);
+    setTagDraft('');
+    setSidebarOpen(false);
+  }, []);
+
+  const handleCreateDocument = useCallback(
+    async (isTemplate = false, parentId?: string | null) => {
+      const created = await createDocument({ isTemplate, nodeKind: 'document', parentId: parentId ?? null });
+      toast.success(isTemplate ? '模板已创建' : '新文档已创建');
+      await refresh(created.id);
+      await triggerAutoSync('create', false, created.id);
+    },
+    [refresh, toast, triggerAutoSync]
+  );
+
+  const handleCreateFolder = useCallback(
+    async (parentId?: string | null) => {
+      const created = await createDocument({
+        title: 'New Folder',
+        nodeKind: 'folder',
+        parentId: parentId ?? null,
+      });
+      toast.success('分组已创建');
+      setExpandedFolders((current) => new Set(current).add(created.id));
+      await refresh(selectedId);
+      await triggerAutoSync('folder-create', false, created.id);
+    },
+    [refresh, selectedId, toast, triggerAutoSync]
+  );
+
+  const handlePersistMetadata = useCallback(
+    async (nextContent: JSONContent = content, nextTagList: string[] = documentTags) => {
+      if (!currentDocument) return;
+      const title =
+        extractPlainText(nextContent.content?.find((node) => node.type === 'heading')) ||
+        currentDocument.title ||
+        'Untitled';
+
+      const updated = await saveDocument({
+        id: currentDocument.id,
+        title,
+        content_json: JSON.stringify(nextContent),
+        plain_text: extractPlainText(nextContent),
+        tags: nextTagList,
+      });
+      setCurrentDocument(updated);
+      setDocumentTags(updated.tags);
+      await refresh(updated.id);
+      await triggerAutoSync('metadata', false, updated.id);
+    },
+    [content, currentDocument, documentTags, refresh, triggerAutoSync]
+  );
+
+  const handleMoveDocument = useCallback(
+    async (id: string, status: StatusFilter) => {
+      const updated = await setDocumentStatus(id, status);
+      if (selectedId === id && updated.node_kind === 'document') {
+        setCurrentDocument(updated);
+      }
+      toast.success(status === 'trashed' ? '已移入回收站' : status === 'archived' ? '已归档' : '已恢复到文档库');
+      await refresh(currentDocument?.id ?? null);
+      await triggerAutoSync('status', false, updated.id);
+    },
+    [currentDocument?.id, refresh, selectedId, toast, triggerAutoSync]
+  );
+
+  const handleToggleFavorite = useCallback(
+    async (document: DocumentSummary | DocumentRecord) => {
+      const updated = await toggleFavorite(document.id, !document.is_favorite);
+      if (selectedId === document.id && updated.node_kind === 'document') {
+        setCurrentDocument(updated);
+      }
+      await refresh(currentDocument?.id ?? null);
+      await triggerAutoSync('favorite', false, updated.id);
+    },
+    [currentDocument?.id, refresh, selectedId, triggerAutoSync]
+  );
+
+  const handleImportLegacy = useCallback(async () => {
+    setIsImporting(true);
     try {
-      const theme = await loadAtmosphereConfig(path);
-      setTheme(theme.id);
+      const result = await importLegacyWorkspace();
+      toast.success(`导入完成：${result.imported_documents} 篇文档`);
+      await refresh();
+      await triggerAutoSync('legacy-import', true);
     } catch (error) {
-      console.error('加载氛围协议失败:', error);
+      toast.error(`导入失败：${error}`);
+    } finally {
+      setIsImporting(false);
     }
-  };
+  }, [refresh, toast, triggerAutoSync]);
 
-  const favoriteItems = useMemo(
-    () => workspacePath
-      ? listFavoriteEntries(libraryMetadata).map((path) => `${workspacePath}/${path}`)
-      : [],
-    [libraryMetadata, workspacePath]
+  const handleExport = useCallback(
+    async (format: 'pdf' | 'docx' | 'md') => {
+      if (!currentDocument) return;
+      const filename = documentLeafTitle(currentDocument).trim() || 'vana-document';
+      if (format === 'pdf') {
+        await exportToPDF(content, theme, filename);
+      } else if (format === 'docx') {
+        await exportToDOCX(content, theme, filename);
+      } else {
+        const markdown = exportToMarkdown(content);
+        await saveMarkdownExport(filename, markdown);
+      }
+      toast.success(`已导出 ${format.toUpperCase()}`);
+    },
+    [content, currentDocument, theme, toast]
   );
-  const recentItems = useMemo(
-    () => workspacePath
-      ? listRecentEntries(libraryMetadata, 10).map((path) => `${workspacePath}/${path}`)
-      : [],
-    [libraryMetadata, workspacePath]
+
+  const openDocumentMenu = useCallback(
+    (event: React.MouseEvent, document: DocumentSummary) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const items: ContextMenuItem[] = [
+        ...(document.node_kind === 'folder' ? [{ id: 'newChildDocument', label: '在此分组中新建文档', icon: FilePlus2 }] : []),
+        ...(document.node_kind === 'folder' ? [{ id: 'newChildFolder', label: '新建子分组', icon: Folder }] : []),
+        { id: 'rename', label: '重命名', icon: FileText },
+        { id: 'move', label: '移动到分组', icon: FolderOpen },
+        { id: 'toggleFavorite', label: document.is_favorite ? '取消收藏' : '加入收藏', icon: Heart },
+        ...(document.status !== 'archived' ? [{ id: 'archive', label: '归档文档', icon: Archive }] : [{ id: 'restore', label: '恢复到文档库', icon: RefreshCw }]),
+        ...(document.status !== 'trashed' ? [{ id: 'trash', label: '移至回收站', icon: Trash2 }] : [{ id: 'restore', label: '从回收站恢复', icon: RefreshCw }]),
+      ];
+
+      setSidebarMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items,
+        action: (action) => {
+          if (action === 'newChildDocument') {
+            void handleCreateDocument(false, document.id);
+          } else if (action === 'newChildFolder') {
+            void handleCreateFolder(document.id);
+          } else if (action === 'rename') {
+            setRenameTarget(document);
+          } else if (action === 'move') {
+            setMoveModeSource(document);
+          } else if (action === 'toggleFavorite') {
+            void handleToggleFavorite(document);
+          } else if (action === 'archive') {
+            void handleMoveDocument(document.id, 'archived');
+          } else if (action === 'trash') {
+            void handleMoveDocument(document.id, 'trashed');
+          } else if (action === 'restore') {
+            void handleMoveDocument(document.id, 'active');
+          }
+        },
+      });
+    },
+    [handleCreateDocument, handleCreateFolder, handleMoveDocument, handleToggleFavorite]
   );
-  const archivedItems = useMemo(
-    () => workspacePath
-      ? listArchivedEntries(libraryMetadata).map((path) => `${workspacePath}/${path}`)
-      : [],
-    [libraryMetadata, workspacePath]
+
+  const openExplorerMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      setSidebarMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          { id: 'newDocument', label: '新建文档', icon: FilePlus2 },
+          { id: 'newFolder', label: '新建分组', icon: Folder },
+          { id: 'newTemplate', label: '新建模板', icon: LayoutTemplate },
+          { id: 'importLegacy', label: '导入旧库', icon: Import },
+        ],
+        action: (action) => {
+          if (action === 'newDocument') {
+            void handleCreateDocument(false);
+          } else if (action === 'newFolder') {
+            void handleCreateFolder();
+          } else if (action === 'newTemplate') {
+            void handleCreateDocument(true);
+          } else if (action === 'importLegacy') {
+            void handleImportLegacy();
+          }
+        },
+      });
+    },
+    [handleCreateDocument, handleCreateFolder, handleImportLegacy]
   );
-  const trashItems = useMemo(
-    () => workspacePath
-      ? listTrashEntries(libraryMetadata).map(([path, entry]) => ({
-          path: `${workspacePath}/${path}`,
-          entry,
-        }))
-      : [],
-    [libraryMetadata, workspacePath]
+
+  const currentSegments = documentDisplaySegments(currentDocument);
+  const availableMoveTargets = useMemo(() => collectFolderTargets(documents, moveTarget), [documents, moveTarget]);
+  const addTag = useCallback(
+    async (rawValue: string) => {
+      const next = rawValue.trim();
+      if (!next || !currentDocument) return;
+      if (documentTags.includes(next)) {
+        setTagDraft('');
+        return;
+      }
+      const nextTags = [...documentTags, next];
+      setDocumentTags(nextTags);
+      setTagDraft('');
+      await handlePersistMetadata(content, nextTags);
+    },
+    [content, currentDocument, documentTags, handlePersistMetadata]
   );
-  const currentRelativePath = currentFilePath && workspacePath
-    ? toRelativeWorkspacePath(workspacePath, currentFilePath)
-    : null;
-  const currentLibraryEntry = currentRelativePath
-    ? getLibraryEntry(libraryMetadata, currentRelativePath)
-    : null;
-  const currentFileName = currentFilePath
-    ? currentFilePath.split('/').pop()?.replace('.json', '') || 'Untitled'
-    : 'No Document Selected';
-  const currentFileLocation = currentFilePath
-    ? toRelativeWorkspacePath(workspacePath, currentFilePath).split('/').slice(0, -1).join('/') || 'Workspace Root'
-    : 'Select a file from the sidebar';
-  const hasActiveDocument = Boolean(currentFilePath);
-  const isWorkspaceEmpty = workspaceRootItemCount === 0;
-  const dashboardRecentItems = recentItems.slice(0, 5);
-  const dashboardFavoriteItems = favoriteItems.slice(0, 5);
+
+  const handleDropNode = useCallback(
+    async (sourceId: string, targetParentId: string | null) => {
+      const dragged = documents.find((document) => document.id === sourceId) ?? null;
+      if (!dragged || dragged.parent_id === (targetParentId ?? null)) {
+        return;
+      }
+
+      try {
+        const updated = await moveDocument(dragged.id, targetParentId);
+        if (currentDocument?.id === updated.id && updated.node_kind === 'document') {
+          setCurrentDocument(updated);
+        }
+        toast.success('节点已移动');
+        await refresh(currentDocument?.id ?? updated.id);
+        await triggerAutoSync('drag-move', false, updated.id);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [currentDocument?.id, documents, refresh, toast, triggerAutoSync]
+  );
+
+  const handleMoveBySelection = useCallback(
+    async (source: DocumentSummary, targetParentId: string | null) => {
+      if (source.parent_id === (targetParentId ?? null)) {
+        setMoveModeSource(null);
+        return;
+      }
+      try {
+        const updated = await moveDocument(source.id, targetParentId);
+        if (currentDocument?.id === updated.id && updated.node_kind === 'document') {
+          setCurrentDocument(updated);
+        }
+        toast.success('节点已移动');
+        setMoveModeSource(null);
+        await refresh(currentDocument?.id ?? updated.id);
+        await triggerAutoSync('move-mode', false, updated.id);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [currentDocument?.id, refresh, toast, triggerAutoSync]
+  );
+
+  const moveModeTargets = useMemo(() => collectFolderTargets(documents, moveModeSource), [documents, moveModeSource]);
+
+  const removeTag = useCallback(
+    async (tagName: string) => {
+      if (!currentDocument) return;
+      const nextTags = documentTags.filter((tag) => tag !== tagName);
+      setDocumentTags(nextTags);
+      await handlePersistMetadata(content, nextTags);
+    },
+    [content, currentDocument, documentTags, handlePersistMetadata]
+  );
+
+  if (loading) {
+    return (
+      <div className="min-h-screen" style={{ backgroundColor: background }}>
+        <TitleBar />
+      </div>
+    );
+  }
 
   return (
     <div
-      className={`fixed inset-0 flex flex-col transition-colors duration-700 ${theme.font} ${
-        theme.id === 'vellum' ? 'text-stone-800' : 'text-stone-300'
-      }`}
+      className="shell-page min-h-screen"
       style={{
-        backgroundColor: getThemeBgColor(theme),
+        backgroundColor: background,
+        color: accent,
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {/* 自定义标题栏（窗口控制） */}
       <TitleBar />
-      
-      {/* 顶部导航栏 (The Deck) */}
-      <header
-        className={`h-16 flex items-center justify-between px-4 z-50 border-b transition-transform duration-300`}
-        style={{
-          backgroundColor: getThemeSurfaceColor(theme),
-          borderColor: getThemeBorderColor(theme),
-        }}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="block shrink-0"
-          >
-            <Menu size={20} style={{ color: getThemeAccentColor(theme) }} />
-          </button>
-          <div className="min-w-0">
-            <div
-              className={`flex items-center gap-1 text-[10px] ${theme.uiFont} uppercase tracking-[0.18em] opacity-50 min-w-0`}
-            >
-              <span>STYX-Ω</span>
-              <ChevronRight size={10} />
-              <span className="truncate">{currentFileLocation}</span>
-            </div>
-            <div className="flex items-center gap-2 min-w-0 mt-0.5">
-              <span
-                className="truncate text-sm"
-                style={{ color: getThemeAccentColor(theme) }}
-                title={currentFileName}
-              >
-                {currentFileName}
-              </span>
-              {currentLibraryEntry?.favorite && (
-                <span className="hidden sm:inline text-[10px] uppercase opacity-50">Favorite</span>
-              )}
-              {currentLibraryEntry?.archived_at && (
-                <span className="hidden sm:inline text-[10px] uppercase opacity-50">Archived</span>
-              )}
-            </div>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-1 sm:gap-2 max-w-[62vw] overflow-x-auto md:overflow-visible no-scrollbar">
-          {/* 移动端：块插入按钮 */}
-          {hasActiveDocument && (
-            <button
-              onClick={() => setShowBlockSelector(true)}
-              className="md:hidden"
-              style={{ color: getThemeAccentColor(theme) }}
-              title="插入新块"
-            >
-              <Plus size={20} />
-            </button>
-          )}
-          
-          {/* 文本格式化按钮组 */}
-          {hasActiveDocument && (
-            <div className="hidden md:flex items-center gap-1 border rounded"
-              style={{
-                borderColor: getThemeBorderColor(theme),
-                backgroundColor: getThemeSurfaceColor(theme),
-              }}
-            >
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().toggleBold().run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive('bold') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive('bold') ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="粗体 (Ctrl+B / Cmd+B)"
-            >
-              <Bold size={16} />
-            </button>
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().toggleItalic().run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive('italic') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive('italic') ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="斜体 (Ctrl+I / Cmd+I)"
-            >
-              <Italic size={16} />
-            </button>
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().toggleUnderline().run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive('underline') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive('underline') ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="下划线 (Ctrl+U / Cmd+U)"
-            >
-              <Underline size={16} />
-            </button>
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().toggleStrike().run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive('strike') ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive('strike') ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="删除线 (Ctrl+Shift+X / Cmd+Shift+X)"
-            >
-              <Strikethrough size={16} />
-            </button>
-            </div>
-          )}
-
-          {/* 文本对齐按钮组 - 每个块独立对齐 */}
-          {hasActiveDocument && (
-            <div className="hidden md:flex items-center gap-1 border rounded"
-              style={{
-                borderColor: getThemeBorderColor(theme),
-                backgroundColor: getThemeSurfaceColor(theme),
-              }}
-            >
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().setTextAlign('left').run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive({ textAlign: 'left' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive({ textAlign: 'left' }) ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="居左对齐"
-            >
-              <AlignLeft size={16} />
-            </button>
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().setTextAlign('center').run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive({ textAlign: 'center' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive({ textAlign: 'center' }) ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="居中对齐"
-            >
-              <AlignCenter size={16} />
-            </button>
-            <button
-              onClick={() => {
-                if (editorInstance) {
-                  editorInstance.chain().focus().setTextAlign('right').run();
-                }
-              }}
-              className={`p-1.5 transition-opacity ${
-                editorInstance?.isActive({ textAlign: 'right' }) ? 'opacity-100' : 'opacity-50 hover:opacity-75'
-              }`}
-              style={{
-                color: editorInstance?.isActive({ textAlign: 'right' }) ? getThemeAccentColor(theme) : undefined,
-              }}
-              title="居右对齐"
-            >
-              <AlignRight size={16} />
-            </button>
-            </div>
-          )}
-          
-          <div className="flex items-center gap-2" title={syncMessage || '同步状态'}>
-            <span
-              className={`text-[9px] ${theme.uiFont} opacity-40 hidden sm:block`}
-            >
-              {syncStatus === 'syncing' ? '同步中...' : syncStatus === 'error' ? '同步失败' : 'SYNC_STABLE'}
-            </span>
-            <div
-              className={`w-1.5 h-1.5 rounded-full ${
-                syncStatus === 'syncing' 
-                  ? 'bg-yellow-500'
-                  : syncStatus === 'error'
-                  ? 'bg-red-500'
-                  : theme.accent === 'text-stone-800' ? 'bg-green-600' : 'bg-emerald-500'
-              } ${theme.glow}`}
-            ></div>
-          </div>
-          {/* 搜索按钮 */}
-          <button
-            onClick={() => setShowSearchModal(true)}
-            className="p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-            style={{ color: getThemeAccentColor(theme) }}
-            title="搜索文档 (Ctrl+F / Cmd+F)"
-          >
-            <Search size={18} />
-          </button>
-
-          {currentFilePath && (
-            <button
-              onClick={() => handleToggleFavorite(currentFilePath)}
-              className="p-1.5 transition-opacity opacity-50 hover:opacity-100 shrink-0"
-              style={{ color: getThemeAccentColor(theme) }}
-              title={currentLibraryEntry?.favorite ? '取消收藏' : '收藏'}
-            >
-              <Star size={18} fill={currentLibraryEntry?.favorite ? 'currentColor' : 'none'} />
-            </button>
-          )}
-
-          {/* 导出按钮 */}
-          {currentFilePath && editorContent && (
-            <div className="relative hidden sm:block shrink-0" ref={exportMenuRef}>
-              <button
-                onClick={() => {
-                  setShowExportMenu((open) => !open);
-                  setShowMoreMenu(false);
-                }}
-                className="p-1.5 transition-opacity opacity-50 hover:opacity-100 relative z-10"
-                style={{ color: getThemeAccentColor(theme) }}
-                title="导出文档"
-              >
-                <FileDown size={18} />
-              </button>
-
-              {showExportMenu && (
-                <div
-                  className="absolute right-0 top-full mt-2 rounded border shadow-lg z-50"
-                  style={{
-                    backgroundColor: getThemeSurfaceColor(theme),
-                    borderColor: getThemeBorderColor(theme),
-                  }}
-                >
-                  <button
-                    onClick={handleExportPDF}
-                    className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
-                    style={{ color: getThemeAccentColor(theme) }}
-                  >
-                    导出为 PDF
-                  </button>
-                  <button
-                    onClick={handleExportDOCX}
-                    className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
-                    style={{ color: getThemeAccentColor(theme) }}
-                  >
-                    导出为 DOCX
-                  </button>
-                  <button
-                    onClick={handleExportMarkdown}
-                    className="block w-full px-4 py-2 text-left text-sm hover:opacity-80 transition-opacity whitespace-nowrap"
-                    style={{ color: getThemeAccentColor(theme) }}
-                  >
-                    导出为 Markdown
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="relative shrink-0" ref={moreMenuRef}>
-            <button
-              onClick={() => {
-                setShowMoreMenu((open) => !open);
-                setShowExportMenu(false);
-              }}
-              className="p-1.5 transition-opacity opacity-50 hover:opacity-100"
-              style={{ color: getThemeAccentColor(theme) }}
-              title="更多操作"
-            >
-              <MoreHorizontal size={18} />
-            </button>
-            {showMoreMenu && (
-              <div
-                className="absolute right-0 top-full mt-2 w-52 rounded border shadow-lg z-50 p-1"
-                style={{
-                  backgroundColor: getThemeSurfaceColor(theme),
-                  borderColor: getThemeBorderColor(theme),
-                }}
-              >
-                <button
-                  onClick={() => {
-                    setShowHistoryTimeline(true);
-                    setShowMoreMenu(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                  style={{ color: getThemeAccentColor(theme) }}
-                >
-                  <History size={16} />
-                  <span>历史时间线</span>
-                </button>
-                <button
-                  onClick={() => {
-                    triggerMarkdownImport();
-                    setShowMoreMenu(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                  style={{ color: getThemeAccentColor(theme) }}
-                >
-                  <Import size={16} />
-                  <span>导入 Markdown</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAtmospherePreview(true);
-                    setShowMoreMenu(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                  style={{ color: getThemeAccentColor(theme) }}
-                >
-                  <Clock3 size={16} />
-                  <span>氛围预览</span>
-                </button>
-                {currentFilePath && (
-                  <>
-                    <button
-                      onClick={() => {
-                        handleToggleArchive(currentFilePath);
-                        setShowMoreMenu(false);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                      style={{ color: getThemeAccentColor(theme) }}
-                    >
-                      <Archive size={16} />
-                      <span>{currentLibraryEntry?.archived_at ? '取消归档' : '归档文档'}</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        handleMoveToTrash(currentFilePath);
-                        setShowMoreMenu(false);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                      style={{ color: getThemeAccentColor(theme) }}
-                    >
-                      <Trash2 size={16} />
-                      <span>移至回收站</span>
-                    </button>
-                    <button
-                      onClick={async () => {
-                        try {
-                          if (!workspacePath) {
-                            toast.error('工作区路径为空');
-                            return;
-                          }
-                          await commitChanges(workspacePath, 'manual_debug_commit');
-                          toast.success('提交成功');
-                        } catch (error) {
-                          toast.error(`提交失败: ${error instanceof Error ? error.message : String(error)}`);
-                        } finally {
-                          setShowMoreMenu(false);
-                        }
-                      }}
-                      className="w-full hidden sm:flex items-center gap-2 px-3 py-2 text-left text-sm rounded hover:opacity-80"
-                      style={{ color: getThemeAccentColor(theme) }}
-                    >
-                      <GitCommit size={16} />
-                      <span>手动提交</span>
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          
-          <Link
-            href="/settings"
-            style={{ color: getThemeAccentColor(theme) }}
-            className="hover:opacity-80 transition-opacity shrink-0"
-            title="设置"
-          >
-            <Settings size={18} />
-          </Link>
-          <button
-            onClick={() => setIsPrivate(!isPrivate)}
-            style={{ color: getThemeAccentColor(theme) }}
-            className="shrink-0"
-          >
-            {isPrivate ? <Shield size={18} /> : <Layers size={18} />}
-          </button>
-        </div>
-      </header>
-
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* 移动端遮罩层 */}
-        {isSidebarOpen && (
-          <div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 md:hidden transition-opacity duration-300"
-            onClick={() => setIsSidebarOpen(false)}
-            aria-hidden="true"
-          />
-        )}
-
-        {/* 左侧资源管理器 - 固定位置，不受滚动影响 */}
-        <Sidebar
-          workspacePath={workspacePath}
-          onFileSelect={handleFileSelect}
-          onDirectoryChange={handleDirectoryChange}
-          isOpen={isSidebarOpen}
-          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-          currentFilePath={currentFilePath}
-          favoritePaths={favoriteItems}
-          recentPaths={recentItems}
-          archivedPaths={archivedItems}
-          trashEntries={trashItems}
-          onMoveToTrash={handleMoveToTrash}
-          onRestoreFromTrash={handleRestoreFromTrash}
-          onDeletePermanently={handleDeletePermanently}
-          onPathRename={handlePathRename}
-        />
-
-        {/* 主编辑区 - 可以滚动 */}
-        <div
-          className="flex-1 relative overflow-y-auto"
-          onClick={(e) => {
-            // 只在点击编辑器外部区域时关闭菜单，避免阻止编辑器事件
-            if (e.target === e.currentTarget) {
-              setShowRadial(false);
-            }
-            
-            // 如果点击在主编辑区，但没有点击在编辑器内容上，触发 Editor 的容器点击处理
-            const target = e.target as HTMLElement;
-            const editorMain = target.closest('main');
-            const editorContent = target.closest('.ProseMirror');
-            
-            // 如果点击在主编辑区容器内，但不在编辑器内容上，且编辑器实例存在
-            if (!editorContent && editorInstance && editorInstance.view) {
-              // 检查是否点击在 Editor 的 main 标签内
-              if (editorMain) {
-                // 点击在 Editor 的 main 内，但不在编辑器内容上，触发容器点击
-                const { clientX, clientY } = e;
-                const { view } = editorInstance;
-                
-                // 使用 view.posAtCoords 尝试找到点击位置
-                const pos = view.posAtCoords({ left: clientX, top: clientY });
-                if (pos && pos.pos !== null) {
-                  const { state } = view;
-                  const { doc } = state;
-                  const validPos = Math.max(1, Math.min(pos.pos, doc.content.size));
-                  const tr = state.tr;
-                  const selection = TextSelection.create(doc, validPos);
-                  tr.setSelection(selection);
-                  view.dispatch(tr);
-                  
-                  setTimeout(() => {
-                    const dom = view.dom;
-                    if (dom) {
-                      (dom as HTMLElement).focus();
-                    }
-                  }, 0);
-                  return;
-                }
-                
-                // 如果 posAtCoords 找不到位置，使用距离计算找到最近的块
-                const { state } = view;
-                const { doc } = state;
-                
-                if (doc.content.size > 0) {
-                  let nearestBlock: { index: number; distance: number; pos: number } | null = null;
-                  
-                  for (let i = 0; i < doc.childCount; i++) {
-                    const child = doc.child(i);
-                    if (!child.isBlock) continue;
-                    
-                    try {
-                      let currentPos = 1;
-                      for (let j = 0; j < i; j++) {
-                        currentPos += doc.child(j).nodeSize;
-                      }
-                      
-                      const coords = view.coordsAtPos(currentPos);
-                      if (!coords) continue;
-                      
-                      const rowDiff = Math.abs(coords.top - clientY);
-                      const colDiff = Math.abs(coords.left - clientX);
-                      const distance = rowDiff * 1000 + colDiff;
-                      
-                      if (!nearestBlock || distance < nearestBlock.distance) {
-                        let bestPos = currentPos;
-                        if (child.content.size > 0) {
-                          bestPos = currentPos + 1;
-                        }
-                        
-                        nearestBlock = {
-                          index: i,
-                          distance,
-                          pos: bestPos,
-                        };
-                      }
-                    } catch (error) {
-                      continue;
-                    }
-                  }
-                  
-                  if (nearestBlock) {
-                    const { state } = view;
-                    const { doc } = state;
-                    const tr = state.tr;
-                    const selection = TextSelection.create(doc, Math.max(1, Math.min(nearestBlock.pos, doc.content.size)));
-                    tr.setSelection(selection);
-                    view.dispatch(tr);
-                    
-                    setTimeout(() => {
-                      const dom = view.dom;
-                      if (dom) {
-                        (dom as HTMLElement).focus();
-                      }
-                    }, 0);
-                  }
-                }
-              }
-            }
+      <div className="flex h-[calc(100vh-2rem-var(--safe-area-top)-var(--safe-area-bottom))] min-h-0">
+        <aside
+          className={`shell-panel fixed inset-y-0 left-0 z-40 w-[88vw] max-w-[320px] transform border-r transition-transform md:relative md:block md:h-full md:w-[308px] md:max-w-none md:translate-x-0 ${
+            sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          }`}
+          style={{
+            backgroundColor: surface,
+            borderColor: border,
+            top: 'env(safe-area-inset-top)',
+            bottom: 'env(safe-area-inset-bottom)',
           }}
         >
-          <div className={isPrivate ? 'h-full' : 'h-full blur-xl select-none opacity-20'}>
-            {hasActiveDocument ? (
-              <Editor
-                filePath={currentFilePath}
-                initialContent={editorContent}
-                onContentChange={setEditorContent}
-                workspacePath={workspacePath}
-                onEditorReady={(editor, triggerCommit) => {
-                  setEditorInstance(editor);
-                  setEditorTriggerCommit(() => triggerCommit);
-                }}
-                onUnsavedChangesChange={setHasUnsavedChanges}
-              />
-            ) : (
-              <main className="mx-auto flex min-h-full w-full max-w-5xl items-center px-6 py-10">
-                <section
-                  className="w-full rounded-3xl border p-6 md:p-10"
+          <div className="flex h-full flex-col" onContextMenu={openExplorerMenu}>
+            <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: border }}>
+              <div className="min-w-0">
+                <div className="shell-label">Explorer</div>
+                <div className="shell-title truncate text-sm font-medium">Vana</div>
+              </div>
+              <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="border-b px-3 py-3" style={{ borderColor: border }}>
+              <button
+                className="flex w-full items-center justify-center gap-2 border px-3 py-2 text-sm"
+                style={{ backgroundColor: 'transparent', borderColor: border, color: accent }}
+                onClick={() => void handleCreateDocument(false)}
+              >
+                <FilePlus2 size={15} />
+                新建文档
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-px border-b px-3 py-3 text-xs" style={{ borderColor: border }}>
+              {([
+                ['active', '文档库'],
+                ['archived', '归档'],
+                ['trashed', '回收站'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setSelectedStatus(value)}
+                  className="px-2 py-2 text-left"
                   style={{
-                    backgroundColor: getThemeSurfaceColor(theme),
-                    borderColor: getThemeBorderColor(theme),
+                    backgroundColor: selectedStatus === value ? accentBg : 'transparent',
+                    border: `1px solid ${border}`,
                   }}
                 >
-                  <div className="max-w-2xl">
-                    <div
-                      className={`text-[11px] uppercase tracking-[0.24em] opacity-50 ${theme.uiFont}`}
-                      style={{ color: getThemeAccentColor(theme) }}
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <ExplorerSection
+              title="Favorites"
+              count={favoriteDocuments.length}
+              expanded={expandedSections.favorites}
+              onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
+            >
+              {favoriteDocuments.length === 0 ? (
+                <div className="px-3 py-1 text-[11px] opacity-40">还没有收藏文档</div>
+              ) : (
+                <div className="space-y-0.5">
+                  {favoriteDocuments.map((document) => (
+                    <button
+                      key={document.id}
+                      type="button"
+                      onClick={() => void handleSelectDocument(document.id)}
+                      onContextMenu={(event) => openDocumentMenu(event, document)}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
+                      style={{
+                        color: accent,
+                        backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
+                      }}
                     >
-                      Workspace Dashboard
+                      <Heart size={12} className="shrink-0" fill="currentColor" />
+                      <span className="truncate">{documentLeafTitle(document)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </ExplorerSection>
+
+            <ExplorerSection
+              title="Recent"
+              count={recentDocuments.length}
+              expanded={expandedSections.recent}
+              onToggle={() => setExpandedSections((current) => ({ ...current, recent: !current.recent }))}
+            >
+              {recentDocuments.length === 0 ? (
+                <div className="px-3 py-1 text-[11px] opacity-40">最近还没有文档记录</div>
+              ) : (
+                <div className="space-y-0.5">
+                  {recentDocuments.map((document) => (
+                    <button
+                      key={document.id}
+                      type="button"
+                      onClick={() => void handleSelectDocument(document.id)}
+                      onContextMenu={(event) => openDocumentMenu(event, document)}
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
+                      style={{
+                        color: accent,
+                        backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
+                      }}
+                    >
+                      <Clock3 size={12} className="shrink-0 opacity-70" />
+                      <span className="truncate">{documentLeafTitle(document)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </ExplorerSection>
+
+            <ExplorerSection
+              title={selectedStatus === 'active' ? 'Workspace' : selectedStatus === 'archived' ? 'Archive' : 'Trash'}
+              count={filteredDocuments.length}
+              expanded={expandedSections.explorer}
+              onToggle={() => setExpandedSections((current) => ({ ...current, explorer: !current.explorer }))}
+            >
+              <div className="px-2 pb-2">
+                {moveModeSource && (
+                  <div
+                    className="mb-2 rounded border px-3 py-2 text-[11px]"
+                    style={{
+                      borderColor: border,
+                      backgroundColor: `${accentBg}35`,
+                      color: accent,
+                    }}
+                  >
+                    <div className="font-medium">移动模式</div>
+                    <div className="mt-1 opacity-75">正在移动：{moveModeSource.title}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded border px-2 py-1 text-[11px] transition-opacity hover:opacity-80"
+                        style={{ borderColor: border, color: accent }}
+                        onClick={() => void handleMoveBySelection(moveModeSource, null)}
+                      >
+                        移到根目录
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border px-2 py-1 text-[11px] transition-opacity hover:opacity-80"
+                        style={{ borderColor: border, color: accent }}
+                        onClick={() => setMoveModeSource(null)}
+                      >
+                        取消
+                      </button>
                     </div>
-                    <h1 className="mt-3 text-2xl md:text-4xl" style={{ color: getThemeAccentColor(theme) }}>
-                      {isWorkspaceEmpty ? '工作区还是空的' : '选择一个文档开始编辑'}
-                    </h1>
-                    <p className="mt-3 max-w-xl text-sm leading-7 opacity-70">
-                      {isWorkspaceEmpty
-                        ? '先创建一个文档，或者导入现有 Markdown。编辑器相关控件会在选中文档后出现。'
-                        : '当前没有选中文档。你可以从左侧列表打开已有内容，或者直接在这里创建新文档。'}
+                  </div>
+                )}
+
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setSelectedTag(null)}
+                    className="border px-2 py-1 text-[10px]"
+                    style={{
+                      backgroundColor: selectedTag === null ? accentBg : 'transparent',
+                      borderColor: border,
+                    }}
+                  >
+                    全部
+                  </button>
+                  {tags.map((tag) => (
+                    <button
+                      key={tag.id}
+                      onClick={() => setSelectedTag(tag.name)}
+                      className="border px-2 py-1 text-[10px]"
+                      style={{
+                        backgroundColor: selectedTag === tag.name ? accentBg : 'transparent',
+                        borderColor: border,
+                      }}
+                    >
+                      {tag.name}
+                    </button>
+                  ))}
+                </div>
+
+                {filteredDocuments.length === 0 ? (
+                  <div className="px-3 py-2 text-[12px] opacity-40">这一栏暂时是空的</div>
+                ) : (
+                  <DocumentExplorerTree
+                      documents={filteredDocuments}
+                      selectedId={selectedId}
+                      expandedFolders={expandedFolders}
+                      onToggleFolder={(folderId) =>
+                        setExpandedFolders((current) => {
+                          const next = new Set(current);
+                          if (next.has(folderId)) {
+                            next.delete(folderId);
+                          } else {
+                            next.add(folderId);
+                          }
+                          return next;
+                        })
+                      }
+                      onSelectDocument={(id) => void handleSelectDocument(id)}
+                      onNodeContextMenu={openDocumentMenu}
+                      onMoveNode={handleDropNode}
+                    />
+                )}
+
+                {moveModeSource && moveModeTargets.length > 1 && (
+                  <div className="mt-3 border-t pt-3" style={{ borderColor: `${border}80` }}>
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.24em] opacity-55">选择目标分组</div>
+                    <div className="space-y-1">
+                      {moveModeTargets
+                        .filter((candidate) => candidate.id !== null)
+                        .map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-opacity hover:opacity-85"
+                            style={{
+                              color: accent,
+                              paddingLeft: `${8 + candidate.depth * 14}px`,
+                              backgroundColor: candidate.id === moveModeSource.parent_id ? `${accentBg}28` : 'transparent',
+                            }}
+                            onClick={() => void handleMoveBySelection(moveModeSource, candidate.id)}
+                          >
+                            <Folder size={13} className="shrink-0" />
+                            <span className="truncate">{candidate.title}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ExplorerSection>
+          </div>
+        </aside>
+
+        <main className="min-w-0 flex-1 min-h-0 overflow-hidden">
+          <div className="flex min-h-12 flex-wrap items-center gap-2 border-b px-3 py-2 sm:px-4" style={{ backgroundColor: surface, borderColor: border }}>
+            <button className="border p-2 md:hidden" style={{ borderColor: border }} onClick={() => setSidebarOpen(true)}>
+              <Menu size={18} />
+            </button>
+            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleCreateDocument(false)}>
+              新建
+            </button>
+            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleCreateFolder()}>
+              分组
+            </button>
+            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleCreateDocument(true)}>
+              模板
+            </button>
+            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()} disabled={isImporting}>
+              {isImporting ? <RefreshCw size={14} className="mr-1 inline animate-spin" /> : <Import size={14} className="mr-1 inline" />}
+              导入旧库
+            </button>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleExport('md')} disabled={!currentDocument}>
+                <Download size={14} className="mr-1 inline" />
+                MD
+              </button>
+              <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleExport('docx')} disabled={!currentDocument}>
+                <Download size={14} className="mr-1 inline" />
+                DOCX
+              </button>
+              <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleExport('pdf')} disabled={!currentDocument}>
+                <Download size={14} className="mr-1 inline" />
+                PDF
+              </button>
+              <AppLink href="/settings" className="border px-3 py-1.5 text-sm" style={{ borderColor: border }}>
+                <Settings size={14} className="mr-1 inline" />
+                设置
+              </AppLink>
+            </div>
+          </div>
+
+          {!currentDocument ? (
+            <section className="h-full overflow-y-auto px-6 py-10" style={{ backgroundColor: background }}>
+              <div className="flex min-h-full w-full items-center justify-center">
+                <div className="w-full max-w-[760px]">
+                  <div className="mx-auto max-w-[560px] text-center">
+                    <div className="shell-label mb-3">Threshold</div>
+                    <h1 className="shell-title text-3xl font-semibold sm:text-4xl">书页尚未翻开。</h1>
+                    <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
+                      左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
                     </p>
                   </div>
 
-                  <div className="mt-8 flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      onClick={handleCreateDocumentFromDashboard}
-                      className="rounded-full px-4 py-2 text-sm transition-opacity hover:opacity-85"
-                      style={{
-                        backgroundColor: getThemeAccentBgColor(theme),
-                        color: getThemeAccentColor(theme),
-                      }}
-                    >
+                  <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
+                    <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument(false)}>
                       新建文档
                     </button>
+                    <button className="border px-4 py-2 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()}>
+                      导入旧工作区
+                    </button>
+                    <AppLink href="/settings" className="border px-4 py-2 text-sm" style={{ borderColor: border }}>
+                      进入设置
+                    </AppLink>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section className="flex h-full min-h-0 flex-col overflow-hidden">
+              <div className="shell-panel border-b px-4 py-3 sm:px-5" style={{ backgroundColor: surface, borderColor: border }}>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs opacity-70">
+                  <span className="shell-label">Document</span>
+                  <span className="opacity-35">/</span>
+                  {currentSegments.length > 0 ? (
+                    currentSegments.map((segment, index) => (
+                      <React.Fragment key={`${segment}-${index}`}>
+                        <span className={index === currentSegments.length - 1 ? 'opacity-100' : 'opacity-65'}>{segment}</span>
+                        {index < currentSegments.length - 1 && <span className="opacity-35">/</span>}
+                      </React.Fragment>
+                    ))
+                  ) : (
+                    <span>Untitled</span>
+                  )}
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] opacity-72">
+                  <span>最近更新 {formatTimestamp(currentDocument.updated_at)}</span>
+                  <span>同步 {appState?.sync.mode ?? 'local-only'}</span>
+                  <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <div className="flex min-w-[280px] flex-1 items-center gap-2 border px-3 py-2" style={{ borderColor: border }}>
+                    <Tag size={14} className="mt-0.5 shrink-0 opacity-60" />
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      {documentTags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs"
+                          style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
+                        >
+                          <span>{tag}</span>
+                          <button
+                            type="button"
+                            className="opacity-70 transition-opacity hover:opacity-100"
+                            onClick={() => void removeTag(tag)}
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                      <div className="flex min-w-[140px] flex-1 items-center gap-2">
+                        <input
+                          value={tagDraft}
+                          onChange={(event) => setTagDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void addTag(tagDraft);
+                            }
+                          }}
+                          placeholder="输入标签后回车"
+                          className="w-full min-w-0 bg-transparent text-sm outline-none"
+                        />
+                        <button
+                          type="button"
+                          className="opacity-70 transition-opacity hover:opacity-100"
+                          onClick={() => void addTag(tagDraft)}
+                          disabled={!tagDraft.trim()}
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-hidden p-0 md:p-3">
+                <Editor
+                  filePath={currentDocument.id}
+                  initialContent={content}
+                  tags={documentTags}
+                  onContentChange={setContent}
+                  onPersisted={() => {
+                    void triggerAutoSync('editor-save');
+                  }}
+                />
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
+
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+      )}
+
+      {sidebarMenu && (
+        <ContextMenu
+          x={sidebarMenu.x}
+          y={sidebarMenu.y}
+          items={sidebarMenu.items}
+          onClose={() => setSidebarMenu(null)}
+          onAction={(action) => sidebarMenu.action(action)}
+        />
+      )}
+
+      <InputModal
+        isOpen={Boolean(renameTarget)}
+        title={renameTarget?.node_kind === 'folder' ? '重命名分组' : '重命名文档'}
+        defaultValue={renameTarget?.title ?? ''}
+        placeholder={renameTarget?.node_kind === 'folder' ? '输入分组名称' : '输入文档标题'}
+        confirmText="保存"
+        onCancel={() => setRenameTarget(null)}
+        onConfirm={async (value) => {
+          if (!renameTarget) return;
+          const detail =
+            currentDocument?.id === renameTarget.id
+              ? currentDocument
+              : await getDocument(renameTarget.id);
+          if (!detail) {
+            toast.error('目标节点不存在');
+            setRenameTarget(null);
+            return;
+          }
+          const updated = await saveDocument({
+            id: detail.id,
+            title: value,
+            content_json: detail.content_json,
+            plain_text: detail.plain_text,
+            tags: detail.tags,
+          });
+          if (currentDocument?.id === updated.id && updated.node_kind === 'document') {
+            setCurrentDocument(updated);
+          }
+          setRenameTarget(null);
+          toast.success('名称已更新');
+          await refresh(currentDocument?.id ?? null);
+          await triggerAutoSync('rename', false, updated.id);
+        }}
+      />
+
+      {moveTarget && (
+        <div
+          className="fixed inset-0 z-[10001] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          onClick={() => setMoveTarget(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded border shadow-xl"
+            style={{ backgroundColor: surface, borderColor: border }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b px-6 py-4" style={{ borderColor: border }}>
+              <h2 className="text-lg font-semibold" style={{ color: accent }}>
+                移动到分组
+              </h2>
+              <p className="mt-1 text-sm opacity-70">
+                {moveTarget.title}
+              </p>
+            </div>
+            <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
+              <div className="space-y-1">
+                {availableMoveTargets.map((candidate) => {
+                  const active = candidate.id === (moveTarget.parent_id ?? null);
+                  return (
                     <button
+                      key={candidate.id ?? 'root'}
                       type="button"
-                      onClick={triggerMarkdownImport}
-                      className="rounded-full border px-4 py-2 text-sm transition-opacity hover:opacity-85"
+                      onClick={async () => {
+                        const updated = await moveDocument(moveTarget.id, candidate.id);
+                        if (currentDocument?.id === updated.id && updated.node_kind === 'document') {
+                          setCurrentDocument(updated);
+                        }
+                        setMoveTarget(null);
+                        toast.success('节点已移动');
+                        await refresh(currentDocument?.id ?? null);
+                        await triggerAutoSync('move', false, updated.id);
+                      }}
+                      className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm transition-opacity hover:opacity-85"
                       style={{
-                        borderColor: getThemeBorderColor(theme),
-                        color: getThemeAccentColor(theme),
+                        color: accent,
+                        backgroundColor: active ? `${accentBg}40` : 'transparent',
+                        paddingLeft: `${12 + Math.max(0, candidate.depth) * 16}px`,
                       }}
                     >
-                      导入 Markdown
+                      {candidate.id ? <Folder size={14} className="shrink-0" /> : <FolderOpen size={14} className="shrink-0" />}
+                      <span className="truncate">{candidate.title}</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsSidebarOpen(true)}
-                      className="rounded-full border px-4 py-2 text-sm transition-opacity hover:opacity-85"
-                      style={{
-                        borderColor: getThemeBorderColor(theme),
-                        color: getThemeAccentColor(theme),
-                      }}
-                    >
-                      打开侧边栏
-                    </button>
-                  </div>
-
-                  <div className="mt-10 grid gap-4 md:grid-cols-2">
-                    <section
-                      className="rounded-2xl border p-4"
-                      style={{ borderColor: getThemeBorderColor(theme) + '80' }}
-                    >
-                      <div className={`text-[11px] uppercase tracking-[0.22em] opacity-55 ${theme.uiFont}`}>最近文档</div>
-                      <div className="mt-3 space-y-2">
-                        {dashboardRecentItems.length > 0 ? (
-                          dashboardRecentItems.map((path) => (
-                            <button
-                              key={path}
-                              type="button"
-                              onClick={() => handleFileSelect(path)}
-                              className="block w-full rounded-xl px-3 py-2 text-left transition-opacity hover:opacity-85"
-                              style={{ backgroundColor: getThemeAccentBgColor(theme) + '24', color: getThemeAccentColor(theme) }}
-                            >
-                              <div className="truncate text-sm">{path.split('/').pop()?.replace(/\.enc$/i, '')}</div>
-                              <div className="truncate text-[11px] opacity-45">
-                                {toRelativeWorkspacePath(workspacePath, path)}
-                              </div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="text-sm opacity-45">还没有最近文档记录</div>
-                        )}
-                      </div>
-                    </section>
-
-                    <section
-                      className="rounded-2xl border p-4"
-                      style={{ borderColor: getThemeBorderColor(theme) + '80' }}
-                    >
-                      <div className={`text-[11px] uppercase tracking-[0.22em] opacity-55 ${theme.uiFont}`}>收藏文档</div>
-                      <div className="mt-3 space-y-2">
-                        {dashboardFavoriteItems.length > 0 ? (
-                          dashboardFavoriteItems.map((path) => (
-                            <button
-                              key={path}
-                              type="button"
-                              onClick={() => handleFileSelect(path)}
-                              className="block w-full rounded-xl px-3 py-2 text-left transition-opacity hover:opacity-85"
-                              style={{ backgroundColor: getThemeAccentBgColor(theme) + '24', color: getThemeAccentColor(theme) }}
-                            >
-                              <div className="truncate text-sm">{path.split('/').pop()?.replace(/\.enc$/i, '')}</div>
-                              <div className="truncate text-[11px] opacity-45">
-                                {toRelativeWorkspacePath(workspacePath, path)}
-                              </div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="text-sm opacity-45">还没有收藏文档</div>
-                        )}
-                      </div>
-                    </section>
-                  </div>
-                </section>
-              </main>
-            )}
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex justify-end border-t px-6 py-4" style={{ borderColor: border }}>
+              <button
+                type="button"
+                onClick={() => setMoveTarget(null)}
+                className="rounded border px-4 py-2 text-sm transition-opacity hover:opacity-80"
+                style={{ borderColor: border, color: accent }}
+              >
+                取消
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* 环形菜单 */}
-      {showRadial && (
-        <RadialMenu
-          x={radialPos.x}
-          y={radialPos.y}
-          onClose={() => setShowRadial(false)}
-          onAction={(action) => {
-            console.log('执行操作:', action);
-            
-            if (!editorInstance) {
-              toast.error('编辑器未就绪');
-              return;
-            }
-            
-            try {
-              switch (action) {
-                case 'h1':
-                  // 将当前块转换为 H1
-                  editorInstance.chain().focus().setHeading({ level: 1 }).run();
-                  toast.success('已转换为标题');
-                  break;
-                case 'quote':
-                  // 切换引用块
-                  editorInstance.chain().focus().toggleBlockquote().run();
-                  toast.success('已切换引用块');
-                  break;
-                case 'list':
-                  // 切换无序列表
-                  editorInstance.chain().focus().toggleBulletList().run();
-                  toast.success('已切换列表');
-                  break;
-                case 'meta':
-                  // 切换元数据块（代码块作为占位）
-                  if (editorInstance.isActive('codeBlock')) {
-                    editorInstance.chain().focus().toggleCodeBlock().run();
-                    toast.success('已切换代码块');
-                  } else {
-                    editorInstance.chain().focus().toggleCodeBlock().run();
-                    toast.success('已创建代码块');
-                  }
-                  break;
-                default:
-                  console.warn('未知操作:', action);
-              }
-            } catch (error) {
-              console.error('执行操作失败:', error);
-              toast.error(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          }}
-        />
       )}
-
-      {/* 底部信息栏 */}
-      <footer
-        className={`h-8 flex items-center justify-between px-4 text-[9px] ${theme.uiFont} opacity-30 border-t`}
-        style={{
-          backgroundColor: getThemeSurfaceColor(theme),
-          borderColor: getThemeBorderColor(theme),
-        }}
-      >
-        <div className="truncate">PROJECT: NO VISITORS // ARCHIVE_STYX_OMEGA</div>
-        <div className="hidden md:flex gap-4">
-          <span>WORDS: {countWords(editorContent)}</span>
-          <span>BRANCH: {workspaceInfo.branch || 'main'}</span>
-          <span>COMMITS: {workspaceInfo.commitCount}</span>
-          <span>PLANAR: STABLE</span>
-        </div>
-      </footer>
-
-      <input
-        ref={fileImportRef}
-        type="file"
-        accept=".md,text/markdown"
-        className="hidden"
-        onChange={handleMarkdownImport}
-      />
-
-      {/* 移动端浮动操作按钮 */}
-      <div className="md:hidden fixed bottom-6 right-6 z-[60]">
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="w-14 h-14 rounded-full border flex items-center justify-center"
-            style={{
-              backgroundColor: getThemeSurfaceColor(theme),
-              borderColor: getThemeBorderColor(theme),
-              color: getThemeAccentColor(theme),
-              boxShadow: theme.glow !== 'shadow-none' ? theme.glow.replace('shadow-', '') : undefined,
-            }}
-          >
-            {isSidebarOpen ? <X size={24} /> : <Database size={24} />}
-          </button>
-      </div>
-
-
-      {/* 移动端：块类型选择器（底部上拉框） */}
-      {hasActiveDocument && showBlockSelector && (
-        <BlockTypeSelector
-          editor={editorInstance}
-          onClose={() => setShowBlockSelector(false)}
-          mode="mobile"
-        />
-      )}
-
-
-      {/* 搜索模态框 */}
-      <SearchModal
-        isOpen={showSearchModal}
-        onClose={() => setShowSearchModal(false)}
-        workspacePath={workspacePath}
-        onFileSelect={handleFileSelect}
-      />
-
-      <HistoryTimelineModal
-        isOpen={showHistoryTimeline}
-        onClose={() => setShowHistoryTimeline(false)}
-        workspacePath={workspacePath}
-      />
-
-      {/* 氛围协议预览模态框 */}
-      <AtmospherePreviewModal
-        isOpen={showAtmospherePreview}
-        onClose={() => setShowAtmospherePreview(false)}
-        />
     </div>
   );
-}
-
-// 导出主页面组件
-export default function HomePage() {
-  return <MainApp />;
 }

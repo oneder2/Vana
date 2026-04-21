@@ -2,7 +2,7 @@
  * No Visitors - ConflictModal
  *
  * 用途：
- * - 当 Git 同步（rebase）检测到冲突时，提供交互式 UI 让用户选择解决策略：
+ * - 当同步流程检测到冲突时，提供交互式 UI 让用户选择解决策略：
  *   - Ours：保留本地版本
  *   - Theirs：接受云端版本
  *   - CopyBoth：保留两者（将本地版本另存为 *_conflict_<timestamp>，原文件使用云端版本继续同步）
@@ -165,7 +165,7 @@ export function ConflictModal(props: {
             <Smartphone className="w-12 h-12 text-emerald-500 mb-3" />
             <div className="text-emerald-100 font-bold mb-1">本地版本</div>
             <div className="text-xs text-emerald-400/60">
-              你的未同步提交 / 当前设备修改
+              当前设备上的本地修改
             </div>
           </div>
 
@@ -180,7 +180,7 @@ export function ConflictModal(props: {
             <Monitor className="w-12 h-12 text-blue-500 mb-3" />
             <div className="text-blue-100 font-bold mb-1">云端版本</div>
             <div className="text-xs text-blue-400/60">
-              远端最新提交 / 其它设备修改
+              同步中心上的较新版本
             </div>
           </div>
         </div>
@@ -259,5 +259,4 @@ export function ConflictModal(props: {
     </div>
   );
 }
-
 

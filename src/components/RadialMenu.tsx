@@ -145,7 +145,7 @@ export function RadialMenu({ x, y, onClose, onAction }: RadialMenuProps) {
       </div>
 
       {/* 样式定义 */}
-      <style jsx>{`
+      <style>{`
         @keyframes spin-slow {
           from {
             transform: rotate(0deg);
@@ -161,4 +161,3 @@ export function RadialMenu({ x, y, onClose, onAction }: RadialMenuProps) {
     </div>
   );
 }
-

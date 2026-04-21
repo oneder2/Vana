@@ -1,11 +1,5 @@
-/**
- * No Visitors - Tauri API 封装
- * 封装所有 Tauri 命令调用，提供类型安全的 API 接口
- */
-
 import { invoke } from '@tauri-apps/api/core';
 
-// 文件信息接口
 export interface FileInfo {
   name: string;
   path: string;
@@ -13,13 +7,11 @@ export interface FileInfo {
   is_file: boolean;
 }
 
-// Git 状态接口
 export interface GitStatus {
   has_changes: boolean;
   is_clean: boolean;
 }
 
-// 仓库验证信息接口
 export interface RepositoryVerification {
   is_initialized: boolean;
   has_commits: boolean;
@@ -29,7 +21,6 @@ export interface RepositoryVerification {
   latest_commit_time: string | null;
 }
 
-// 提交信息接口
 export interface CommitInfo {
   sha: string;
   message: string;
@@ -37,12 +28,10 @@ export interface CommitInfo {
   author: string;
 }
 
-// 氛围协议配置接口
 export interface AtmosphereConfig {
   theme: string;
 }
 
-// 工作区配置接口
 export interface WorkspaceConfig {
   commit_scope: 'workspace' | 'directory';
   auto_commit_interval: number;
@@ -61,432 +50,121 @@ export interface LibraryMetadata {
   entries: Record<string, LibraryEntry>;
 }
 
-/**
- * 读取加密文件
- * @param path 文件路径
- * @returns 解密后的文件内容
- */
-export async function readFile(path: string): Promise<string> {
-  return await invoke<string>('read_file', { path });
+export interface DocumentSummary {
+  id: string;
+  title: string;
+  node_kind: 'document' | 'folder';
+  parent_id: string | null;
+  depth: number;
+  status: 'active' | 'archived' | 'trashed';
+  is_favorite: boolean;
+  is_template: boolean;
+  updated_at: string;
+  created_at: string;
+  archived_at: string | null;
+  deleted_at: string | null;
+  tags: string[];
 }
 
-/**
- * 写入加密文件
- * @param path 文件路径
- * @param content 要写入的内容
- */
-export async function writeFile(path: string, content: string): Promise<void> {
-  return await invoke<void>('write_file', { path, content });
+export interface DocumentRecord extends DocumentSummary {
+  content_json: string;
+  plain_text: string;
 }
 
-/**
- * 列出目录内容
- * @param path 目录路径
- * @returns 文件信息列表
- */
-export async function listDirectory(path: string): Promise<FileInfo[]> {
-  return await invoke<FileInfo[]>('list_directory_command', { path });
+export interface TagRecord {
+  id: string;
+  name: string;
+  color: string | null;
+  document_count: number;
 }
 
-/**
- * 初始化 Git 仓库
- * @param path 仓库路径
- */
-export async function initRepository(path: string): Promise<void> {
-  return await invoke<void>('init_repository_command', { path });
+export interface SupabaseConfig {
+  url: string | null;
+  anon_key: string | null;
 }
 
-/**
- * 提交更改（全局提交）
- * 
- * 在工作区根目录执行全局提交，等价于：
- * `git add . && git commit -m "[message]"`
- * 
- * 会提交工作区中所有文件的变更，包括新增、修改、删除和重命名。
- * 
- * @param path 仓库路径（工作区根目录）
- * @param message 提交消息
- * @returns 提交的 SHA
- */
-export async function commitChanges(path: string, message: string): Promise<string> {
-  return await invoke<string>('commit_changes_command', { path, message });
+export interface SupabaseSession {
+  access_token: string;
+  refresh_token: string | null;
+  expires_at: number | null;
+  token_type: string | null;
+  user_id: string | null;
+  email: string | null;
 }
 
-/**
- * 获取仓库状态
- * @param path 仓库路径
- * @returns 仓库状态
- */
-export async function getRepositoryStatus(path: string): Promise<GitStatus> {
-  return await invoke<GitStatus>('get_repository_status_command', { path });
+export interface SyncSnapshot {
+  mode: string;
+  pending_jobs: number;
+  last_synced_at: string | null;
+  last_pulled_at: string | null;
+  auto_sync_enabled: boolean;
+  last_error: string | null;
 }
 
-/**
- * 执行 Git GC
- * @param path 仓库路径
- */
-export async function gitGc(path: string): Promise<void> {
-  return await invoke<void>('git_gc_command', { path });
+export interface AppState {
+  account_mode: string;
+  account_email: string | null;
+  local_db_path: string;
+  legacy_workspace_path: string;
+  supabase: SupabaseConfig;
+  sync: SyncSnapshot;
 }
 
-/**
- * 验证 Git 仓库
- * @param path 仓库路径
- * @returns 仓库验证信息
- */
-export async function verifyRepository(path: string): Promise<RepositoryVerification> {
-  return await invoke<RepositoryVerification>('verify_repository_command', { path });
+export interface SaveDocumentInput {
+  id: string;
+  title: string;
+  content_json: string;
+  plain_text: string;
+  tags: string[];
 }
 
-/**
- * 获取提交历史
- * @param path 仓库路径
- * @param limit 返回的最大提交数量（可选，默认10）
- * @returns 提交历史列表
- */
-export async function getCommitHistory(path: string, limit?: number): Promise<CommitInfo[]> {
-  return await invoke<CommitInfo[]>('get_commit_history_command', { path, limit });
+export interface CreateDocumentOptions {
+  title?: string;
+  isTemplate?: boolean;
+  nodeKind?: 'document' | 'folder';
+  parentId?: string | null;
 }
 
-/**
- * 读取氛围协议配置
- * @param path 目录路径
- * @returns 氛围协议配置
- */
-export async function readAtmosphereConfig(path: string): Promise<AtmosphereConfig> {
-  return await invoke<AtmosphereConfig>('read_atmosphere_config', { path });
+export interface LegacyImportResult {
+  imported_documents: number;
+  skipped_entries: number;
+  imported_paths: string[];
 }
 
-/**
- * 写入氛围协议配置
- * @param path 目录路径
- * @param config 氛围协议配置
- */
-export async function writeAtmosphereConfig(
-  path: string,
-  config: AtmosphereConfig
-): Promise<void> {
-  return await invoke<void>('write_atmosphere_config', { path, config });
+export interface SyncDocumentRecord {
+  id: string;
+  title: string;
+  node_kind: 'document' | 'folder';
+  parent_id: string | null;
+  depth: number;
+  content_json: string;
+  plain_text: string;
+  status: string;
+  is_favorite: boolean;
+  is_template: boolean;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+  deleted_at: string | null;
+  tags: string[];
 }
 
-/**
- * 获取平台信息
- * @returns 平台字符串 ("windows" | "linux" | "android")
- */
-export async function getPlatform(): Promise<'windows' | 'linux' | 'android'> {
-  return await invoke<'windows' | 'linux' | 'android'>('get_platform');
-}
-
-/**
- * 获取工作区路径
- * @returns 工作区路径
- */
-export async function getWorkspacePath(): Promise<string> {
-  return await invoke<string>('get_workspace_path');
-}
-
-/**
- * 确保工作区已初始化
- */
-export async function ensureWorkspaceInitialized(): Promise<void> {
-  return await invoke<void>('ensure_workspace_initialized');
-}
-
-/**
- * 读取工作区配置
- * @returns 工作区配置
- */
-export async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
-  return await invoke<WorkspaceConfig>('read_workspace_config');
-}
-
-/**
- * 写入工作区配置
- * @param config 工作区配置
- */
-export async function writeWorkspaceConfig(config: WorkspaceConfig): Promise<void> {
-  return await invoke<void>('write_workspace_config', { config });
-}
-
-/**
- * 读取 Git 跟踪的文档库元数据
- */
-export async function readLibraryMetadata(): Promise<LibraryMetadata> {
-  return await invoke<LibraryMetadata>('read_library_metadata');
-}
-
-/**
- * 写入 Git 跟踪的文档库元数据
- */
-export async function writeLibraryMetadata(metadata: LibraryMetadata): Promise<void> {
-  return await invoke<void>('write_library_metadata', { metadata });
-}
-
-/**
- * 创建新文件
- * @param path 文件路径
- * @param content 初始内容
- */
-export async function createFile(path: string, content: string = ''): Promise<void> {
-  return await invoke<void>('create_file_command', { path, content });
-}
-
-/**
- * 创建新目录
- * @param path 目录路径
- */
-export async function createDirectory(path: string): Promise<void> {
-  return await invoke<void>('create_directory_command', { path });
-}
-
-/**
- * 删除文件
- * @param path 文件路径
- */
-export async function deleteFile(path: string): Promise<void> {
-  return await invoke<void>('delete_file_command', { path });
-}
-
-/**
- * 删除目录
- * @param path 目录路径
- */
-export async function deleteDirectory(path: string): Promise<void> {
-  return await invoke<void>('delete_directory_command', { path });
-}
-
-/**
- * 重命名文件或目录
- * @param oldPath 旧路径
- * @param newPath 新路径
- */
-export async function renameFileOrDirectory(
-  oldPath: string,
-  newPath: string
-): Promise<void> {
-  return await invoke<void>('rename_file_or_directory_command', {
-    oldPath: oldPath,
-    newPath: newPath,
-  });
-}
-
-/**
- * 删除文件并同步到 Git（原子操作）
- * 
- * 此函数会：
- * 1. 执行文件删除
- * 2. 执行 git add -A（自动删除索引）
- * 3. 执行 git commit
- * 4. 执行 git push（如果配置了远程仓库和 PAT）
- * 
- * @param workspacePath 工作区路径
- * @param path 文件路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param branchName 分支名称（默认 "main"）
- * @param patToken PAT Token（可选）
- */
-export async function deleteFileWithGitSync(
-  workspacePath: string,
-  path: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main',
-  patToken?: string | null
-): Promise<void> {
-  return await invoke<void>('delete_file_with_git_sync_command', {
-    workspacePath,
-    path,
-    remoteName,
-    branchName,
-    patToken: patToken || null,
-  });
-}
-
-/**
- * 删除目录并同步到 Git（原子操作）
- * 
- * 此函数会：
- * 1. 执行目录删除
- * 2. 执行 git add -A（自动删除索引）
- * 3. 执行 git commit
- * 4. 执行 git push（如果配置了远程仓库和 PAT）
- * 
- * @param workspacePath 工作区路径
- * @param path 目录路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param branchName 分支名称（默认 "main"）
- * @param patToken PAT Token（可选）
- */
-export async function deleteDirectoryWithGitSync(
-  workspacePath: string,
-  path: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main',
-  patToken?: string | null
-): Promise<void> {
-  return await invoke<void>('delete_directory_with_git_sync_command', {
-    workspacePath,
-    path,
-    remoteName,
-    branchName,
-    patToken: patToken || null,
-  });
-}
-
-/**
- * 重命名文件或目录并同步到 Git（原子操作）
- * 
- * 此函数会：
- * 1. 执行文件重命名
- * 2. 执行 git add -A（自动删除旧索引、添加新索引）
- * 3. 执行 git commit
- * 4. 执行 git push（如果配置了远程仓库和 PAT）
- * 
- * @param workspacePath 工作区路径
- * @param oldPath 旧路径
- * @param newPath 新路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param branchName 分支名称（默认 "main"）
- * @param patToken PAT Token（可选）
- */
-export async function renameFileWithGitSync(
-  workspacePath: string,
-  oldPath: string,
-  newPath: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main',
-  patToken?: string | null
-): Promise<void> {
-  return await invoke<void>('rename_file_with_git_sync_command', {
-    workspacePath,
-    oldPath,
-    newPath,
-    remoteName,
-    branchName,
-    patToken: patToken || null,
-  });
-}
-
-/**
- * 复制文件或目录
- * @param sourcePath 源路径
- * @param destPath 目标路径
- */
-export async function copyFileOrDirectory(
-  sourcePath: string,
-  destPath: string
-): Promise<void> {
-  return await invoke<void>('copy_file_or_directory_command', {
-    sourcePath: sourcePath,
-    destPath: destPath,
-  });
-}
-
-/**
- * 移动文件或目录
- * @param sourcePath 源路径
- * @param destPath 目标路径
- */
-export async function moveFileOrDirectory(
-  sourcePath: string,
-  destPath: string
-): Promise<void> {
-  return await invoke<void>('move_file_or_directory_command', {
-    sourcePath: sourcePath,
-    destPath: destPath,
-  });
-}
-
-/**
- * 存储 GitHub PAT Token
- * @param token PAT Token
- */
-export async function storePatToken(token: string): Promise<void> {
-  return await invoke<void>('store_pat', { token });
-}
-
-/**
- * 获取 GitHub PAT Token
- * @returns PAT Token，如果未配置则返回 null
- */
-export async function getPatToken(): Promise<string | null> {
-  return await invoke<string | null>('get_pat');
-}
-
-/**
- * 删除 GitHub PAT Token
- */
-export async function removePatToken(): Promise<void> {
-  return await invoke<void>('remove_pat');
-}
-
-/**
- * 检查是否已配置 GitHub PAT Token
- * @returns 如果已配置返回 true，否则返回 false
- */
-export async function hasPatToken(): Promise<boolean> {
-  return await invoke<boolean>('has_pat');
-}
-
-/**
- * 添加远程仓库
- * @param path 仓库路径
- * @param name 远程仓库名称（默认 "origin"）
- * @param url 远程仓库URL
- */
-export async function addRemote(path: string, name: string, url: string): Promise<void> {
-  return await invoke<void>('add_remote', { path, name, url });
-}
-
-/**
- * 获取远程仓库URL
- * @param path 仓库路径
- * @param name 远程仓库名称（默认 "origin"）
- * @returns 远程仓库URL，如果未配置则返回 null
- */
-export async function getRemoteUrl(path: string, name: string = 'origin'): Promise<string | null> {
-  return await invoke<string | null>('get_remote_url', { path, name });
-}
-
-/**
- * 删除远程仓库配置
- * @param path 仓库路径
- * @param name 远程仓库名称（默认 "origin"）
- */
-export async function removeRemote(path: string, name: string = 'origin'): Promise<void> {
-  return await invoke<void>('remove_remote', { path, name });
+export interface SyncExport {
+  pending_job_ids: number[];
+  documents: SyncDocumentRecord[];
+  last_pulled_at: string | null;
 }
 
 export interface RemoteConnectionStatus {
-  ok: boolean;
-  remote_url: string | null;
-  auth_mode: string;
-  can_fetch: boolean;
+  reachable: boolean;
+  authenticated: boolean;
   message: string;
-  hint: string | null;
 }
 
-/**
- * 检查远程仓库连接状态
- * @param path 仓库路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param patToken PAT Token（可选）
- */
-export async function validateRemoteConnection(
-  path: string,
-  remoteName: string = 'origin',
-  patToken?: string
-): Promise<RemoteConnectionStatus> {
-  return await invoke<RemoteConnectionStatus>('validate_remote_connection_command', {
-    path,
-    remoteName,
-    patToken,
-  });
-}
-
-// 同步结果接口
 export interface SyncConflictFile {
   path: string;
-  is_binary: boolean;
+  ours: string;
+  theirs: string;
 }
 
 export interface SyncConflict {
@@ -502,138 +180,10 @@ export interface ConflictResolutionItem {
 
 export interface SyncResult {
   success: boolean;
-  has_conflict: boolean;
-  conflict_branch: string | null;
-  conflict?: SyncConflict | null;
+  message: string;
+  conflict: SyncConflict | null;
 }
 
-/**
- * 从远程仓库获取更新（fetch）
- * @param path 仓库路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param patToken PAT Token（可选）
- */
-export async function fetchFromRemote(
-  path: string,
-  remoteName: string = 'origin',
-  patToken?: string
-): Promise<void> {
-  return await invoke<void>('fetch_from_remote', { 
-    path, 
-    remoteName,
-    patToken,
-  });
-}
-
-/**
- * 推送本地提交到远程仓库（push）
- * @param path 仓库路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param branchName 分支名称（默认 "main"）
- * @param patToken PAT Token（可选）
- */
-export async function pushToRemote(
-  path: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main',
-  patToken?: string
-): Promise<void> {
-  return await invoke<void>('push_to_remote', {
-    path,
-    remoteName: remoteName,
-    branchName: branchName,
-    patToken: patToken,
-  });
-}
-
-/**
- * 同步远程仓库（fetch + rebase/push）
- * @param path 仓库路径
- * @param remoteName 远程仓库名称（默认 "origin"）
- * @param branchName 分支名称（默认 "main"）
- * @param patToken PAT Token（可选）
- * @returns 同步结果
- */
-export async function syncWithRemote(
-  path: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main',
-  patToken?: string
-): Promise<SyncResult> {
-  return await invoke<SyncResult>('sync_with_remote', {
-    path,
-    remoteName,
-    branchName,
-    patToken,
-  });
-}
-
-/**
- * 启动同步（fetch + fast-forward/rebase），如遇冲突返回冲突详情
- */
-export async function beginSync(
-  path: string,
-  remoteName: string = 'origin',
-  branchName: string = 'main',
-  patToken?: string
-): Promise<SyncResult> {
-  return await invoke<SyncResult>('begin_sync', {
-    path,
-    remoteName,
-    branchName,
-    patToken,
-  });
-}
-
-/**
- * 继续同步（继续进行中的 rebase）
- */
-export async function continueSync(
-  path: string,
-  branchName: string = 'main'
-): Promise<SyncResult> {
-  return await invoke<SyncResult>('continue_sync', {
-    path,
-    branchName,
-  });
-}
-
-/**
- * 放弃同步（abort rebase）
- */
-export async function abortSync(path: string): Promise<void> {
-  return await invoke<void>('abort_sync', { path });
-}
-
-/**
- * 解决冲突（写入工作区 + stage），随后应调用 continueSync
- */
-export async function resolveConflict(
-  path: string,
-  items: ConflictResolutionItem[]
-): Promise<void> {
-  return await invoke<void>('resolve_conflict', { path, items });
-}
-
-/**
- * 获取当前分支名
- * @param path 仓库路径
- * @returns 当前分支名
- */
-export async function getCurrentBranch(path: string): Promise<string> {
-  return await invoke<string>('get_current_branch_command', { path });
-}
-
-/**
- * 切换到指定分支
- * @param path 仓库路径
- * @param branch 分支名称
- */
-export async function switchToBranch(path: string, branch: string): Promise<void> {
-  return await invoke<void>('switch_to_branch_command', { path, branch });
-}
-
-// 搜索结果接口
 export interface SearchMatch {
   line: number;
   column: number;
@@ -645,16 +195,348 @@ export interface SearchResult {
   matches: SearchMatch[];
 }
 
-/**
- * 搜索文档内容
- * 
- * @param workspacePath 工作区路径
- * @param query 搜索关键词
- * @returns 搜索结果列表
- */
-export async function searchFiles(workspacePath: string, query: string): Promise<SearchResult[]> {
-  return await invoke<SearchResult[]>('search_files_command', {
-    workspacePath,
-    query,
+export async function getPlatform(): Promise<'windows' | 'linux' | 'android'> {
+  return invoke<'windows' | 'linux' | 'android'>('get_platform');
+}
+
+export async function ensureWorkspaceInitialized(): Promise<void> {
+  return invoke<void>('ensure_workspace_initialized');
+}
+
+export async function getWorkspacePath(): Promise<string> {
+  return invoke<string>('get_workspace_path');
+}
+
+export async function getAppState(): Promise<AppState> {
+  return invoke<AppState>('get_app_state_command');
+}
+
+export async function listDocuments(status?: 'active' | 'archived' | 'trashed'): Promise<DocumentSummary[]> {
+  return invoke<DocumentSummary[]>('list_documents_command', { status: status ?? null });
+}
+
+export async function getDocument(id: string): Promise<DocumentRecord | null> {
+  return invoke<DocumentRecord | null>('get_document_command', { id });
+}
+
+export async function createDocument(
+  titleOrOptions?: string | CreateDocumentOptions,
+  isTemplate = false
+): Promise<DocumentRecord> {
+  const options: CreateDocumentOptions =
+    typeof titleOrOptions === 'string'
+      ? { title: titleOrOptions, isTemplate }
+      : (titleOrOptions ?? {});
+  return invoke<DocumentRecord>('create_document_command', {
+    title: options.title ?? null,
+    isTemplate: options.isTemplate ?? false,
+    nodeKind: options.nodeKind ?? 'document',
+    parentId: options.parentId ?? null,
   });
+}
+
+export async function moveDocument(id: string, parentId?: string | null): Promise<DocumentRecord> {
+  return invoke<DocumentRecord>('move_document_command', {
+    id,
+    parentId: parentId ?? null,
+  });
+}
+
+export async function saveDocument(input: SaveDocumentInput): Promise<DocumentRecord> {
+  return invoke<DocumentRecord>('save_document_command', { input });
+}
+
+export async function setDocumentStatus(id: string, status: 'active' | 'archived' | 'trashed'): Promise<DocumentRecord> {
+  return invoke<DocumentRecord>('set_document_status_command', { id, status });
+}
+
+export async function toggleFavorite(id: string, favorite: boolean): Promise<DocumentRecord> {
+  return invoke<DocumentRecord>('toggle_favorite_command', { id, favorite });
+}
+
+export async function listTags(): Promise<TagRecord[]> {
+  return invoke<TagRecord[]>('list_tags_command');
+}
+
+export async function upsertTag(name: string, color?: string | null, id?: string): Promise<TagRecord> {
+  return invoke<TagRecord>('upsert_tag_command', {
+    id: id ?? null,
+    name,
+    color: color ?? null,
+  });
+}
+
+export async function getSupabaseConfig(): Promise<SupabaseConfig> {
+  return invoke<SupabaseConfig>('get_supabase_config_command');
+}
+
+export async function saveSupabaseConfig(config: SupabaseConfig): Promise<SupabaseConfig> {
+  return invoke<SupabaseConfig>('save_supabase_config_command', { config });
+}
+
+export async function getSupabaseSession(): Promise<SupabaseSession | null> {
+  return invoke<SupabaseSession | null>('get_supabase_session_command');
+}
+
+export async function saveSupabaseSession(session: SupabaseSession): Promise<SupabaseSession> {
+  return invoke<SupabaseSession>('save_supabase_session_command', { session });
+}
+
+export async function clearSupabaseSession(): Promise<void> {
+  return invoke<void>('clear_supabase_session_command');
+}
+
+export async function markSyncAttempt(success: boolean, error?: string | null): Promise<SyncSnapshot> {
+  return invoke<SyncSnapshot>('mark_sync_attempt_command', {
+    success,
+    error: error ?? null,
+  });
+}
+
+export async function exportSyncDocuments(): Promise<SyncExport> {
+  return invoke<SyncExport>('export_sync_documents_command');
+}
+
+export async function applyRemoteDocuments(documents: SyncDocumentRecord[]): Promise<number> {
+  return invoke<number>('apply_remote_documents_command', { documents });
+}
+
+export async function finalizeSyncJobs(
+  processedJobIds: number[],
+  success: boolean,
+  error?: string | null,
+  pulledCursor?: string | null
+): Promise<SyncSnapshot> {
+  return invoke<SyncSnapshot>('finalize_sync_jobs_command', {
+    processedJobIds,
+    success,
+    error: error ?? null,
+    pulledCursor: pulledCursor ?? null,
+  });
+}
+
+export async function importLegacyWorkspace(): Promise<LegacyImportResult> {
+  return invoke<LegacyImportResult>('import_legacy_workspace_command');
+}
+
+export async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
+  return invoke<WorkspaceConfig>('read_workspace_config');
+}
+
+export async function writeWorkspaceConfig(config: WorkspaceConfig): Promise<void> {
+  return invoke<void>('write_workspace_config', { config });
+}
+
+export async function readLibraryMetadata(): Promise<LibraryMetadata> {
+  return invoke<LibraryMetadata>('read_library_metadata');
+}
+
+export async function writeLibraryMetadata(metadata: LibraryMetadata): Promise<void> {
+  return invoke<void>('write_library_metadata', { metadata });
+}
+
+export async function readFile(path: string): Promise<string> {
+  return invoke<string>('read_file', { path });
+}
+
+export async function writeFile(path: string, content: string): Promise<void> {
+  return invoke<void>('write_file', { path, content });
+}
+
+export async function listDirectory(path: string): Promise<FileInfo[]> {
+  return invoke<FileInfo[]>('list_directory_command', { path });
+}
+
+export async function createFile(path: string, content = ''): Promise<void> {
+  return invoke<void>('create_file_command', { path, content });
+}
+
+export async function createDirectory(path: string): Promise<void> {
+  return invoke<void>('create_directory_command', { path });
+}
+
+export async function deleteFile(path: string): Promise<void> {
+  return invoke<void>('delete_file_command', { path });
+}
+
+export async function deleteDirectory(path: string): Promise<void> {
+  return invoke<void>('delete_directory_command', { path });
+}
+
+export async function renameFileOrDirectory(oldPath: string, newPath: string): Promise<void> {
+  return invoke<void>('rename_file_or_directory_command', {
+    oldPath,
+    newPath,
+  });
+}
+
+export async function copyFileOrDirectory(sourcePath: string, destPath: string): Promise<void> {
+  return invoke<void>('copy_file_or_directory_command', { sourcePath, destPath });
+}
+
+export async function moveFileOrDirectory(sourcePath: string, destPath: string): Promise<void> {
+  return invoke<void>('move_file_or_directory_command', { sourcePath, destPath });
+}
+
+export async function readAtmosphereConfig(path: string): Promise<AtmosphereConfig> {
+  return invoke<AtmosphereConfig>('read_atmosphere_config', { path });
+}
+
+export async function writeAtmosphereConfig(path: string, config: AtmosphereConfig): Promise<void> {
+  return invoke<void>('write_atmosphere_config', { path, config });
+}
+
+export async function exportMasterKey(): Promise<string> {
+  return invoke<string>('export_master_key_command');
+}
+
+export async function importMasterKey(keyBase64: string): Promise<void> {
+  return invoke<void>('import_master_key_command', { keyBase64 });
+}
+
+export async function searchFiles(workspacePath: string, query: string): Promise<SearchResult[]> {
+  return invoke<SearchResult[]>('search_files_command', { workspacePath, query });
+}
+
+export async function getCommitHistory(_path: string, _limit?: number): Promise<CommitInfo[]> {
+  return [];
+}
+
+export async function initRepository(_path: string): Promise<void> {
+  return;
+}
+
+export async function commitChanges(_path: string, _message: string): Promise<string> {
+  return 'git-mainline-removed';
+}
+
+export async function getRepositoryStatus(_path: string): Promise<GitStatus> {
+  return { has_changes: false, is_clean: true };
+}
+
+export async function gitGc(_path: string): Promise<void> {
+  return;
+}
+
+export async function verifyRepository(_path: string): Promise<RepositoryVerification> {
+  return {
+    is_initialized: false,
+    has_commits: false,
+    commit_count: 0,
+    latest_commit_sha: null,
+    latest_commit_message: null,
+    latest_commit_time: null,
+  };
+}
+
+export async function deleteFileWithGitSync(
+  _workspacePath: string,
+  path: string,
+  _remoteName?: string,
+  _branchName?: string,
+  _patToken?: string
+): Promise<void> {
+  return deleteFile(path);
+}
+
+export async function deleteDirectoryWithGitSync(
+  _workspacePath: string,
+  path: string,
+  _remoteName?: string,
+  _branchName?: string,
+  _patToken?: string
+): Promise<void> {
+  return deleteDirectory(path);
+}
+
+export async function renameFileWithGitSync(
+  _workspacePath: string,
+  oldPath: string,
+  newPath: string,
+  _remoteName?: string,
+  _branchName?: string,
+  _patToken?: string
+): Promise<void> {
+  return renameFileOrDirectory(oldPath, newPath);
+}
+
+export async function storePatToken(_token: string): Promise<void> {
+  throw new Error('旧凭证导入入口已停用；当前主线请改用 Supabase 或主密钥迁移');
+}
+
+export async function getPatToken(): Promise<string | null> {
+  return null;
+}
+
+export async function removePatToken(): Promise<void> {
+  return;
+}
+
+export async function hasPatToken(): Promise<boolean> {
+  return false;
+}
+
+export async function addRemote(_path: string, _name: string, _url: string): Promise<void> {
+  throw new Error('旧远端仓库入口已停用；当前主线请改用 Supabase 配置');
+}
+
+export async function getRemoteUrl(_path: string, _name = 'origin'): Promise<string | null> {
+  return null;
+}
+
+export async function removeRemote(_path: string, _name = 'origin'): Promise<void> {
+  return;
+}
+
+export async function validateRemoteConnection(_path: string, _remoteName: string, _patToken?: string): Promise<RemoteConnectionStatus> {
+  return {
+    reachable: false,
+    authenticated: false,
+    message: '旧远端同步入口已停用，请改用 Supabase 配置',
+  };
+}
+
+export async function fetchFromRemote(_path: string, _remoteName: string, _patToken?: string): Promise<void> {
+  return;
+}
+
+export async function pushToRemote(_path: string, _remoteName: string, _branchName: string, _patToken?: string): Promise<void> {
+  return;
+}
+
+export async function syncWithRemote(_path: string, _remoteName: string, _branchName: string, _patToken?: string): Promise<SyncResult> {
+  return {
+    success: false,
+    message: '旧远端同步入口已停用',
+    conflict: null,
+  };
+}
+
+export async function beginSync(path: string, remoteName: string, branchName: string, patToken?: string): Promise<SyncResult> {
+  return invoke<SyncResult>('begin_sync', {
+    path,
+    remoteName,
+    branchName,
+    patToken: patToken ?? null,
+  });
+}
+
+export async function continueSync(path: string, branchName: string): Promise<SyncResult> {
+  return invoke<SyncResult>('continue_sync_command', { path, branchName });
+}
+
+export async function abortSync(path: string): Promise<void> {
+  return invoke<void>('abort_sync_command', { path });
+}
+
+export async function resolveConflict(path: string, items: ConflictResolutionItem[]): Promise<void> {
+  return invoke<void>('resolve_conflict_command', { path, items });
+}
+
+export async function getCurrentBranch(_path: string): Promise<string> {
+  return 'supabase-mainline';
+}
+
+export async function switchToBranch(_path: string, _branch: string): Promise<void> {
+  return;
 }
