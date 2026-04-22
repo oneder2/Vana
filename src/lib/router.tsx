@@ -69,18 +69,19 @@ export function AppLink({
   className,
   style,
   children,
+  ...props
 }: {
   href: string;
   className?: string;
   style?: React.CSSProperties;
   children: React.ReactNode;
-}) {
+} & React.AnchorHTMLAttributes<HTMLAnchorElement>) {
   const { navigate } = useRouter();
   const normalized = normalizeTarget(href);
 
   if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
     return (
-      <a href={normalized} className={className} style={style}>
+      <a href={normalized} className={className} style={style} {...props}>
         {children}
       </a>
     );
@@ -91,7 +92,12 @@ export function AppLink({
       href={normalized}
       className={className}
       style={style}
+      {...props}
       onClick={(event) => {
+        props.onClick?.(event);
+        if (event.defaultPrevented) {
+          return;
+        }
         event.preventDefault();
         navigate(normalized);
       }}

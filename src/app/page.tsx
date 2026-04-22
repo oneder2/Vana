@@ -2,31 +2,30 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSONContent } from '@tiptap/core';
+import type { Editor as TiptapEditor } from '@tiptap/react';
 import {
-  Archive,
   ChevronRight,
   Clock3,
-  Download,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
   Heart,
   Import,
-  LayoutTemplate,
   Menu,
   Plus,
   RefreshCw,
-  Settings,
   Tag,
   Trash2,
   X,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
+import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
 import { Editor } from '@/components/Editor';
 import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
 import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
 import { InputModal } from '@/components/InputModal';
+import { SearchModal } from '@/components/SearchModal';
 import { useTheme } from '@/components/ThemeProvider';
 import { useToast } from '@/components/ToastProvider';
 import {
@@ -55,9 +54,10 @@ import {
   getThemeBorderColor,
   getThemeSurfaceColor,
 } from '@/lib/themeStyles';
-import { AppLink } from '@/lib/router';
+import { AppLink, useRouter } from '@/lib/router';
+import type { ThemeId } from '@/lib/themes';
 
-type StatusFilter = 'active' | 'archived' | 'trashed';
+type StatusFilter = 'active' | 'recent' | 'trashed';
 
 function parseContent(raw: string): JSONContent {
   try {
@@ -71,6 +71,24 @@ function extractPlainText(node?: JSONContent): string {
   if (!node) return '';
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(extractPlainText).join('');
+}
+
+function replaceTextInContent(node: JSONContent, findValue: string, replaceValue: string): JSONContent {
+  if (node.type === 'text' && node.text) {
+    return {
+      ...node,
+      text: node.text.split(findValue).join(replaceValue),
+    };
+  }
+
+  if (!node.content) {
+    return node;
+  }
+
+  return {
+    ...node,
+    content: node.content.map((child) => replaceTextInContent(child, findValue, replaceValue)),
+  };
 }
 
 function documentDisplaySegments(document: DocumentSummary | DocumentRecord | null): string[] {
@@ -141,6 +159,46 @@ function collectFolderTargets(
   ];
 }
 
+function buildTaggedTreeScope(
+  documents: DocumentSummary[],
+  selectedTag: string | null,
+  selectedStatus: StatusFilter
+): DocumentSummary[] {
+  const statusMatchedDocuments = documents.filter((document) => {
+    if (selectedStatus === 'active') {
+      return document.status === 'active';
+    }
+    if (selectedStatus === 'trashed') {
+      return document.status === 'trashed' || document.status === 'archived';
+    }
+    return document.node_kind === 'document' && document.status === 'active';
+  });
+
+  if (!selectedTag || selectedStatus === 'recent') {
+    return statusMatchedDocuments;
+  }
+
+  const byId = new Map(documents.map((document) => [document.id, document]));
+  const includedIds = new Set<string>();
+
+  for (const document of statusMatchedDocuments) {
+    if (document.node_kind !== 'document' || !document.tags.includes(selectedTag)) {
+      continue;
+    }
+
+    includedIds.add(document.id);
+    let parentId = document.parent_id;
+    let guard = 0;
+    while (parentId && guard < 16) {
+      includedIds.add(parentId);
+      parentId = byId.get(parentId)?.parent_id ?? null;
+      guard += 1;
+    }
+  }
+
+  return statusMatchedDocuments.filter((document) => includedIds.has(document.id));
+}
+
 function ExplorerSection({
   title,
   count,
@@ -183,7 +241,8 @@ function ExplorerSection({
 }
 
 export default function HomePage() {
-  const { theme } = useTheme();
+  const { theme, setTheme } = useTheme();
+  const { navigate } = useRouter();
   const toast = useToast();
   const accent = getThemeAccentColor(theme);
   const border = getThemeBorderColor(theme);
@@ -208,14 +267,24 @@ export default function HomePage() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     favorites: true,
-    recent: true,
     explorer: true,
   });
   const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number; items: ContextMenuItem[]; action: (action: string) => void } | null>(null);
   const [renameTarget, setRenameTarget] = useState<DocumentSummary | null>(null);
   const [moveTarget, setMoveTarget] = useState<DocumentSummary | null>(null);
   const [moveModeSource, setMoveModeSource] = useState<DocumentSummary | null>(null);
+  const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
+  const [replaceFindValue, setReplaceFindValue] = useState('');
+  const [replaceNextValue, setReplaceNextValue] = useState('');
   const syncInFlightRef = useRef(false);
+  const selectedIdRef = useRef<string | null>(null);
+  const selectionIntentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   const refresh = useCallback(
     async (preferredId?: string | null) => {
@@ -224,15 +293,12 @@ export default function HomePage() {
       setDocuments(nextDocs);
       setTags(nextTags);
 
-      const preferredDocumentId = preferredId
-        ? nextDocs.find((doc) => doc.id === preferredId && doc.node_kind === 'document')?.id ?? null
-        : null;
-      const currentSelectedDocumentId = selectedId
-        ? nextDocs.find((doc) => doc.id === selectedId && doc.node_kind === 'document')?.id ?? null
+      const desiredDocumentId = preferredId ?? selectionIntentRef.current ?? selectedIdRef.current;
+      const preferredDocumentId = desiredDocumentId
+        ? nextDocs.find((doc) => doc.id === desiredDocumentId && doc.node_kind === 'document')?.id ?? null
         : null;
       const fallbackId =
         preferredDocumentId ??
-        currentSelectedDocumentId ??
         nextDocs.find((doc) => doc.status === 'active' && doc.node_kind === 'document')?.id ??
         nextDocs.find((doc) => doc.node_kind === 'document')?.id ??
         null;
@@ -240,6 +306,7 @@ export default function HomePage() {
       if (fallbackId) {
         const detail = await getDocument(fallbackId);
         if (detail && detail.node_kind === 'document') {
+          selectionIntentRef.current = detail.id;
           setSelectedId(fallbackId);
           setCurrentDocument(detail);
           setContent(parseContent(detail.content_json));
@@ -247,6 +314,7 @@ export default function HomePage() {
           setTagDraft('');
         }
       } else {
+        selectionIntentRef.current = null;
         setSelectedId(null);
         setCurrentDocument(null);
         setContent({ type: 'doc', content: [{ type: 'paragraph', content: [] }] });
@@ -254,7 +322,7 @@ export default function HomePage() {
         setTagDraft('');
       }
     },
-    [selectedId]
+    []
   );
 
   const triggerAutoSync = useCallback(
@@ -344,12 +412,7 @@ export default function HomePage() {
   }, [loading, triggerAutoSync]);
 
   const filteredDocuments = useMemo(
-    () =>
-      documents.filter((document) => {
-        if (document.status !== selectedStatus) return false;
-        if (selectedTag && !document.tags.includes(selectedTag)) return false;
-        return true;
-      }),
+    () => buildTaggedTreeScope(documents, selectedTag, selectedStatus),
     [documents, selectedStatus, selectedTag]
   );
 
@@ -360,11 +423,12 @@ export default function HomePage() {
 
   const recentDocuments = useMemo(
     () =>
-        [...documents]
+      [...documents]
         .filter((document) => document.node_kind === 'document' && document.status === 'active')
+        .filter((document) => (selectedTag ? document.tags.includes(selectedTag) : true))
         .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
-        .slice(0, 8),
-    [documents]
+        .slice(0, 12),
+    [documents, selectedTag]
   );
 
   useEffect(() => {
@@ -381,6 +445,7 @@ export default function HomePage() {
   const handleSelectDocument = useCallback(async (id: string) => {
     const detail = await getDocument(id);
     if (!detail || detail.node_kind !== 'document') return;
+    selectionIntentRef.current = id;
     setSelectedId(id);
     setCurrentDocument(detail);
     setContent(parseContent(detail.content_json));
@@ -390,9 +455,20 @@ export default function HomePage() {
   }, []);
 
   const handleCreateDocument = useCallback(
-    async (isTemplate = false, parentId?: string | null) => {
-      const created = await createDocument({ isTemplate, nodeKind: 'document', parentId: parentId ?? null });
-      toast.success(isTemplate ? '模板已创建' : '新文档已创建');
+    async (parentId?: string | null) => {
+      const created = await createDocument({ nodeKind: 'document', parentId: parentId ?? null });
+      selectionIntentRef.current = created.id;
+      setSelectedId(created.id);
+      setCurrentDocument(created);
+      setContent(parseContent(created.content_json));
+      setDocumentTags(created.tags);
+      setTagDraft('');
+      if (created.parent_id) {
+        const parentFolderId = created.parent_id;
+        setExpandedFolders((current) => new Set(current).add(parentFolderId));
+      }
+      setSelectedStatus('active');
+      toast.success('新文档已创建');
       await refresh(created.id);
       await triggerAutoSync('create', false, created.id);
     },
@@ -408,10 +484,14 @@ export default function HomePage() {
       });
       toast.success('分组已创建');
       setExpandedFolders((current) => new Set(current).add(created.id));
-      await refresh(selectedId);
+      if (created.parent_id) {
+        const parentFolderId = created.parent_id;
+        setExpandedFolders((current) => new Set(current).add(parentFolderId));
+      }
+      await refresh(selectionIntentRef.current ?? selectedIdRef.current);
       await triggerAutoSync('folder-create', false, created.id);
     },
-    [refresh, selectedId, toast, triggerAutoSync]
+    [refresh, toast, triggerAutoSync]
   );
 
   const handlePersistMetadata = useCallback(
@@ -439,11 +519,12 @@ export default function HomePage() {
 
   const handleMoveDocument = useCallback(
     async (id: string, status: StatusFilter) => {
-      const updated = await setDocumentStatus(id, status);
+      const nextStatus = status === 'trashed' ? 'trashed' : 'active';
+      const updated = await setDocumentStatus(id, nextStatus);
       if (selectedId === id && updated.node_kind === 'document') {
         setCurrentDocument(updated);
       }
-      toast.success(status === 'trashed' ? '已移入回收站' : status === 'archived' ? '已归档' : '已恢复到文档库');
+      toast.success(status === 'trashed' ? '已移入回收站' : '已恢复到文档库');
       await refresh(currentDocument?.id ?? null);
       await triggerAutoSync('status', false, updated.id);
     },
@@ -493,6 +574,79 @@ export default function HomePage() {
     [content, currentDocument, theme, toast]
   );
 
+  const handleReplaceSubmit = useCallback(async () => {
+    const findValue = replaceFindValue.trim();
+    if (!currentDocument || !findValue) {
+      setReplaceDialogOpen(false);
+      return;
+    }
+
+    const replaced = replaceTextInContent(content, findValue, replaceNextValue);
+    setContent(replaced);
+    await handlePersistMetadata(replaced, documentTags);
+    toast.success('替换已应用');
+    setReplaceDialogOpen(false);
+    setReplaceFindValue('');
+    setReplaceNextValue('');
+  }, [content, currentDocument, documentTags, handlePersistMetadata, replaceFindValue, replaceNextValue, toast]);
+
+  const handleMenuAction = useCallback(
+    (action: MenuAction) => {
+      switch (action) {
+        case 'newDocument':
+          void handleCreateDocument();
+          return;
+        case 'newFolder':
+          void handleCreateFolder();
+          return;
+        case 'importLegacy':
+          void handleImportLegacy();
+          return;
+        case 'export:md':
+          void handleExport('md');
+          return;
+        case 'export:docx':
+          void handleExport('docx');
+          return;
+        case 'export:pdf':
+          void handleExport('pdf');
+          return;
+        case 'copy':
+        case 'paste':
+        case 'cut':
+          document.execCommand(action);
+          return;
+        case 'undo':
+          if (editorInstance?.can().undo()) {
+            editorInstance.chain().focus().undo().run();
+          } else {
+            document.execCommand('undo');
+          }
+          return;
+        case 'redo':
+          if (editorInstance?.can().redo()) {
+            editorInstance.chain().focus().redo().run();
+          } else {
+            document.execCommand('redo');
+          }
+          return;
+        case 'search':
+          setShowSearchModal(true);
+          return;
+        case 'replace':
+          setReplaceDialogOpen(true);
+          return;
+        case 'theme:arcane':
+        case 'theme:terminal':
+        case 'theme:rusty':
+        case 'theme:vellum':
+          setTheme(action.replace('theme:', '') as ThemeId);
+          return;
+      }
+    },
+    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme]
+  );
+
   const openDocumentMenu = useCallback(
     (event: React.MouseEvent, document: DocumentSummary) => {
       event.preventDefault();
@@ -504,7 +658,6 @@ export default function HomePage() {
         { id: 'rename', label: '重命名', icon: FileText },
         { id: 'move', label: '移动到分组', icon: FolderOpen },
         { id: 'toggleFavorite', label: document.is_favorite ? '取消收藏' : '加入收藏', icon: Heart },
-        ...(document.status !== 'archived' ? [{ id: 'archive', label: '归档文档', icon: Archive }] : [{ id: 'restore', label: '恢复到文档库', icon: RefreshCw }]),
         ...(document.status !== 'trashed' ? [{ id: 'trash', label: '移至回收站', icon: Trash2 }] : [{ id: 'restore', label: '从回收站恢复', icon: RefreshCw }]),
       ];
 
@@ -514,7 +667,7 @@ export default function HomePage() {
         items,
         action: (action) => {
           if (action === 'newChildDocument') {
-            void handleCreateDocument(false, document.id);
+            void handleCreateDocument(document.id);
           } else if (action === 'newChildFolder') {
             void handleCreateFolder(document.id);
           } else if (action === 'rename') {
@@ -523,8 +676,6 @@ export default function HomePage() {
             setMoveModeSource(document);
           } else if (action === 'toggleFavorite') {
             void handleToggleFavorite(document);
-          } else if (action === 'archive') {
-            void handleMoveDocument(document.id, 'archived');
           } else if (action === 'trash') {
             void handleMoveDocument(document.id, 'trashed');
           } else if (action === 'restore') {
@@ -545,16 +696,13 @@ export default function HomePage() {
         items: [
           { id: 'newDocument', label: '新建文档', icon: FilePlus2 },
           { id: 'newFolder', label: '新建分组', icon: Folder },
-          { id: 'newTemplate', label: '新建模板', icon: LayoutTemplate },
           { id: 'importLegacy', label: '导入旧库', icon: Import },
         ],
         action: (action) => {
           if (action === 'newDocument') {
-            void handleCreateDocument(false);
+            void handleCreateDocument();
           } else if (action === 'newFolder') {
             void handleCreateFolder();
-          } else if (action === 'newTemplate') {
-            void handleCreateDocument(true);
           } else if (action === 'importLegacy') {
             void handleImportLegacy();
           }
@@ -648,7 +796,7 @@ export default function HomePage() {
 
   return (
     <div
-      className="shell-page min-h-screen"
+      className="shell-page flex h-screen min-h-0 flex-col overflow-hidden"
       style={{
         backgroundColor: background,
         color: accent,
@@ -656,22 +804,31 @@ export default function HomePage() {
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      <TitleBar />
+      <TitleBar
+        menuBar={
+          <div data-tauri-drag-region className="flex h-8 w-full items-center gap-3">
+            <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
+              <button data-tauri-drag-region="false" className="border p-2 md:hidden" style={{ borderColor: border }} onClick={() => setSidebarOpen(true)}>
+                <Menu size={16} />
+              </button>
+              <AppMenuBar onAction={handleMenuAction} onHelp={() => navigate('/help')} onSettings={() => navigate('/settings')} />
+            </div>
+          </div>
+        }
+      />
 
-      <div className="flex h-[calc(100vh-2rem-var(--safe-area-top)-var(--safe-area-bottom))] min-h-0">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <aside
-          className={`shell-panel fixed inset-y-0 left-0 z-40 w-[88vw] max-w-[320px] transform border-r transition-transform md:relative md:block md:h-full md:w-[308px] md:max-w-none md:translate-x-0 ${
+          className={`shell-panel absolute inset-y-0 left-0 z-40 w-[88vw] max-w-[320px] transform border-r transition-transform md:relative md:block md:h-full md:w-[308px] md:max-w-none md:translate-x-0 ${
             sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
           }`}
           style={{
             backgroundColor: surface,
             borderColor: border,
-            top: 'env(safe-area-inset-top)',
-            bottom: 'env(safe-area-inset-bottom)',
           }}
         >
-          <div className="flex h-full flex-col" onContextMenu={openExplorerMenu}>
-            <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: border }}>
+          <div className="flex h-full min-h-0 flex-col" onContextMenu={openExplorerMenu}>
+            <div className="shrink-0 flex items-center justify-between border-b px-4 py-3" style={{ borderColor: border }}>
               <div className="min-w-0">
                 <div className="shell-label">Explorer</div>
                 <div className="shell-title truncate text-sm font-medium">Vana</div>
@@ -681,104 +838,76 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div className="border-b px-3 py-3" style={{ borderColor: border }}>
+            <div className="shrink-0 border-b px-3 py-3" style={{ borderColor: border }}>
               <button
                 className="flex w-full items-center justify-center gap-2 border px-3 py-2 text-sm"
                 style={{ backgroundColor: 'transparent', borderColor: border, color: accent }}
-                onClick={() => void handleCreateDocument(false)}
+                onClick={() => void handleCreateDocument()}
               >
                 <FilePlus2 size={15} />
                 新建文档
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-px border-b px-3 py-3 text-xs" style={{ borderColor: border }}>
+            <div className="shrink-0 grid grid-cols-3 gap-px border-b px-3 py-3 text-xs" style={{ borderColor: border }}>
               {([
-                ['active', '文档库'],
-                ['archived', '归档'],
-                ['trashed', '回收站'],
-              ] as const).map(([value, label]) => (
+                ['active', '文档库', FileText],
+                ['recent', '最近', Clock3],
+                ['trashed', '回收站', Trash2],
+              ] as const).map(([value, label, Icon]) => (
                 <button
                   key={value}
                   onClick={() => setSelectedStatus(value)}
-                  className="px-2 py-2 text-left"
+                  className="flex items-center gap-2 px-2 py-2 text-left"
                   style={{
                     backgroundColor: selectedStatus === value ? accentBg : 'transparent',
                     border: `1px solid ${border}`,
                   }}
                 >
+                  <Icon size={13} className="shrink-0 opacity-80" />
                   {label}
                 </button>
               ))}
             </div>
 
-            <ExplorerSection
-              title="Favorites"
-              count={favoriteDocuments.length}
-              expanded={expandedSections.favorites}
-              onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
-            >
-              {favoriteDocuments.length === 0 ? (
-                <div className="px-3 py-1 text-[11px] opacity-40">还没有收藏文档</div>
-              ) : (
-                <div className="space-y-0.5">
-                  {favoriteDocuments.map((document) => (
-                    <button
-                      key={document.id}
-                      type="button"
-                      onClick={() => void handleSelectDocument(document.id)}
-                      onContextMenu={(event) => openDocumentMenu(event, document)}
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
-                      style={{
-                        color: accent,
-                        backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
-                      }}
-                    >
-                      <Heart size={12} className="shrink-0" fill="currentColor" />
-                      <span className="truncate">{documentLeafTitle(document)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </ExplorerSection>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <ExplorerSection
+                title="Favorites"
+                count={favoriteDocuments.length}
+                expanded={expandedSections.favorites}
+                onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
+              >
+                {favoriteDocuments.length === 0 ? (
+                  <div className="px-3 py-1 text-[11px] opacity-40">还没有收藏文档</div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {favoriteDocuments.map((document) => (
+                      <button
+                        key={document.id}
+                        type="button"
+                        onClick={() => void handleSelectDocument(document.id)}
+                        onContextMenu={(event) => openDocumentMenu(event, document)}
+                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
+                        style={{
+                          color: accent,
+                          backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
+                        }}
+                      >
+                        <Heart size={12} className="shrink-0" fill="currentColor" />
+                        <span className="truncate">{documentLeafTitle(document)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </ExplorerSection>
 
-            <ExplorerSection
-              title="Recent"
-              count={recentDocuments.length}
-              expanded={expandedSections.recent}
-              onToggle={() => setExpandedSections((current) => ({ ...current, recent: !current.recent }))}
-            >
-              {recentDocuments.length === 0 ? (
-                <div className="px-3 py-1 text-[11px] opacity-40">最近还没有文档记录</div>
-              ) : (
-                <div className="space-y-0.5">
-                  {recentDocuments.map((document) => (
-                    <button
-                      key={document.id}
-                      type="button"
-                      onClick={() => void handleSelectDocument(document.id)}
-                      onContextMenu={(event) => openDocumentMenu(event, document)}
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
-                      style={{
-                        color: accent,
-                        backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
-                      }}
-                    >
-                      <Clock3 size={12} className="shrink-0 opacity-70" />
-                      <span className="truncate">{documentLeafTitle(document)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </ExplorerSection>
-
-            <ExplorerSection
-              title={selectedStatus === 'active' ? 'Workspace' : selectedStatus === 'archived' ? 'Archive' : 'Trash'}
-              count={filteredDocuments.length}
-              expanded={expandedSections.explorer}
-              onToggle={() => setExpandedSections((current) => ({ ...current, explorer: !current.explorer }))}
-            >
-              <div className="px-2 pb-2">
+              <ExplorerSection
+                title={selectedStatus === 'active' ? 'Workspace' : selectedStatus === 'recent' ? 'Recent' : 'Trash'}
+                count={selectedStatus === 'recent' ? recentDocuments.length : filteredDocuments.length}
+                expanded={expandedSections.explorer}
+                onToggle={() => setExpandedSections((current) => ({ ...current, explorer: !current.explorer }))}
+              >
+                <div className="px-2 pb-2">
                 {moveModeSource && (
                   <div
                     className="mb-2 rounded border px-3 py-2 text-[11px]"
@@ -837,28 +966,53 @@ export default function HomePage() {
                   ))}
                 </div>
 
-                {filteredDocuments.length === 0 ? (
+                {selectedStatus === 'recent' ? (
+                  recentDocuments.length === 0 ? (
+                    <div className="px-3 py-2 text-[12px] opacity-40">最近还没有文档记录</div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {recentDocuments.map((document) => (
+                        <button
+                          key={document.id}
+                          type="button"
+                          onClick={() => void handleSelectDocument(document.id)}
+                          onContextMenu={(event) => openDocumentMenu(event, document)}
+                          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
+                          style={{
+                            color: accent,
+                            backgroundColor: document.id === selectedId ? `${accentBg}55` : 'transparent',
+                            outline: document.id === selectedId ? `1px solid ${accentBg}` : 'none',
+                            boxShadow: document.id === selectedId ? `inset 2px 0 0 ${accent}` : 'none',
+                          }}
+                        >
+                          <Clock3 size={12} className="shrink-0 opacity-70" />
+                          <span className="truncate">{documentLeafTitle(document)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                ) : filteredDocuments.length === 0 ? (
                   <div className="px-3 py-2 text-[12px] opacity-40">这一栏暂时是空的</div>
                 ) : (
                   <DocumentExplorerTree
-                      documents={filteredDocuments}
-                      selectedId={selectedId}
-                      expandedFolders={expandedFolders}
-                      onToggleFolder={(folderId) =>
-                        setExpandedFolders((current) => {
-                          const next = new Set(current);
-                          if (next.has(folderId)) {
-                            next.delete(folderId);
-                          } else {
-                            next.add(folderId);
-                          }
-                          return next;
-                        })
-                      }
-                      onSelectDocument={(id) => void handleSelectDocument(id)}
-                      onNodeContextMenu={openDocumentMenu}
-                      onMoveNode={handleDropNode}
-                    />
+                    documents={filteredDocuments}
+                    selectedId={selectedId}
+                    expandedFolders={expandedFolders}
+                    onToggleFolder={(folderId) =>
+                      setExpandedFolders((current) => {
+                        const next = new Set(current);
+                        if (next.has(folderId)) {
+                          next.delete(folderId);
+                        } else {
+                          next.add(folderId);
+                        }
+                        return next;
+                      })
+                    }
+                    onSelectDocument={(id) => void handleSelectDocument(id)}
+                    onNodeContextMenu={openDocumentMenu}
+                    onMoveNode={handleDropNode}
+                  />
                 )}
 
                 {moveModeSource && moveModeTargets.length > 1 && (
@@ -886,49 +1040,13 @@ export default function HomePage() {
                     </div>
                   </div>
                 )}
-              </div>
-            </ExplorerSection>
+                </div>
+              </ExplorerSection>
+            </div>
           </div>
         </aside>
 
         <main className="min-w-0 flex-1 min-h-0 overflow-hidden">
-          <div className="flex min-h-12 flex-wrap items-center gap-2 border-b px-3 py-2 sm:px-4" style={{ backgroundColor: surface, borderColor: border }}>
-            <button className="border p-2 md:hidden" style={{ borderColor: border }} onClick={() => setSidebarOpen(true)}>
-              <Menu size={18} />
-            </button>
-            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleCreateDocument(false)}>
-              新建
-            </button>
-            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleCreateFolder()}>
-              分组
-            </button>
-            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleCreateDocument(true)}>
-              模板
-            </button>
-            <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()} disabled={isImporting}>
-              {isImporting ? <RefreshCw size={14} className="mr-1 inline animate-spin" /> : <Import size={14} className="mr-1 inline" />}
-              导入旧库
-            </button>
-            <div className="ml-auto flex flex-wrap items-center gap-2">
-              <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleExport('md')} disabled={!currentDocument}>
-                <Download size={14} className="mr-1 inline" />
-                MD
-              </button>
-              <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleExport('docx')} disabled={!currentDocument}>
-                <Download size={14} className="mr-1 inline" />
-                DOCX
-              </button>
-              <button className="border px-3 py-1.5 text-sm" style={{ borderColor: border }} onClick={() => void handleExport('pdf')} disabled={!currentDocument}>
-                <Download size={14} className="mr-1 inline" />
-                PDF
-              </button>
-              <AppLink href="/settings" className="border px-3 py-1.5 text-sm" style={{ borderColor: border }}>
-                <Settings size={14} className="mr-1 inline" />
-                设置
-              </AppLink>
-            </div>
-          </div>
-
           {!currentDocument ? (
             <section className="h-full overflow-y-auto px-6 py-10" style={{ backgroundColor: background }}>
               <div className="flex min-h-full w-full items-center justify-center">
@@ -942,7 +1060,7 @@ export default function HomePage() {
                   </div>
 
                   <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
-                    <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument(false)}>
+                    <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument()}>
                       新建文档
                     </button>
                     <button className="border px-4 py-2 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()}>
@@ -1031,6 +1149,7 @@ export default function HomePage() {
                   filePath={currentDocument.id}
                   initialContent={content}
                   tags={documentTags}
+                  onEditorReady={setEditorInstance}
                   onContentChange={setContent}
                   onPersisted={() => {
                     void triggerAutoSync('editor-save');
@@ -1045,6 +1164,15 @@ export default function HomePage() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
       )}
+
+      <SearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        workspacePath=""
+        onFileSelect={(documentId) => {
+          void handleSelectDocument(documentId);
+        }}
+      />
 
       {sidebarMenu && (
         <ContextMenu
@@ -1090,6 +1218,66 @@ export default function HomePage() {
           await triggerAutoSync('rename', false, updated.id);
         }}
       />
+
+      {replaceDialogOpen && (
+        <div
+          className="fixed inset-0 z-[10001] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          onClick={() => setReplaceDialogOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded border shadow-xl"
+            style={{ backgroundColor: surface, borderColor: border }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b px-6 py-4" style={{ borderColor: border }}>
+              <h2 className="text-lg font-semibold" style={{ color: accent }}>替换文本</h2>
+              <p className="mt-1 text-sm opacity-70">对当前文档执行全文替换。</p>
+            </div>
+            <div className="space-y-4 px-6 py-5">
+              <div>
+                <div className="mb-2 text-sm opacity-75">查找</div>
+                <input
+                  value={replaceFindValue}
+                  onChange={(event) => setReplaceFindValue(event.target.value)}
+                  className="w-full border px-3 py-2 text-sm outline-none"
+                  style={{ borderColor: border, backgroundColor: 'transparent', color: accent }}
+                  placeholder="输入要查找的文本"
+                />
+              </div>
+              <div>
+                <div className="mb-2 text-sm opacity-75">替换为</div>
+                <input
+                  value={replaceNextValue}
+                  onChange={(event) => setReplaceNextValue(event.target.value)}
+                  className="w-full border px-3 py-2 text-sm outline-none"
+                  style={{ borderColor: border, backgroundColor: 'transparent', color: accent }}
+                  placeholder="输入替换后的文本"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t px-6 py-4" style={{ borderColor: border }}>
+              <button
+                type="button"
+                className="border px-4 py-2 text-sm"
+                style={{ borderColor: border, color: accent }}
+                onClick={() => setReplaceDialogOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="border px-4 py-2 text-sm"
+                style={{ borderColor: border, backgroundColor: accentBg, color: accent }}
+                onClick={() => void handleReplaceSubmit()}
+                disabled={!replaceFindValue.trim()}
+              >
+                应用替换
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {moveTarget && (
         <div

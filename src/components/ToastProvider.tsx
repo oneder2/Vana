@@ -49,8 +49,8 @@ export function ToastProvider({ children }: ToastProviderProps) {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newToast: ToastItem = {
       id,
-      duration: 3000, // 默认3秒
       ...toast,
+      duration: toast.duration ?? 3000,
     };
     setToasts((prev) => [...prev, newToast]);
 
@@ -111,4 +111,3 @@ export function useToast(): ToastContextType {
   }
   return context;
 }
-

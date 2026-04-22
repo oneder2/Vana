@@ -13,6 +13,35 @@ Vana 当前主线使用：
 3. 客户端自动把有改动的文档增量 upsert 到 `public.documents`
 4. 再按 `updated_at` 游标增量拉取远端更新
 
+## 0. 分发模式
+
+Vana 现在支持两种运行方式：
+
+- 默认公共服务
+  - 应用在构建时内置 `VANA_PUBLIC_SUPABASE_URL` 和 `VANA_PUBLIC_SUPABASE_ANON_KEY`
+  - 普通用户下载安装后不需要自己找数据库 URL 或 key
+  - 只需要登录邮箱账号即可使用
+- 自托管高级模式
+  - 在设置页展开“高级配置”
+  - 手动覆盖成你自己的 Supabase 项目
+
+注意：
+
+- `anon key` 是公开配置，可以内置在客户端
+- `service_role key` 绝对不能放进客户端或仓库
+- 客户端权限隔离依赖 `Auth + RLS`
+
+仓库提供了示例文件：
+
+- `.env.example`
+
+构建正式公共版本时，至少要注入：
+
+```bash
+VANA_PUBLIC_SUPABASE_URL=...
+VANA_PUBLIC_SUPABASE_ANON_KEY=...
+```
+
 ## 1. 创建项目
 
 在 Supabase 控制台新建一个项目，然后记下：
@@ -20,7 +49,7 @@ Vana 当前主线使用：
 - `Project URL`
 - `anon public key`
 
-这两个值填入应用设置页即可。
+如果你走自托管模式，这两个值填入应用设置页的高级配置即可。
 
 ## 2. 应用数据库 Migration
 
@@ -91,15 +120,22 @@ supabase db push
 
 打开 Vana 设置页，按顺序做：
 
-1. 填 `Supabase URL`
-2. 填 `Anon Key`
-3. 点击“保存并校验”
-4. 输入邮箱，点击“发送 Magic Link”
-5. 打开邮箱中的登录链接
-6. 在回调页复制完整 URL
-7. 回到设置页，粘贴到“导入会话”
-8. 点击“导入会话”
-9. 返回主页或设置页，等待自动同步触发
+默认公共服务模式：
+
+1. 打开应用设置页
+2. 直接输入邮箱，点击“发送 Magic Link”
+3. 打开邮箱中的登录链接
+4. 在回调页复制完整 URL
+5. 回到设置页，粘贴到“导入会话”
+6. 点击“导入会话”
+
+自托管模式：
+
+1. 展开高级配置
+2. 填 `Supabase URL`
+3. 填 `Anon Key`
+4. 点击“保存并校验高级配置”
+5. 再按默认公共服务模式继续登录
 
 如果一切正常，你会看到：
 

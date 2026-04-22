@@ -104,10 +104,11 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
   }, [workspacePath, toast]);
 
   // 处理文件选择
-  const handleFileSelect = (filePath: string) => {
-    // 移除 .enc 扩展名（如果存在）
-    const cleanPath = filePath.endsWith('.enc') ? filePath.slice(0, -4) : filePath;
-    onFileSelect?.(cleanPath);
+  const handleFileSelect = (result: SearchResult) => {
+    const derivedId =
+      result.matches[0]?.context.replace(/^匹配文档：/, '').trim() ||
+      result.file_path;
+    onFileSelect?.(derivedId);
     onClose();
   };
 
@@ -127,7 +128,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
         setSelectedIndex((prev) => (prev > 0 ? prev - 1 : -1));
       } else if (e.key === 'Enter' && selectedIndex >= 0 && selectedIndex < results.length) {
         e.preventDefault();
-        handleFileSelect(results[selectedIndex].file_path);
+        handleFileSelect(results[selectedIndex]);
       }
     };
 
@@ -264,7 +265,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
                   : 'none',
                 outlineOffset: selectedIndex === resultIndex ? '2px' : '0',
               }}
-              onClick={() => handleFileSelect(result.file_path)}
+                      onClick={() => handleFileSelect(result)}
               onMouseEnter={() => setSelectedIndex(resultIndex)}
             >
               {/* 文件路径 */}

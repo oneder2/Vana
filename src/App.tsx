@@ -6,6 +6,7 @@ import { RouterProvider, useRouter } from '@/lib/router';
 import HomePage from '@/app/page';
 import SettingsPage from '@/app/settings/page';
 import AuthCallbackPage from '@/app/auth/callback/page';
+import HelpPage from '@/app/help/page';
 import '@/app/globals.css';
 
 function RoutedApp() {
@@ -21,6 +22,10 @@ function RoutedApp() {
 
   if (path === '/auth/callback') {
     return <AuthCallbackPage />;
+  }
+
+  if (path === '/help') {
+    return <HelpPage />;
   }
 
   return <HomePage />;

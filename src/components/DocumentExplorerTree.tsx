@@ -177,10 +177,11 @@ function TreeItem({
         style={{
           paddingLeft: `${8 + level * 14}px`,
           color: accent,
-          backgroundColor: isDropTarget ? `${accentBg}4d` : isSelected ? `${accentBg}40` : 'transparent',
-          outline: isDropTarget ? `1px solid ${accent}` : 'none',
+          backgroundColor: isDropTarget ? `${accentBg}4d` : isSelected ? `${accentBg}55` : 'transparent',
+          outline: isDropTarget ? `1px solid ${accent}` : isSelected ? `1px solid ${accentBg}` : 'none',
+          boxShadow: isSelected ? `inset 2px 0 0 ${accent}` : 'none',
           opacity: isDragging ? 0.45 : 1,
-          cursor: 'grab',
+          cursor: isDragging ? 'grabbing' : 'pointer',
           userSelect: 'none',
           WebkitUserSelect: 'none',
         }}

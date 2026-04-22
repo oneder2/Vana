@@ -74,6 +74,59 @@ async function fetchUserProfile(url: string, anonKey: string, session: SupabaseS
   };
 }
 
+async function persistSessionWithProfile(url: string, anonKey: string, session: SupabaseSession): Promise<SupabaseSession> {
+  const enriched = {
+    ...session,
+    ...(await fetchUserProfile(url, anonKey, session)),
+  };
+  return saveSupabaseSession(enriched);
+}
+
+async function refreshSupabaseSession(url: string, anonKey: string, session: SupabaseSession): Promise<SupabaseSession> {
+  if (!session.refresh_token) {
+    throw new Error('登录态已过期，请重新登录。');
+  }
+
+  const response = await fetch(`${normalizeUrl(url)}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+    },
+    body: JSON.stringify({ refresh_token: session.refresh_token }),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.access_token) {
+    await clearSupabaseSession();
+    throw new Error(String(body?.msg ?? body?.error_description ?? body?.error ?? '登录态已过期，请重新登录。'));
+  }
+
+  return persistSessionWithProfile(url, anonKey, {
+    access_token: String(body.access_token),
+    refresh_token: body.refresh_token ? String(body.refresh_token) : session.refresh_token,
+    expires_at: typeof body.expires_at === 'number' ? body.expires_at : null,
+    token_type: body.token_type ? String(body.token_type) : 'bearer',
+    user_id: body.user?.id ? String(body.user.id) : session.user_id,
+    email: body.user?.email ? String(body.user.email) : session.email,
+  });
+}
+
+async function ensureValidSupabaseSession(url: string, anonKey: string): Promise<SupabaseSession> {
+  const session = await getSupabaseSession();
+  if (!session?.access_token) {
+    throw new Error('尚未登录。请先登录 Supabase。');
+  }
+
+  const expiresAt = session.expires_at ?? null;
+  if (expiresAt && Date.now() >= expiresAt * 1000 - 60_000) {
+    return refreshSupabaseSession(url, anonKey, session);
+  }
+
+  return session;
+}
+
 export async function importSupabaseSession(raw: string): Promise<SupabaseSession> {
   const parsed = parseSupabaseCallbackPayload(raw);
   if (!parsed) {
@@ -91,6 +144,147 @@ export async function importSupabaseSession(raw: string): Promise<SupabaseSessio
   };
 
   return saveSupabaseSession(enriched);
+}
+
+export async function signInWithPassword(email: string, password: string): Promise<SupabaseSession> {
+  const config = await getSupabaseConfig();
+  if (!config.url || !config.anon_key) {
+    throw new Error('Supabase 连接信息未配置。');
+  }
+
+  const response = await fetch(`${normalizeUrl(config.url)}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: config.anon_key,
+      Authorization: `Bearer ${config.anon_key}`,
+    },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(String(body?.msg ?? body?.error_description ?? body?.error ?? `登录失败: ${response.status}`));
+  }
+
+  return persistSessionWithProfile(config.url, config.anon_key, {
+    access_token: String(body.access_token ?? ''),
+    refresh_token: body.refresh_token ? String(body.refresh_token) : null,
+    expires_at: typeof body.expires_at === 'number' ? body.expires_at : null,
+    token_type: body.token_type ? String(body.token_type) : 'bearer',
+    user_id: body.user?.id ? String(body.user.id) : null,
+    email: body.user?.email ? String(body.user.email) : email,
+  });
+}
+
+export async function signUpWithPassword(email: string, password: string): Promise<{
+  session: SupabaseSession | null;
+  needsEmailConfirmation: boolean;
+}> {
+  const config = await getSupabaseConfig();
+  if (!config.url || !config.anon_key) {
+    throw new Error('Supabase 连接信息未配置。');
+  }
+
+  const response = await fetch(`${normalizeUrl(config.url)}/auth/v1/signup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: config.anon_key,
+      Authorization: `Bearer ${config.anon_key}`,
+    },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(String(body?.msg ?? body?.error_description ?? body?.error ?? `注册失败: ${response.status}`));
+  }
+
+  if (!body.access_token) {
+    return {
+      session: null,
+      needsEmailConfirmation: true,
+    };
+  }
+
+  const session = await persistSessionWithProfile(config.url, config.anon_key, {
+    access_token: String(body.access_token),
+    refresh_token: body.refresh_token ? String(body.refresh_token) : null,
+    expires_at: typeof body.expires_at === 'number' ? body.expires_at : null,
+    token_type: body.token_type ? String(body.token_type) : 'bearer',
+    user_id: body.user?.id ? String(body.user.id) : null,
+    email: body.user?.email ? String(body.user.email) : email,
+  });
+
+  return {
+    session,
+    needsEmailConfirmation: false,
+  };
+}
+
+export async function verifySupabaseConnection(
+  override?: { url?: string | null; anon_key?: string | null }
+): Promise<{
+  reachable: boolean;
+  authenticated: boolean;
+  message: string;
+}> {
+  const baseConfig = await getSupabaseConfig();
+  const config = {
+    url: override?.url?.trim() || baseConfig.url,
+    anon_key: override?.anon_key?.trim() || baseConfig.anon_key,
+  };
+
+  if (!config.url || !config.anon_key) {
+    return {
+      reachable: false,
+      authenticated: false,
+      message: '缺少 Supabase URL 或 Anon Key。',
+    };
+  }
+
+  const settingsResponse = await fetch(`${normalizeUrl(config.url)}/auth/v1/settings`, {
+    headers: {
+      apikey: config.anon_key,
+      Authorization: `Bearer ${config.anon_key}`,
+    },
+  });
+
+  if (!settingsResponse.ok) {
+    return {
+      reachable: false,
+      authenticated: false,
+      message: `连接失败：Supabase 返回 ${settingsResponse.status}`,
+    };
+  }
+
+  const session = await ensureValidSupabaseSession(config.url, config.anon_key);
+  if (!session?.access_token) {
+    return {
+      reachable: true,
+      authenticated: false,
+      message: '连接成功，当前未登录。',
+    };
+  }
+
+  const userResponse = await fetch(`${normalizeUrl(config.url)}/auth/v1/user`, {
+    headers: authHeaders(session.access_token, config.anon_key),
+  });
+
+  if (!userResponse.ok) {
+    return {
+      reachable: true,
+      authenticated: false,
+      message: '连接成功，但当前登录态无效或已过期。',
+    };
+  }
+
+  return {
+    reachable: true,
+    authenticated: true,
+    message: '连接成功，当前登录态有效。',
+  };
 }
 
 export async function signOutSupabase(): Promise<void> {
@@ -154,14 +348,11 @@ function remoteDocumentToLocal(document: Record<string, unknown>): SyncDocumentR
 
 export async function runSupabaseSync(): Promise<SyncSnapshot> {
   const config = await getSupabaseConfig();
-  const session = await getSupabaseSession();
 
   if (!config.url || !config.anon_key) {
     throw new Error('Supabase 连接信息未配置。');
   }
-  if (!session?.access_token) {
-    throw new Error('尚未登录。请先导入 Supabase 会话。');
-  }
+  let session = await ensureValidSupabaseSession(config.url, config.anon_key);
 
   const userId = session.user_id;
   if (!userId) {
@@ -184,6 +375,10 @@ export async function runSupabaseSync(): Promise<SyncSnapshot> {
 
     if (!upsertResponse.ok) {
       const message = await upsertResponse.text();
+      if (message.includes('JWT expired')) {
+        session = await refreshSupabaseSession(config.url, config.anon_key, session);
+        return runSupabaseSync();
+      }
       return finalizeSyncJobs(local.pending_job_ids, false, message || '上行同步失败');
     }
   }
@@ -206,6 +401,10 @@ export async function runSupabaseSync(): Promise<SyncSnapshot> {
 
   if (!pullResponse.ok) {
     const message = await pullResponse.text();
+    if (message.includes('JWT expired')) {
+      await refreshSupabaseSession(config.url, config.anon_key, session);
+      return runSupabaseSync();
+    }
     return finalizeSyncJobs(local.pending_job_ids, false, message || '下行同步失败');
   }
 

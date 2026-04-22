@@ -8,6 +8,17 @@ use uuid::Uuid;
 
 const DEFAULT_DOCUMENT_CONTENT: &str =
     r#"{"type":"doc","content":[{"type":"paragraph","content":[]}]} "#;
+const DEFAULT_SUPABASE_URL: Option<&str> = option_env!("VANA_PUBLIC_SUPABASE_URL");
+const DEFAULT_SUPABASE_ANON_KEY: Option<&str> = option_env!("VANA_PUBLIC_SUPABASE_ANON_KEY");
+
+fn effective_supabase_config(conn: &Connection) -> Result<SupabaseConfig> {
+    Ok(SupabaseConfig {
+        url: get_config_value(conn, "supabase.url")?
+            .or_else(|| DEFAULT_SUPABASE_URL.map(str::to_string)),
+        anon_key: get_config_value(conn, "supabase.anon_key")?
+            .or_else(|| DEFAULT_SUPABASE_ANON_KEY.map(str::to_string)),
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSummary {
@@ -303,8 +314,7 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
     let last_synced_at = get_config_value(&conn, "sync.last_synced_at")?;
     let last_pulled_at = get_config_value(&conn, "sync.last_pulled_at")?;
     let last_error = get_config_value(&conn, "sync.last_error")?;
-    let url = get_config_value(&conn, "supabase.url")?;
-    let anon_key = get_config_value(&conn, "supabase.anon_key")?;
+    let supabase = effective_supabase_config(&conn)?;
     let session = get_supabase_session(app)?;
     let account_mode = if session.is_some() {
         "authenticated".to_string()
@@ -318,12 +328,13 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
         account_email,
         local_db_path: db_path(app)?.to_string_lossy().to_string(),
         legacy_workspace_path: legacy_workspace_dir(app)?.to_string_lossy().to_string(),
-        supabase: SupabaseConfig {
-            url: url.clone(),
-            anon_key,
-        },
+        supabase: supabase.clone(),
         sync: SyncSnapshot {
-            mode: if url.is_some() { "configured".to_string() } else { "local-only".to_string() },
+            mode: if supabase.url.is_some() && supabase.anon_key.is_some() {
+                "configured".to_string()
+            } else {
+                "local-only".to_string()
+            },
             pending_jobs: pending_jobs as usize,
             last_synced_at,
             last_pulled_at,
@@ -632,10 +643,7 @@ pub fn save_supabase_config(app: &AppHandle, config: SupabaseConfig) -> Result<S
 
 pub fn get_supabase_config(app: &AppHandle) -> Result<SupabaseConfig> {
     let conn = open_db(app)?;
-    Ok(SupabaseConfig {
-        url: get_config_value(&conn, "supabase.url")?,
-        anon_key: get_config_value(&conn, "supabase.anon_key")?,
-    })
+    effective_supabase_config(&conn)
 }
 
 pub fn save_supabase_session(app: &AppHandle, session: SupabaseSession) -> Result<SupabaseSession> {

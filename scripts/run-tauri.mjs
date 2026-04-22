@@ -11,7 +11,50 @@ const tauriConfigPath = path.join(repoRoot, "src-tauri", "tauri.conf.json");
 const cargoConfigPath = path.join(repoRoot, "src-tauri", "Cargo.toml");
 const rawArgs = process.argv.slice(2);
 
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+  const loaded = {};
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    loaded[key] = value;
+  }
+
+  return loaded;
+}
+
 const env = { ...process.env };
+const localEnv = {
+  ...loadEnvFile(path.join(repoRoot, ".env")),
+  ...loadEnvFile(path.join(repoRoot, ".env.local")),
+};
+for (const [key, value] of Object.entries(localEnv)) {
+  if (!(key in env)) {
+    env[key] = value;
+  }
+}
 if (rawArgs.length >= 2 && rawArgs[0] === "android" && rawArgs[1] === "dev") {
   env.VANA_ANDROID_DEV = "1";
 }

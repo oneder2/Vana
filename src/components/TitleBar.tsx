@@ -13,7 +13,7 @@ import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '
 import { isMobile } from '@/lib/platform';
 import { getCurrentTauriWindow, type TauriWindowHandle } from '@/lib/tauriWindow';
 
-export function TitleBar() {
+export function TitleBar({ menuBar }: { menuBar?: React.ReactNode }) {
   const { theme } = useTheme();
   const [isMaximized, setIsMaximized] = useState(false);
   const [appWindow, setAppWindow] = useState<TauriWindowHandle | null>(null);
@@ -73,7 +73,20 @@ export function TitleBar() {
   }, [appWindow, shouldHide]);
 
   if (shouldHide) {
-    return null;
+    if (!menuBar) {
+      return null;
+    }
+    return (
+      <div
+        className="select-none"
+        style={{
+          backgroundColor: getThemeSurfaceColor(theme),
+          borderBottom: `1px solid ${getThemeBorderColor(theme)}`,
+        }}
+      >
+        <div className="flex h-8 items-center px-2">{menuBar}</div>
+      </div>
+    );
   }
 
   const handleMinimize = async () => {
@@ -117,53 +130,55 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex items-center justify-between h-8 px-2 select-none"
+      className="select-none"
       style={{
         backgroundColor: getThemeSurfaceColor(theme),
         borderBottom: `1px solid ${getThemeBorderColor(theme)}`,
       }}
     >
-      {/* 左侧：应用标题 */}
-      <div className="flex items-center gap-2 px-2">
-        <span
-          className="text-xs font-medium"
-          style={{ color: getThemeAccentColor(theme) }}
-        >
-          No Visitors
-        </span>
-      </div>
+      <div data-tauri-drag-region className="flex h-8 items-center justify-between px-2">
+        <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-3 px-2">
+          <div data-tauri-drag-region className="flex h-full min-w-[72px] items-center">
+            <span className="shrink-0 text-xs font-medium" style={{ color: getThemeAccentColor(theme) }}>
+              Vana
+            </span>
+          </div>
+          {menuBar && (
+            <div data-tauri-drag-region className="flex min-w-0 flex-1 items-center">
+              {menuBar}
+            </div>
+          )}
+          <div data-tauri-drag-region className="min-w-[96px] flex-1 h-full" />
+        </div>
 
-      {/* 右侧：窗口控制按钮 */}
-      <div className="flex items-center">
-        {/* 最小化 */}
-        <button
-          onClick={handleMinimize}
-          className="w-8 h-8 flex items-center justify-center hover:opacity-80 transition-opacity"
-          style={{ color: getThemeAccentColor(theme) }}
-          title="最小化"
-        >
-          <Minus size={16} />
-        </button>
+        <div className="flex items-center" data-tauri-drag-region="false">
+          <button
+            onClick={handleMinimize}
+            className="w-8 h-8 flex items-center justify-center hover:opacity-80 transition-opacity"
+            style={{ color: getThemeAccentColor(theme) }}
+            title="最小化"
+          >
+            <Minus size={16} />
+          </button>
 
-        {/* 最大化/还原 */}
-        <button
-          onClick={handleMaximize}
-          className="w-8 h-8 flex items-center justify-center hover:opacity-80 transition-opacity"
-          style={{ color: getThemeAccentColor(theme) }}
-          title={isMaximized ? "还原" : "最大化"}
-        >
-          {isMaximized ? <Maximize2 size={14} /> : <Square size={14} />}
-        </button>
+          <button
+            onClick={handleMaximize}
+            className="w-8 h-8 flex items-center justify-center hover:opacity-80 transition-opacity"
+            style={{ color: getThemeAccentColor(theme) }}
+            title={isMaximized ? "还原" : "最大化"}
+          >
+            {isMaximized ? <Maximize2 size={14} /> : <Square size={14} />}
+          </button>
 
-        {/* 关闭 */}
-        <button
-          onClick={handleClose}
-          className="w-8 h-8 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors"
-          style={{ color: getThemeAccentColor(theme) }}
-          title="关闭"
-        >
-          <X size={16} />
-        </button>
+          <button
+            onClick={handleClose}
+            className="w-8 h-8 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors"
+            style={{ color: getThemeAccentColor(theme) }}
+            title="关闭"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
     </div>
   );
