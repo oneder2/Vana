@@ -112,16 +112,16 @@ export default function WelcomePage() {
     >
       <TitleBar />
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 items-stretch px-4 py-6 sm:px-6 sm:py-8">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 items-stretch px-4 py-4 sm:px-6 sm:py-8">
         <div className="grid w-full gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="shell-panel border px-6 py-7 sm:px-8" style={{ backgroundColor: surface, borderColor: border }}>
+          <section className="shell-panel border px-5 py-6 sm:px-8 sm:py-7" style={{ backgroundColor: surface, borderColor: border }}>
             <div className="shell-label mb-3">Welcome</div>
-            <h1 className="shell-title max-w-2xl text-3xl font-semibold sm:text-4xl">Vana 是一款本地优先、可同步的个人文档空间。</h1>
-            <p className="mt-4 max-w-2xl text-sm leading-7 opacity-78">
+            <h1 className="shell-title max-w-2xl text-2xl font-semibold sm:text-4xl">本地优先，可同步的个人文档空间。</h1>
+            <p className="mt-4 hidden max-w-2xl text-sm leading-7 opacity-78 sm:block">
               你可以先以访客身份直接开始写作，也可以使用邮箱和密码登录，开启基于 Supabase Hosted 的多设备同步。
             </p>
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            <div className="mt-6 grid gap-3 sm:mt-8 sm:grid-cols-3">
               <div className="rounded border px-4 py-4" style={{ borderColor: border, backgroundColor: `${accentBg}18` }}>
                 <div className="mb-2 flex items-center gap-2 text-sm font-medium">
                   <UserRound size={15} />
@@ -138,7 +138,7 @@ export default function WelcomePage() {
                 <div className="text-sm opacity-75">登录后自动进入同步模式，访问令牌过期后会尝试自动续期。</div>
               </div>
 
-              <div className="rounded border px-4 py-4" style={{ borderColor: border, backgroundColor: `${accentBg}10` }}>
+              <div className="hidden rounded border px-4 py-4 sm:block" style={{ borderColor: border, backgroundColor: `${accentBg}10` }}>
                 <div className="mb-2 flex items-center gap-2 text-sm font-medium">
                   <Shield size={15} />
                   Hosted 限额
@@ -150,7 +150,7 @@ export default function WelcomePage() {
               </div>
             </div>
 
-            <div className="mt-8 rounded border px-4 py-4 text-sm" style={{ borderColor: border }}>
+            <div className="mt-8 hidden rounded border px-4 py-4 text-sm sm:block" style={{ borderColor: border }}>
               <div className="mb-2 flex items-center gap-2 font-medium">
                 <Database size={15} />
                 当前 Hosted 策略
@@ -167,7 +167,7 @@ export default function WelcomePage() {
           <section className="shell-panel border px-5 py-6 sm:px-6" style={{ backgroundColor: surface, borderColor: border }}>
             <div className="shell-label mb-3">Access</div>
             <h2 className="shell-title text-xl font-semibold">登录或继续使用</h2>
-            <p className="mt-3 text-sm leading-7 opacity-76">
+            <p className="mt-3 hidden text-sm leading-7 opacity-76 sm:block">
               普通用户直接使用默认公共服务即可。只有需要自托管时，才需要进入高级配置。
             </p>
 

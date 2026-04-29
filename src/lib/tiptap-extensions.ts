@@ -1,5 +1,5 @@
 /**
- * No Visitors - Tiptap 扩展配置
+ * Vana - Tiptap 扩展配置
  * 定义自定义块类型和主题相关的样式配置
  */
 

@@ -60,10 +60,14 @@ export function AppMenuBar({
   onAction,
   onHelp,
   onSettings,
+  onOpenChange,
+  closeSignal = 0,
 }: {
   onAction: (action: MenuAction) => void;
   onHelp: () => void;
   onSettings: () => void;
+  onOpenChange?: (open: boolean) => void;
+  closeSignal?: number;
 }) {
   const { theme, themeId } = useTheme();
   const accent = getThemeAccentColor(theme);
@@ -71,6 +75,14 @@ export function AppMenuBar({
   const border = getThemeBorderColor(theme);
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    onOpenChange?.(openMenu !== null);
+  }, [onOpenChange, openMenu]);
+
+  useEffect(() => {
+    setOpenMenu(null);
+  }, [closeSignal]);
 
   const menuEntries = useMemo(
     () => [

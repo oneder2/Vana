@@ -1,5 +1,5 @@
 /**
- * No Visitors - ConflictModal
+ * Vana - ConflictModal
  *
  * 用途：
  * - 当同步流程检测到冲突时，提供交互式 UI 让用户选择解决策略：

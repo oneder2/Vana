@@ -1,5 +1,5 @@
 /**
- * No Visitors - 全局样式
+ * Vana - 全局样式
  * Tailwind CSS 导入和自定义样式
  */
 
@@ -100,6 +100,24 @@ body.theme-vellum {
 
 .shell-title {
   letter-spacing: 0.03em;
+}
+
+.mobile-sidebar {
+  color: inherit;
+}
+
+.mobile-sidebar .shell-label,
+.mobile-sidebar .opacity-35,
+.mobile-sidebar .opacity-40,
+.mobile-sidebar .opacity-45,
+.mobile-sidebar .opacity-55,
+.mobile-sidebar .opacity-60,
+.mobile-sidebar .opacity-65,
+.mobile-sidebar .opacity-70,
+.mobile-sidebar .opacity-72,
+.mobile-sidebar .opacity-75,
+.mobile-sidebar .opacity-80 {
+  opacity: 0.88;
 }
 
 /* 自定义滚动条样式 */

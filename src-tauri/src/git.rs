@@ -1,4 +1,4 @@
-// No Visitors - Git 操作模块
+// Vana - Git 操作模块
 // 使用 git2-rs 库进行 Git 仓库管理（libgit2 的 Rust 绑定）
 // 实现自动提交、状态查询和历史管理功能
 // 支持 SSH 和 PAT 验证模式
@@ -35,7 +35,7 @@ pub fn init_repository(path: &Path) -> Result<()> {
         config_content.push_str("\n[user]\n");
     }
     if !config_content.contains("name =") {
-        config_content.push_str("\tname = No Visitors User\n");
+        config_content.push_str("\tname = Vana User\n");
     }
     if !config_content.contains("email =") {
         config_content.push_str("\temail = no-visitors@localhost\n");
@@ -120,7 +120,7 @@ pub fn commit_changes(repo_path: &Path, message: &str) -> Result<String> {
     let sig = repo.signature()
         .unwrap_or_else(|_| {
             // 如果仓库没有配置 user.name 和 user.email，使用默认值
-            Signature::now("No Visitors User", "no-visitors@localhost")
+            Signature::now("Vana User", "vana@localhost")
                 .unwrap_or_else(|_| {
                     // 如果默认签名创建也失败（极不可能），使用当前时间戳
                     Signature::now("User", "user@localhost")
@@ -291,7 +291,7 @@ fn cleanup_index_lock(repo_path: &Path) -> Result<()> {
 fn seed_initial_files(repo_path: &Path) -> Result<()> {
     let gitignore_path = repo_path.join(".gitignore");
     if !gitignore_path.exists() {
-        let content = r#"# Vana / No Visitors
+        let content = r#"# Vana
 .DS_Store
 Thumbs.db
 .vscode/
@@ -306,7 +306,7 @@ Thumbs.db
 
     let readme_path = repo_path.join("README.md");
     if !readme_path.exists() {
-        let content = "# Workspace\n\nThis repository is managed by Vana (No Visitors).\n";
+        let content = "# Workspace\n\nThis repository is managed by Vana.\n";
         std::fs::write(&readme_path, content)
             .with_context(|| format!("无法写入 README.md: {}", readme_path.display()))?;
     }
@@ -1027,7 +1027,7 @@ pub fn sync_with_remote(repo_path: &Path, remote_name: &str, branch_name: &str, 
     let sig = repo
         .signature()
         .unwrap_or_else(|_| {
-            Signature::now("No Visitors User", "no-visitors@localhost")
+            Signature::now("Vana User", "vana@localhost")
                 .unwrap_or_else(|_| {
                     Signature::now("User", "user@localhost")
                         .expect("无法创建 Git 签名（这是系统级错误）")
@@ -1164,7 +1164,7 @@ pub fn continue_sync(repo_path: &Path, branch_name: &str) -> Result<SyncResult> 
     let sig = repo
         .signature()
         .unwrap_or_else(|_| {
-            Signature::now("No Visitors User", "no-visitors@localhost")
+            Signature::now("Vana User", "vana@localhost")
                 .unwrap_or_else(|_| {
                     Signature::now("User", "user@localhost")
                         .expect("无法创建 Git 签名（这是系统级错误）")

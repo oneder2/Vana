@@ -1,4 +1,4 @@
-# Vana - No Visitors
+# Vana
 
 **版本**: v0.6.0  
 **当前主线**: Local-first、SQLite、Supabase、Tauri 驱动。

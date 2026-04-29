@@ -8,7 +8,9 @@ import {
   getThemeAccentBgColor,
   getThemeAccentColor,
   getThemeBorderColor,
+  getThemeMutedColor,
   getThemeSurfaceColor,
+  getThemeTextColor,
 } from '@/lib/themeStyles';
 
 type TreeNode = {
@@ -152,6 +154,7 @@ function TreeItem({
   const { theme } = useTheme();
   const accent = getThemeAccentColor(theme);
   const accentBg = getThemeAccentBgColor(theme);
+  const text = getThemeTextColor(theme);
 
   const isFolder = node.type === 'folder';
   const isExpanded = isFolder && expandedFolders.has(node.id);
@@ -176,7 +179,7 @@ function TreeItem({
         className="flex w-full select-none items-center gap-1.5 rounded px-2 py-1.5 text-left text-[13px] transition-opacity hover:opacity-85"
         style={{
           paddingLeft: `${8 + level * 14}px`,
-          color: accent,
+          color: text,
           backgroundColor: isDropTarget ? `${accentBg}4d` : isSelected ? `${accentBg}55` : 'transparent',
           outline: isDropTarget ? `1px solid ${accent}` : isSelected ? `1px solid ${accentBg}` : 'none',
           boxShadow: isSelected ? `inset 2px 0 0 ${accent}` : 'none',
@@ -199,16 +202,20 @@ function TreeItem({
         {isFolder ? (
           <>
             <ChevronRight size={14} className={`shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-            {isExpanded ? <FolderOpen size={14} className="shrink-0" /> : <Folder size={14} className="shrink-0" />}
+            {isExpanded ? (
+              <FolderOpen size={14} className="shrink-0" style={{ color: accent }} />
+            ) : (
+              <Folder size={14} className="shrink-0" style={{ color: accent }} />
+            )}
           </>
         ) : (
           <>
             <div className="w-[14px] shrink-0" />
-            <FileText size={13} className="shrink-0 opacity-80" />
+            <FileText size={13} className="shrink-0" style={{ color: accent }} />
           </>
         )}
         <span className="truncate">{node.name}</span>
-        {node.document.is_favorite && <Heart size={12} className="ml-auto shrink-0 opacity-80" fill="currentColor" />}
+        {node.document.is_favorite && <Heart size={12} className="ml-auto shrink-0" style={{ color: accent }} fill="currentColor" />}
       </div>
 
       {isFolder && isExpanded && node.children && (
@@ -256,6 +263,7 @@ export function DocumentExplorerTree({
   const accentBg = getThemeAccentBgColor(theme);
   const border = getThemeBorderColor(theme);
   const surface = getThemeSurfaceColor(theme);
+  const muted = getThemeMutedColor(theme);
   const [dragState, setDragState] = useState<DragState | null>(null);
 
   const tree = useMemo(() => buildDocumentTree(documents), [documents]);
@@ -330,7 +338,7 @@ export function DocumentExplorerTree({
         style={{
           borderColor: rootDropActive ? accent : border,
           backgroundColor: rootDropActive ? `${accentBg}4d` : 'transparent',
-          color: accent,
+          color: rootDropActive ? accent : muted,
           opacity: dragState?.phase === 'dragging' ? 1 : 0.72,
         }}
       >

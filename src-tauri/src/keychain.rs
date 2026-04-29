@@ -1,4 +1,4 @@
-// No Visitors - 密钥管理模块
+// Vana - 密钥管理模块
 // 负责生成、存储和检索主加密密钥
 // 密钥存储在系统 Keychain/Keystore 中，确保安全性
 

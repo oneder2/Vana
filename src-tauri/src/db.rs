@@ -184,16 +184,16 @@ pub fn legacy_workspace_dir(app: &AppHandle) -> Result<PathBuf> {
     let platform = std::env::consts::OS;
     let base_path = match platform {
         "windows" => std::env::var("APPDATA")
-            .map(|p| PathBuf::from(p).join("No Visitors"))
+            .map(|p| PathBuf::from(p).join("Vana"))
             .map_err(|e| anyhow::anyhow!("无法获取 APPDATA: {}", e))?,
         "linux" => dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("无法获取用户主目录"))?
-            .join(".local/share/No Visitors"),
+            .join(".local/share/Vana"),
         "android" => app
             .path()
             .app_data_dir()
             .context("无法获取 Android 应用数据目录")?
-            .join("No Visitors"),
+            .join("Vana"),
         other => return Err(anyhow::anyhow!("不支持的平台: {}", other)),
     };
 
@@ -312,7 +312,7 @@ fn seed_if_empty(conn: &Connection) -> Result<()> {
 
     let now = now_iso();
     let welcome_id = Uuid::new_v4().to_string();
-    let welcome = r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Vana 0.7"}]},{"type":"paragraph","content":[{"type":"text","text":"本地优先主线现在默认连接可选的 Supabase Hosted 同步，同时保留访客模式。"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"首次启动可先以访客身份使用，再决定是否登录"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"文档仍然先写本地，再进入同步队列"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"高级自托管配置继续保留在设置页"}]}]}]}"#;
+    let welcome = r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Welcome to Vana"}]},{"type":"paragraph","content":[{"type":"text","text":"本地优先主线默认连接可选的 Supabase Hosted 同步，同时保留访客模式。"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"首次启动可先以访客身份使用，再决定是否登录"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"文档仍然先写本地，再进入同步队列"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"高级自托管配置继续保留在设置页"}]}]}]}"#;
 
     conn.execute(
         "
@@ -324,7 +324,7 @@ fn seed_if_empty(conn: &Connection) -> Result<()> {
             welcome_id,
             "Welcome to Vana",
             welcome,
-            "Vana 0.7 本地优先主线现在默认连接可选的 Supabase Hosted 同步，同时保留访客模式。",
+            "Welcome to Vana 本地优先主线默认连接可选的 Supabase Hosted 同步，同时保留访客模式。",
             now,
         ],
     )?;

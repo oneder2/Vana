@@ -1,5 +1,5 @@
 /**
- * No Visitors - Toast 通知提供者组件
+ * Vana - Toast 通知提供者组件
  * 使用 React Context 管理全局 Toast 消息队列
  * 支持多个消息同时显示，自动消失和手动关闭
  */

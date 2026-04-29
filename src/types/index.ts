@@ -1,5 +1,5 @@
 /**
- * No Visitors - 类型定义
+ * Vana - 类型定义
  * 集中管理所有 TypeScript 类型定义
  */
 

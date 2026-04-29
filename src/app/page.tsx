@@ -3,24 +3,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
+import { onBackButtonPress } from '@tauri-apps/api/app';
 import {
   ChevronRight,
   Clock3,
+  Info,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
   Heart,
   Import,
-  Plus,
   RefreshCw,
-  Tag,
   Trash2,
   X,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
 import type { MenuAction } from '@/components/AppMenuBar';
-import { Editor } from '@/components/Editor';
 import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
 import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
 import { InputModal } from '@/components/InputModal';
@@ -51,15 +50,21 @@ import {
   getThemeAccentColor,
   getThemeBgColor,
   getThemeBorderColor,
+  getThemeMutedColor,
   getThemeSurfaceColor,
+  getThemeTextColor,
 } from '@/lib/themeStyles';
 import { AppLink, useRouter } from '@/lib/router';
 import type { ThemeId } from '@/lib/themes';
 import { isMobile } from '@/lib/platform';
 import { DesktopHomeShell } from './home/DesktopHomeShell';
 import { MobileHomeShell } from './home/MobileHomeShell';
+import { MobileDocumentEditor } from './home/MobileDocumentEditor';
+import { DesktopDocumentEditor } from './home/DesktopDocumentEditor';
+import packageJson from '../../package.json';
 
 type StatusFilter = 'active' | 'recent' | 'trashed';
+const APP_VERSION = packageJson.version;
 
 function parseContent(raw: string): JSONContent {
   try {
@@ -227,6 +232,7 @@ function ExplorerSection({
   const { theme } = useTheme();
   const accent = getThemeAccentColor(theme);
   const accentBg = getThemeAccentBgColor(theme);
+  const muted = getThemeMutedColor(theme);
 
   return (
     <section className="border-b px-2 py-2" style={{ borderColor: `${getThemeBorderColor(theme)}80` }}>
@@ -234,7 +240,7 @@ function ExplorerSection({
         type="button"
         onClick={onToggle}
         className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left"
-        style={{ color: accent }}
+        style={{ color: muted }}
       >
         <div className="flex items-center gap-2">
           <ChevronRight size={12} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
@@ -261,6 +267,8 @@ export default function HomePage() {
   const surface = getThemeSurfaceColor(theme);
   const background = getThemeBgColor(theme);
   const accentBg = getThemeAccentBgColor(theme);
+  const text = getThemeTextColor(theme);
+  const muted = getThemeMutedColor(theme);
 
   const [appState, setAppState] = useState<AppState | null>(null);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
@@ -291,6 +299,12 @@ export default function HomePage() {
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [replaceFindValue, setReplaceFindValue] = useState('');
   const [replaceNextValue, setReplaceNextValue] = useState('');
+  const [mobilePropertyOpen, setMobilePropertyOpen] = useState(false);
+  const [mobileTagEditorOpen, setMobileTagEditorOpen] = useState(false);
+  const [mobileTagDeleteTarget, setMobileTagDeleteTarget] = useState<string | null>(null);
+  const [syncFeedback, setSyncFeedback] = useState<'idle' | 'success' | 'error'>('idle');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileMenuCloseSignal, setMobileMenuCloseSignal] = useState(0);
   const syncInFlightRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const selectionIntentRef = useRef<string | null>(null);
@@ -368,12 +382,19 @@ export default function HomePage() {
 
         syncInFlightRef.current = true;
         setIsSyncing(true);
+        setSyncFeedback('idle');
         const snapshot = await runSupabaseSync();
         await refresh(preferredId ?? selectedId);
         setAppState((current) => (current ? { ...current, sync: snapshot } : current));
+        setSyncFeedback('success');
+        window.setTimeout(() => setSyncFeedback('idle'), 1800);
         console.info(`[sync] ${reason} completed`);
       } catch (error) {
+        setSyncFeedback('error');
         console.error(`[sync] ${reason} failed`, error);
+        if (force || reason.includes('manual')) {
+          toast.error(error instanceof Error ? error.message : String(error));
+        }
         try {
           await refresh(preferredId ?? selectedId);
         } catch (refreshError) {
@@ -384,7 +405,7 @@ export default function HomePage() {
         setIsSyncing(false);
       }
     },
-    [refresh, selectedId]
+    [refresh, selectedId, toast]
   );
 
   useEffect(() => {
@@ -690,6 +711,7 @@ export default function HomePage() {
       const items: ContextMenuItem[] = [
         ...(document.node_kind === 'folder' ? [{ id: 'newChildDocument', label: '在此分组中新建文档', icon: FilePlus2 }] : []),
         ...(document.node_kind === 'folder' ? [{ id: 'newChildFolder', label: '新建子分组', icon: Folder }] : []),
+        ...(document.node_kind === 'document' ? [{ id: 'properties', label: '文档属性', icon: Info }] : []),
         { id: 'rename', label: '重命名', icon: FileText },
         { id: 'move', label: '移动到分组', icon: FolderOpen },
         { id: 'toggleFavorite', label: document.is_favorite ? '取消收藏' : '加入收藏', icon: Heart },
@@ -705,6 +727,8 @@ export default function HomePage() {
             void handleCreateDocument(document.id);
           } else if (action === 'newChildFolder') {
             void handleCreateFolder(document.id);
+          } else if (action === 'properties') {
+            void handleSelectDocument(document.id).then(() => setMobilePropertyOpen(true));
           } else if (action === 'rename') {
             setRenameTarget(document);
           } else if (action === 'move') {
@@ -757,12 +781,17 @@ export default function HomePage() {
         setTagDraft('');
         return;
       }
+      if (documentTags.length >= 7) {
+        toast.error('最多添加 7 个标签');
+        return;
+      }
       const nextTags = [...documentTags, next];
       setDocumentTags(nextTags);
       setTagDraft('');
+      setMobileTagEditorOpen(false);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata]
+    [content, currentDocument, documentTags, handlePersistMetadata, toast]
   );
 
   const handleDropNode = useCallback(
@@ -816,16 +845,99 @@ export default function HomePage() {
       if (!currentDocument) return;
       const nextTags = documentTags.filter((tag) => tag !== tagName);
       setDocumentTags(nextTags);
+      setMobileTagDeleteTarget(null);
       await handlePersistMetadata(content, nextTags);
     },
     [content, currentDocument, documentTags, handlePersistMetadata]
   );
 
+  const closeTopMobileLayer = useCallback(() => {
+    if (sidebarOpen) {
+      setSidebarOpen(false);
+      return true;
+    }
+    if (mobileMenuOpen) {
+      setMobileMenuCloseSignal((value) => value + 1);
+      setMobileMenuOpen(false);
+      return true;
+    }
+    if (mobileTagDeleteTarget) {
+      setMobileTagDeleteTarget(null);
+      return true;
+    }
+    if (mobileTagEditorOpen) {
+      setMobileTagEditorOpen(false);
+      return true;
+    }
+    if (mobilePropertyOpen) {
+      setMobilePropertyOpen(false);
+      return true;
+    }
+    if (sidebarMenu) {
+      setSidebarMenu(null);
+      return true;
+    }
+    if (showSearchModal) {
+      setShowSearchModal(false);
+      return true;
+    }
+    if (replaceDialogOpen) {
+      setReplaceDialogOpen(false);
+      return true;
+    }
+    if (moveModeSource) {
+      setMoveModeSource(null);
+      return true;
+    }
+    return false;
+  }, [
+    mobilePropertyOpen,
+    mobileMenuOpen,
+    mobileTagDeleteTarget,
+    mobileTagEditorOpen,
+    moveModeSource,
+    replaceDialogOpen,
+    showSearchModal,
+    sidebarMenu,
+    sidebarOpen,
+  ]);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+
+    let disposed = false;
+    let listener: { unregister: () => Promise<void> } | null = null;
+    void onBackButtonPress(() => {
+      closeTopMobileLayer();
+    })
+      .then((nextListener) => {
+        if (disposed) {
+          void nextListener.unregister();
+          return;
+        }
+        listener = nextListener;
+      })
+      .catch(() => {});
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && closeTopMobileLayer()) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onEscape);
+
+    return () => {
+      disposed = true;
+      window.removeEventListener('keydown', onEscape);
+      void listener?.unregister();
+    };
+  }, [closeTopMobileLayer, isMobileLayout]);
+
   const renderSidebar = (mobile: boolean) => (
     <aside
       className={
         mobile
-          ? 'shell-panel absolute inset-y-0 left-0 z-40 w-[88dvw] min-w-[300px] max-w-[380px] border-r shadow-2xl'
+          ? 'mobile-sidebar fixed bottom-0 left-0 top-0 z-40 h-[100dvh] max-w-[360px] overflow-hidden border-r pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-2xl backdrop-blur-xl'
           : `shell-panel absolute inset-y-0 left-0 z-40 w-[88vw] max-w-[320px] transform border-r transition-transform md:relative md:block md:h-full md:w-[308px] md:max-w-none md:translate-x-0 ${
               sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
             }`
@@ -833,6 +945,7 @@ export default function HomePage() {
       style={{
         backgroundColor: surface,
         borderColor: border,
+        width: mobile ? 'min(86vw, 360px)' : undefined,
       }}
     >
           <div className="flex h-full min-h-0 flex-col" onContextMenu={openExplorerMenu}>
@@ -870,9 +983,10 @@ export default function HomePage() {
                   style={{
                     backgroundColor: selectedStatus === value ? accentBg : 'transparent',
                     border: `1px solid ${border}`,
+                    color: selectedStatus === value ? text : muted,
                   }}
                 >
-                  <Icon size={13} className="shrink-0 opacity-80" />
+                  <Icon size={13} className="shrink-0" style={{ color: selectedStatus === value ? accent : muted }} />
                   {label}
                 </button>
               ))}
@@ -886,7 +1000,7 @@ export default function HomePage() {
                 onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
               >
                 {favoriteDocuments.length === 0 ? (
-                  <div className="px-3 py-1 text-[11px] opacity-40">还没有收藏文档</div>
+                  <div className="px-3 py-1 text-[11px]" style={{ color: muted }}>还没有收藏文档</div>
                 ) : (
                   <div className="space-y-0.5">
                     {favoriteDocuments.map((document) => (
@@ -897,11 +1011,11 @@ export default function HomePage() {
                         onContextMenu={(event) => openDocumentMenu(event, document)}
                         className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
                         style={{
-                          color: accent,
+                          color: text,
                           backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
                         }}
                       >
-                        <Heart size={12} className="shrink-0" fill="currentColor" />
+                        <Heart size={12} className="shrink-0" style={{ color: accent }} fill="currentColor" />
                         <span className="truncate">{documentLeafTitle(document)}</span>
                       </button>
                     ))}
@@ -922,11 +1036,11 @@ export default function HomePage() {
                     style={{
                       borderColor: border,
                       backgroundColor: `${accentBg}35`,
-                      color: accent,
+                      color: text,
                     }}
                   >
                     <div className="font-medium">移动模式</div>
-                    <div className="mt-1 opacity-75">正在移动：{moveModeSource.title}</div>
+                    <div className="mt-1" style={{ color: muted }}>正在移动：{moveModeSource.title}</div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -955,6 +1069,7 @@ export default function HomePage() {
                     style={{
                       backgroundColor: selectedTag === null ? accentBg : 'transparent',
                       borderColor: border,
+                      color: selectedTag === null ? text : muted,
                     }}
                   >
                     全部
@@ -967,6 +1082,7 @@ export default function HomePage() {
                       style={{
                         backgroundColor: selectedTag === tag.name ? accentBg : 'transparent',
                         borderColor: border,
+                        color: selectedTag === tag.name ? text : muted,
                       }}
                     >
                       {tag.name}
@@ -976,7 +1092,7 @@ export default function HomePage() {
 
                 {selectedStatus === 'recent' ? (
                   recentDocuments.length === 0 ? (
-                    <div className="px-3 py-2 text-[12px] opacity-40">最近还没有文档记录</div>
+                    <div className="px-3 py-2 text-[12px]" style={{ color: muted }}>最近还没有文档记录</div>
                   ) : (
                     <div className="space-y-0.5">
                       {recentDocuments.map((document) => (
@@ -987,20 +1103,20 @@ export default function HomePage() {
                           onContextMenu={(event) => openDocumentMenu(event, document)}
                           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
                           style={{
-                            color: accent,
+                            color: text,
                             backgroundColor: document.id === selectedId ? `${accentBg}55` : 'transparent',
                             outline: document.id === selectedId ? `1px solid ${accentBg}` : 'none',
                             boxShadow: document.id === selectedId ? `inset 2px 0 0 ${accent}` : 'none',
                           }}
                         >
-                          <Clock3 size={12} className="shrink-0 opacity-70" />
+                          <Clock3 size={12} className="shrink-0" style={{ color: accent }} />
                           <span className="truncate">{documentLeafTitle(document)}</span>
                         </button>
                       ))}
                     </div>
                   )
                 ) : filteredDocuments.length === 0 ? (
-                  <div className="px-3 py-2 text-[12px] opacity-40">这一栏暂时是空的</div>
+                  <div className="px-3 py-2 text-[12px]" style={{ color: muted }}>这一栏暂时是空的</div>
                 ) : (
                   <DocumentExplorerTree
                     documents={filteredDocuments}
@@ -1025,7 +1141,7 @@ export default function HomePage() {
 
                 {moveModeSource && moveModeTargets.length > 1 && (
                   <div className="mt-3 border-t pt-3" style={{ borderColor: `${border}80` }}>
-                    <div className="mb-2 text-[10px] uppercase tracking-[0.24em] opacity-55">选择目标分组</div>
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.24em]" style={{ color: muted }}>选择目标分组</div>
                     <div className="space-y-1">
                       {moveModeTargets
                         .filter((candidate) => candidate.id !== null)
@@ -1035,13 +1151,13 @@ export default function HomePage() {
                             type="button"
                             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-opacity hover:opacity-85"
                             style={{
-                              color: accent,
+                              color: text,
                               paddingLeft: `${8 + candidate.depth * 14}px`,
                               backgroundColor: candidate.id === moveModeSource.parent_id ? `${accentBg}28` : 'transparent',
                             }}
                             onClick={() => void handleMoveBySelection(moveModeSource, candidate.id)}
                           >
-                            <Folder size={13} className="shrink-0" />
+                            <Folder size={13} className="shrink-0" style={{ color: accent }} />
                             <span className="truncate">{candidate.title}</span>
                           </button>
                         ))}
@@ -1055,16 +1171,18 @@ export default function HomePage() {
     </aside>
   );
 
-  const renderEmptyState = () => (
-    <section className="h-full overflow-y-auto px-6 py-10" style={{ backgroundColor: background }}>
+  const renderEmptyState = (mobile: boolean) => (
+    <section className={`h-full overflow-y-auto ${mobile ? 'px-5 py-8' : 'px-6 py-10'}`} style={{ backgroundColor: background }}>
       <div className="flex min-h-full w-full items-center justify-center">
         <div className="w-full max-w-[760px]">
           <div className="mx-auto max-w-[560px] text-center">
             <div className="shell-label mb-3">Threshold</div>
-            <h1 className="shell-title text-3xl font-semibold sm:text-4xl">书页尚未翻开。</h1>
-            <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
-              左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
-            </p>
+            <h1 className={`shell-title font-semibold ${mobile ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>书页尚未翻开。</h1>
+            {!mobile && (
+              <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
+                左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
+              </p>
+            )}
           </div>
 
           <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
@@ -1083,111 +1201,56 @@ export default function HomePage() {
     </section>
   );
 
-  const renderDocumentEditor = (mobile: boolean) => (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div
-        className={`shell-panel border-b ${mobile ? 'px-4 py-2' : 'px-4 py-3 sm:px-5'}`}
-        style={{ backgroundColor: surface, borderColor: border }}
-      >
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs opacity-70">
-          <span className="shell-label">Document</span>
-          <span className="opacity-35">/</span>
-          {currentSegments.length > 0 ? (
-            currentSegments.map((segment, index) => (
-              <React.Fragment key={`${segment}-${index}`}>
-                <span className={index === currentSegments.length - 1 ? 'opacity-100' : 'opacity-65'}>{segment}</span>
-                {index < currentSegments.length - 1 && <span className="opacity-35">/</span>}
-              </React.Fragment>
-            ))
-          ) : (
-            <span>Untitled</span>
-          )}
-        </div>
+  const renderDocumentEditor = (mobile: boolean) => {
+    if (mobile) {
+      if (!currentDocument) return null;
+      return (
+        <MobileDocumentEditor
+          currentDocument={currentDocument}
+          content={content}
+          documentTags={documentTags}
+          onEditorReady={setEditorInstance}
+          onContentChange={setContent}
+          onPersistError={(message) => toast.error(message)}
+          onPersisted={() => {
+            void triggerAutoSync('editor-save');
+          }}
+        />
+      );
+    }
 
-        <div className={`${mobile ? 'mt-1 gap-x-3 text-[11px]' : 'mt-2 gap-x-5 text-[12px]'} flex flex-wrap items-center gap-y-2 opacity-72`}>
-          <span>最近更新 {formatTimestamp(currentDocument?.updated_at)}</span>
-          <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
-          {!mobile && <span>同步 {appState?.sync.mode ?? 'local-only'}</span>}
-          {!mobile && appState && (
-            <span>
-              存储 {formatBytes(appState.limits.current_total_storage_bytes)} / {formatBytes(appState.limits.max_total_storage_bytes)}
-            </span>
-          )}
-        </div>
-
-        <div className={`${mobile ? 'mt-2' : 'mt-3'} flex flex-wrap items-center gap-2`}>
-          <div
-            className={`flex flex-1 items-center gap-2 border px-3 py-2 ${mobile ? 'min-w-0 rounded-lg' : 'min-w-[280px]'}`}
-            style={{ borderColor: border }}
-          >
-            <Tag size={14} className="mt-0.5 shrink-0 opacity-60" />
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-              {documentTags.map((tag) => (
-                <span
-                  key={tag}
-                  className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs"
-                  style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
-                >
-                  <span>{tag}</span>
-                  <button
-                    type="button"
-                    className="opacity-70 transition-opacity hover:opacity-100"
-                    onClick={() => void removeTag(tag)}
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              ))}
-              <div className={`flex flex-1 items-center gap-2 ${mobile ? 'min-w-0' : 'min-w-[140px]'}`}>
-                <input
-                  value={tagDraft}
-                  onChange={(event) => setTagDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      void addTag(tagDraft);
-                    }
-                  }}
-                  placeholder="输入标签后回车"
-                  className="w-full min-w-0 bg-transparent text-sm outline-none"
-                />
-                <button
-                  type="button"
-                  className="opacity-70 transition-opacity hover:opacity-100"
-                  onClick={() => void addTag(tagDraft)}
-                  disabled={!tagDraft.trim()}
-                >
-                  <Plus size={14} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className={`min-h-0 flex-1 overflow-hidden ${mobile ? 'p-0' : 'p-0 md:p-3'}`}>
-        {currentDocument && (
-          <Editor
-            filePath={currentDocument.id}
-            initialContent={content}
-            tags={documentTags}
-            mobile={mobile}
-            onEditorReady={setEditorInstance}
-            onContentChange={setContent}
-            onPersistError={(message) => toast.error(message)}
-            onPersisted={() => {
-              void triggerAutoSync('editor-save');
-            }}
-          />
-        )}
-      </div>
-    </section>
-  );
+    return (
+      <DesktopDocumentEditor
+        currentDocument={currentDocument}
+        currentSegments={currentSegments}
+        content={content}
+        documentTags={documentTags}
+        tagDraft={tagDraft}
+        isSyncing={isSyncing}
+        appState={appState}
+        surface={surface}
+        border={border}
+        accent={accent}
+        accentBg={accentBg}
+        onTagDraftChange={setTagDraft}
+        onAddTag={(value) => void addTag(value)}
+        onRemoveTag={(tag) => void removeTag(tag)}
+        onEditorReady={setEditorInstance}
+        onContentChange={setContent}
+        onPersistError={(message) => toast.error(message)}
+        onPersisted={() => {
+          void triggerAutoSync('editor-save');
+        }}
+        formatTimestamp={formatTimestamp}
+        formatBytes={formatBytes}
+      />
+    );
+  };
 
   const renderMainContent = (mobile: boolean) => (
     <main className={mobile ? 'absolute inset-0 min-h-0 w-full max-w-full overflow-hidden' : 'min-w-0 flex-1 min-h-0 overflow-hidden'}>
           {!currentDocument ? (
-            renderEmptyState()
+            renderEmptyState(mobile)
           ) : (
             renderDocumentEditor(mobile)
           )}
@@ -1209,19 +1272,25 @@ export default function HomePage() {
   const renderMobileShell = () => (
     <MobileHomeShell
       title={currentDocument ? documentLeafTitle(currentDocument) : '文档库'}
+      version={APP_VERSION}
       sidebar={renderSidebar(true)}
       mainContent={renderMainContent(true)}
       sidebarOpen={sidebarOpen}
+      hasDocument={Boolean(currentDocument)}
       isSyncing={isSyncing}
+      syncFeedback={syncFeedback}
       accent={accent}
       border={border}
       surface={surface}
       onOpenSidebar={() => setSidebarOpen(true)}
       onCloseSidebar={() => setSidebarOpen(false)}
+      onOpenProperties={() => setMobilePropertyOpen(true)}
       onManualSync={() => void triggerAutoSync('mobile-manual', true)}
       onMenuAction={handleMenuAction}
       onHelp={() => navigate('/help')}
       onSettings={() => navigate('/settings')}
+      onMenuOpenChange={setMobileMenuOpen}
+      menuCloseSignal={mobileMenuCloseSignal}
     />
   );
 
@@ -1238,7 +1307,7 @@ export default function HomePage() {
       className="shell-page flex h-screen min-h-0 flex-col overflow-hidden"
       style={{
         backgroundColor: background,
-        color: accent,
+        color: text,
         paddingTop: isMobileLayout ? 'env(safe-area-inset-top)' : undefined,
         paddingBottom: isMobileLayout ? 'env(safe-area-inset-bottom)' : undefined,
       }}
@@ -1262,6 +1331,148 @@ export default function HomePage() {
           onClose={() => setSidebarMenu(null)}
           onAction={(action) => sidebarMenu.action(action)}
         />
+      )}
+
+      {isMobileLayout && mobilePropertyOpen && currentDocument && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-end"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.55)' }}
+          onClick={() => setMobilePropertyOpen(false)}
+        >
+          <section
+            className="shell-panel max-h-[82dvh] w-full overflow-y-auto border-t px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4"
+            style={{ backgroundColor: surface, borderColor: border }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="shell-label">Properties</div>
+                <h2 className="mt-1 truncate text-lg font-semibold">{documentLeafTitle(currentDocument)}</h2>
+              </div>
+              <button
+                type="button"
+                className="rounded border p-2"
+                style={{ borderColor: border, color: accent }}
+                onClick={() => setMobilePropertyOpen(false)}
+                aria-label="关闭属性"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid gap-2 text-sm opacity-80">
+              <div>最近更新：{formatTimestamp(currentDocument.updated_at)}</div>
+              <div>同步状态：{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</div>
+              <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
+            </div>
+
+            <div className="mt-5">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="shell-label">Tags</div>
+                <span className="text-xs opacity-55">{documentTags.length}/7</span>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto pb-2">
+                {documentTags.length === 0 ? (
+                  <span className="shrink-0 text-sm opacity-45">还没有标签</span>
+                ) : (
+                  documentTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      className="shrink-0 rounded-full border px-3 py-2 text-sm"
+                      style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setMobileTagDeleteTarget(tag);
+                      }}
+                      onPointerDown={(event) => {
+                        const target = event.currentTarget;
+                        const timer = window.setTimeout(() => setMobileTagDeleteTarget(tag), 520);
+                        const clear = () => window.clearTimeout(timer);
+                        target.addEventListener('pointerup', clear, { once: true });
+                        target.addEventListener('pointerleave', clear, { once: true });
+                        target.addEventListener('pointercancel', clear, { once: true });
+                      }}
+                    >
+                      {tag}
+                    </button>
+                  ))
+                )}
+                <button
+                  type="button"
+                  className="shrink-0 rounded-full border px-3 py-2 text-sm"
+                  style={{ borderColor: border, color: accent, opacity: documentTags.length >= 7 ? 0.45 : 1 }}
+                  disabled={documentTags.length >= 7}
+                  onClick={() => setMobileTagEditorOpen(true)}
+                >
+                  + 添加
+                </button>
+              </div>
+
+              {mobileTagEditorOpen && (
+                <div className="mt-3 flex items-center gap-2 rounded border px-3 py-2" style={{ borderColor: border }}>
+                  <input
+                    value={tagDraft}
+                    onChange={(event) => setTagDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void addTag(tagDraft);
+                      }
+                    }}
+                    autoFocus
+                    placeholder="输入标签后回车"
+                    className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                  />
+                  <button
+                    type="button"
+                    className="rounded border px-3 py-1.5 text-sm"
+                    style={{ borderColor: border, color: accent }}
+                    onClick={() => void addTag(tagDraft)}
+                    disabled={!tagDraft.trim()}
+                  >
+                    添加
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isMobileLayout && mobileTagDeleteTarget && (
+        <div
+          className="fixed inset-0 z-[10002] flex items-center justify-center p-5"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.58)' }}
+          onClick={() => setMobileTagDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded border p-5"
+            style={{ backgroundColor: surface, borderColor: border }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold">删除标签？</h2>
+            <p className="mt-2 text-sm opacity-70">从当前文档移除 “{mobileTagDeleteTarget}”。</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded border px-4 py-2 text-sm"
+                style={{ borderColor: border, color: accent }}
+                onClick={() => setMobileTagDeleteTarget(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded border px-4 py-2 text-sm"
+                style={{ borderColor: border, backgroundColor: accentBg, color: accent }}
+                onClick={() => void removeTag(mobileTagDeleteTarget)}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <InputModal

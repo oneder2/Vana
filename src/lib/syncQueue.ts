@@ -1,5 +1,5 @@
 /**
- * No Visitors - 同步任务队列管理
+ * Vana - 同步任务队列管理
  * 管理失败的 Push 任务队列，支持持久化和重试
  * 根据 Sync Protocol.md 实现队列重试机制
  */

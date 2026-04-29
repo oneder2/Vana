@@ -1,5 +1,5 @@
 /**
- * No Visitors - 主题系统
+ * Vana - 主题系统
  * 基于 reference.ts 提取的主题配置
  * 支持 4 种主题：arcane（奥术）、terminal（终端）、rusty（废土）、vellum（极简）
  */
@@ -17,6 +17,8 @@ export interface Theme {
   bg: string;
   surface: string;
   border: string;
+  text: string;
+  muted: string;
   accent: string;
   accentBg: string;
   glow: string;
@@ -31,11 +33,13 @@ const THEMES_CONFIG: Record<ThemeId, Omit<Theme, 'iconComponent'> & { iconName: 
     id: 'arcane',
     name: '奥术 (Arcane)',
     bg: 'bg-[#05040a]',
-    surface: 'bg-[#13111c]',
-    border: 'border-[#2e2842]',
-    accent: 'text-violet-500',
-    accentBg: 'bg-violet-900/20',
-    glow: 'shadow-[0_0_15px_rgba(139,92,246,0.3)]',
+    surface: 'bg-[#14111f]',
+    border: 'border-[#342d46]',
+    text: 'text-[#d9d3e5]',
+    muted: 'text-[#9a90ad]',
+    accent: 'text-[#b7a3e8]',
+    accentBg: 'bg-[#2a2238]',
+    glow: 'shadow-[0_0_15px_rgba(126,99,185,0.24)]',
     font: 'font-serif',
     uiFont: 'font-mono',
     iconName: 'Zap',
@@ -43,12 +47,14 @@ const THEMES_CONFIG: Record<ThemeId, Omit<Theme, 'iconComponent'> & { iconName: 
   terminal: {
     id: 'terminal',
     name: '终端 (Terminal)',
-    bg: 'bg-black',
-    surface: 'bg-[#0a0a0a]',
-    border: 'border-[#00ff41]/30',
-    accent: 'text-[#00ff41]',
-    accentBg: 'bg-[#00ff41]/10',
-    glow: 'shadow-[0_0_10px_rgba(0,255,65,0.2)]',
+    bg: 'bg-[#060807]',
+    surface: 'bg-[#0d120f]',
+    border: 'border-[#2b5a3a]',
+    text: 'text-[#d4ded6]',
+    muted: 'text-[#8ea293]',
+    accent: 'text-[#83d49b]',
+    accentBg: 'bg-[#16291d]',
+    glow: 'shadow-[0_0_10px_rgba(104,190,129,0.16)]',
     font: 'font-mono',
     uiFont: 'font-mono',
     iconName: 'Terminal',
@@ -56,11 +62,13 @@ const THEMES_CONFIG: Record<ThemeId, Omit<Theme, 'iconComponent'> & { iconName: 
   rusty: {
     id: 'rusty',
     name: '废土 (Rusty)',
-    bg: 'bg-[#1a1412]',
-    surface: 'bg-[#2a1d19]',
-    border: 'border-[#4a342e]',
-    accent: 'text-orange-700',
-    accentBg: 'bg-orange-900/20',
+    bg: 'bg-[#181311]',
+    surface: 'bg-[#2a211d]',
+    border: 'border-[#4b3a32]',
+    text: 'text-[#e0d5cb]',
+    muted: 'text-[#aa9588]',
+    accent: 'text-[#d99a69]',
+    accentBg: 'bg-[#3a2a22]',
     glow: 'shadow-none',
     font: 'font-serif',
     uiFont: 'font-sans',
@@ -71,9 +79,11 @@ const THEMES_CONFIG: Record<ThemeId, Omit<Theme, 'iconComponent'> & { iconName: 
     name: '极简 (Vellum)',
     bg: 'bg-[#f4f1ea]',
     surface: 'bg-[#e9e4d9]',
-    border: 'border-[#d3cebe]',
-    accent: 'text-stone-800',
-    accentBg: 'bg-stone-300',
+    border: 'border-[#d0c7b7]',
+    text: 'text-[#342f2a]',
+    muted: 'text-[#766d62]',
+    accent: 'text-[#5d5146]',
+    accentBg: 'bg-[#ddd5c7]',
     glow: 'shadow-none',
     font: 'font-serif',
     uiFont: 'font-sans',
@@ -124,4 +134,3 @@ export function getThemeIcon(theme: Theme): ReactElement {
   const Icon = theme.iconComponent;
   return <Icon size={18} />;
 }
-

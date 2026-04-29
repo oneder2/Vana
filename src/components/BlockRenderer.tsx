@@ -1,5 +1,5 @@
 /**
- * No Visitors - 块渲染器组件
+ * Vana - 块渲染器组件
  * 负责渲染不同类型的文档块（h1, meta, p, quote 等）
  */
 

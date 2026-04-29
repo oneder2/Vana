@@ -1,5 +1,5 @@
 /**
- * No Visitors - Tauri Build Script
+ * Vana - Tauri Build Script
  *
  * 目标：
  * - 保持 Tauri v2 默认 build 流程（tauri_build::build）

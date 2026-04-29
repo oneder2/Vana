@@ -1,5 +1,5 @@
 /**
- * No Visitors - 主题样式辅助函数
+ * Vana - 主题样式辅助函数
  * 将主题配置转换为内联样式对象，确保自定义颜色被正确应用
  */
 
@@ -82,13 +82,21 @@ export function getThemeAccentColor(theme: Theme): string {
   const color = extractColorFromClass(theme.accent);
   if (color) return color;
 
-  // 标准 Tailwind 颜色映射
-  if (theme.accent === 'text-violet-500') return '#a855f7';
-  if (theme.accent === 'text-[#00ff41]') return '#00ff41';
-  if (theme.accent === 'text-orange-700') return '#c2410c';
-  if (theme.accent === 'text-stone-800') return '#292524';
+  return '#b7a3e8';
+}
 
-  return '#a855f7'; // 默认 violet-500
+/**
+ * 获取主题正文色（作为内联样式值）
+ */
+export function getThemeTextColor(theme: Theme): string {
+  return extractColorFromClass(theme.text) ?? '#d9d3e5';
+}
+
+/**
+ * 获取主题弱化文字色（作为内联样式值）
+ */
+export function getThemeMutedColor(theme: Theme): string {
+  return extractColorFromClass(theme.muted) ?? '#9a90ad';
 }
 
 /**
@@ -107,8 +115,7 @@ export function getThemeAccentBgColor(theme: Theme): string {
     return color;
   }
 
-  if (theme.accentBg.includes('stone')) return '#d6d3d1';
-  return 'rgba(139, 92, 246, 0.2)'; // 默认 violet-900/20
+  return 'rgba(95, 75, 139, 0.24)';
 }
 
 /**
@@ -117,7 +124,7 @@ export function getThemeAccentBgColor(theme: Theme): string {
 export function getThemeStyles(theme: Theme) {
   return {
     backgroundColor: getThemeBgColor(theme),
-    color: theme.id === 'vellum' ? '#292524' : '#d6d3d1',
+    color: getThemeTextColor(theme),
   };
 }
 
@@ -130,4 +137,3 @@ export function getThemeSurfaceStyles(theme: Theme) {
     borderColor: getThemeBorderColor(theme),
   };
 }
-

@@ -4,7 +4,9 @@ import {
   getThemeAccentColor,
   getThemeBgColor,
   getThemeBorderColor,
+  getThemeMutedColor,
   getThemeSurfaceColor,
+  getThemeTextColor,
 } from './themeStyles';
 
 function rgbaToRgb(color: string): string {
@@ -87,8 +89,8 @@ export function getDocumentStyleTokens(theme: Theme): DocumentStyleTokens {
   const surfaceColor = getThemeSurfaceColor(theme);
   const accentColor = getThemeAccentColor(theme);
   const borderColor = rgbaToRgb(getThemeBorderColor(theme));
-  const textColor = theme.id === 'vellum' ? '#292524' : '#d6d3d1';
-  const mutedColor = theme.id === 'vellum' ? '#78716c' : '#a8a29e';
+  const textColor = getThemeTextColor(theme);
+  const mutedColor = getThemeMutedColor(theme);
   const inlineCodeBackgroundColor = theme.id === 'vellum'
     ? withAlpha('#d3cebe', 0.6)
     : withAlpha(surfaceColor, 0.9);
