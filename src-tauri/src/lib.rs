@@ -30,6 +30,7 @@ pub fn run() {
             commands::get_supabase_session_command,
             commands::save_supabase_session_command,
             commands::clear_supabase_session_command,
+            commands::complete_onboarding_command,
             commands::mark_sync_attempt_command,
             commands::export_sync_documents_command,
             commands::apply_remote_documents_command,

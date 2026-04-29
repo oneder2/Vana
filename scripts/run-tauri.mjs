@@ -246,6 +246,7 @@ function classifyDesktopBundle(filePath, platform) {
 function collectDesktopArtifacts(args) {
   const tauriConfig = readJson(tauriConfigPath);
   const version = tauriConfig.version;
+  const productName = tauriConfig.productName.toLowerCase();
   const binaryName = readCargoPackageName();
   const context = getDesktopContext(args);
   const distDir = path.join(repoRoot, "dist", context.platform);
@@ -255,13 +256,47 @@ function collectDesktopArtifacts(args) {
   cleanDir(distDir);
 
   const copied = [];
-  const seenKinds = new Set();
+  const candidatesByKind = new Map();
   for (const filePath of walkFiles(bundleRoot)) {
     const classification = classifyDesktopBundle(filePath, context.platform);
-    if (!classification || seenKinds.has(classification.kind)) {
+    if (!classification) {
       continue;
     }
-    seenKinds.add(classification.kind);
+    const existing = candidatesByKind.get(classification.kind);
+    const lower = filePath.toLowerCase();
+    const matchesCurrentVersion = lower.includes(version.toLowerCase());
+    const matchesCurrentProduct = lower.includes(productName.replace(/\s+/g, "_")) || lower.includes(productName);
+
+    if (!existing) {
+      candidatesByKind.set(classification.kind, {
+        classification,
+        filePath,
+        matchesCurrentVersion,
+        matchesCurrentProduct,
+      });
+      continue;
+    }
+
+    const shouldReplace =
+      (matchesCurrentVersion && !existing.matchesCurrentVersion) ||
+      (matchesCurrentVersion === existing.matchesCurrentVersion &&
+        matchesCurrentProduct &&
+        !existing.matchesCurrentProduct) ||
+      (matchesCurrentVersion === existing.matchesCurrentVersion &&
+        matchesCurrentProduct === existing.matchesCurrentProduct &&
+        fs.statSync(filePath).mtimeMs > fs.statSync(existing.filePath).mtimeMs);
+
+    if (shouldReplace) {
+      candidatesByKind.set(classification.kind, {
+        classification,
+        filePath,
+        matchesCurrentVersion,
+        matchesCurrentProduct,
+      });
+    }
+  }
+
+  for (const { classification, filePath } of candidatesByKind.values()) {
     const targetPath = path.join(distDir, `vana-${version}-${context.platform}-${context.arch}${classification.suffix}`);
     if (copyIfExists(filePath, targetPath)) {
       copied.push({ label: classification.kind, path: targetPath });
@@ -289,7 +324,7 @@ const isAndroidDev = args.length >= 2 && args[0] === "android" && args[1] === "d
 const isAndroidBuild = args.length >= 2 && args[0] === "android" && args[1] === "build";
 const isDesktopDev = args.length > 0 && args[0] === "dev";
 const isDesktopBuild = args.length > 0 && args[0] === "build" && !isAndroidBuild;
-const appImageRequested = isLinux && args.includes("build") && args.includes("appimage");
+const shouldRecoverLinuxAppImage = isLinux && isDesktopBuild && getDesktopContext(args).platform === "linux";
 
 if (isDesktopDev) {
   const devPort = Number.parseInt(process.env.PORT || "3000", 10);
@@ -424,14 +459,20 @@ const child =
         shell: false,
       });
 
-child.on("exit", (code, signal) => {
+let finalized = false;
+function finalizeChild(code, signal) {
+  if (finalized) {
+    return;
+  }
+  finalized = true;
+
   if (signal) {
     process.kill(process.pid, signal);
     return;
   }
 
   let finalCode = code ?? 1;
-  if (appImageRequested && (finalCode !== 0 || !fs.existsSync(getExpectedAppImagePath()))) {
+  if (shouldRecoverLinuxAppImage && (finalCode !== 0 || !fs.existsSync(getExpectedAppImagePath()))) {
     const recovered = recoverAppImageBundle();
     if (recovered) {
       finalCode = 0;
@@ -463,4 +504,7 @@ child.on("exit", (code, signal) => {
   }
 
   process.exit(finalCode);
-});
+}
+
+child.once("exit", finalizeChild);
+child.once("close", finalizeChild);

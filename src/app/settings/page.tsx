@@ -16,6 +16,7 @@ import { TitleBar } from '@/components/TitleBar';
 import { useTheme } from '@/components/ThemeProvider';
 import { useToast } from '@/components/ToastProvider';
 import {
+  completeOnboarding,
   ensureWorkspaceInitialized,
   getAppState,
   getSupabaseConfig,
@@ -39,6 +40,16 @@ import {
   getThemeSurfaceColor,
 } from '@/lib/themeStyles';
 import { AppLink } from '@/lib/router';
+
+function formatBytes(value: number): string {
+  if (value >= 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (value >= 1024) {
+    return `${Math.round(value / 1024)} KB`;
+  }
+  return `${value} B`;
+}
 
 export default function SettingsPage() {
   const { theme } = useTheme();
@@ -100,6 +111,7 @@ export default function SettingsPage() {
     setBusy(true);
     try {
       const session = await signInWithPassword(email.trim(), password);
+      await completeOnboarding();
       await refresh();
       toast.success(`已登录：${session.email ?? email.trim()}`);
       setPassword('');
@@ -119,6 +131,7 @@ export default function SettingsPage() {
     setBusy(true);
     try {
       const result = await signUpWithPassword(email.trim(), password);
+      await completeOnboarding();
       await refresh();
       if (result.needsEmailConfirmation) {
         toast.success('注册成功，请先到邮箱确认账号，然后再用密码登录');
@@ -249,9 +262,11 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2 text-sm opacity-85">
               <div>身份模式：{appState?.account_mode ?? 'guest'}</div>
+              <div>服务来源：{appState?.service_profile ?? 'hosted'}</div>
               <div>账户邮箱：{appState?.account_email ?? '访客模式 / 未登录'}</div>
               <div>当前会话：{sessionSummary ?? '无活动会话'}</div>
               <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
+              <div>首启引导：{appState?.onboarding_completed ? '已完成' : '未完成'}</div>
             </div>
           </section>
 
@@ -346,6 +361,26 @@ export default function SettingsPage() {
                 <Database size={14} className="mr-1 inline" />
                 导入旧工作区
               </button>
+            </div>
+          </section>
+
+          <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
+            <div className="shell-label mb-3">Hosted Limits</div>
+            <div className="shell-title mb-3 flex items-center gap-2 text-lg font-medium">
+              <Shield size={16} />
+              公共服务上限
+            </div>
+            <div className="space-y-2 text-sm opacity-80">
+              <div>单文档大小：{appState ? formatBytes(appState.limits.max_document_content_bytes) : '512 KB'}</div>
+              <div>总存储上限：{appState ? formatBytes(appState.limits.max_total_storage_bytes) : '25 MB'}</div>
+              <div>文档数量上限：{appState?.limits.max_document_count ?? 5000}</div>
+              <div>5 分钟写入上限：{appState?.limits.max_write_ops_per_5_minutes ?? 300}</div>
+              <div>当前文档数：{appState?.limits.current_document_count ?? 0}</div>
+              <div>
+                当前存储：{appState ? formatBytes(appState.limits.current_total_storage_bytes) : '0 B'}
+              </div>
+              <div>最近 5 分钟写入：{appState?.limits.current_write_ops_last_5_minutes ?? 0}</div>
+              <div>附件上传：{appState?.limits.attachments_enabled ? '已开启' : '公共服务暂未开放'}</div>
             </div>
           </section>
 

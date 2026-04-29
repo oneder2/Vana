@@ -207,6 +207,11 @@ pub fn clear_supabase_session_command(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn complete_onboarding_command(app: AppHandle) -> Result<(), String> {
+    db::complete_onboarding(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn mark_sync_attempt_command(
     app: AppHandle,
     success: bool,

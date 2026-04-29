@@ -10,6 +10,11 @@ const DEFAULT_DOCUMENT_CONTENT: &str =
     r#"{"type":"doc","content":[{"type":"paragraph","content":[]}]} "#;
 const DEFAULT_SUPABASE_URL: Option<&str> = option_env!("VANA_PUBLIC_SUPABASE_URL");
 const DEFAULT_SUPABASE_ANON_KEY: Option<&str> = option_env!("VANA_PUBLIC_SUPABASE_ANON_KEY");
+const MAX_DOCUMENT_CONTENT_BYTES: usize = 512 * 1024;
+const MAX_TOTAL_STORAGE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_DOCUMENT_COUNT: usize = 5_000;
+const MAX_WRITE_OPS_PER_5_MINUTES: usize = 300;
+const HOSTED_ATTACHMENTS_ENABLED: bool = false;
 
 fn effective_supabase_config(conn: &Connection) -> Result<SupabaseConfig> {
     Ok(SupabaseConfig {
@@ -93,11 +98,26 @@ pub struct SyncSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     pub account_mode: String,
+    pub onboarding_completed: bool,
+    pub service_profile: String,
     pub account_email: Option<String>,
     pub local_db_path: String,
     pub legacy_workspace_path: String,
     pub supabase: SupabaseConfig,
     pub sync: SyncSnapshot,
+    pub limits: UsageLimits,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageLimits {
+    pub max_document_content_bytes: usize,
+    pub max_total_storage_bytes: usize,
+    pub max_document_count: usize,
+    pub max_write_ops_per_5_minutes: usize,
+    pub attachments_enabled: bool,
+    pub current_document_count: usize,
+    pub current_total_storage_bytes: usize,
+    pub current_write_ops_last_5_minutes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,7 +304,7 @@ fn seed_if_empty(conn: &Connection) -> Result<()> {
 
     let now = now_iso();
     let welcome_id = Uuid::new_v4().to_string();
-    let welcome = r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Vana 0.6"}]},{"type":"paragraph","content":[{"type":"text","text":"本地优先主线已切换到 SQLite。先在这里写，再决定是否连接 Supabase。"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"文档先写本地，再进入同步队列"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"设置页改成账户 / 同步 / 数据管理"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"旧 Git 工作区可一次性导入"}]}]}]}"#;
+    let welcome = r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Vana 0.7"}]},{"type":"paragraph","content":[{"type":"text","text":"本地优先主线现在默认连接可选的 Supabase Hosted 同步，同时保留访客模式。"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"首次启动可先以访客身份使用，再决定是否登录"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"文档仍然先写本地，再进入同步队列"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"高级自托管配置继续保留在设置页"}]}]}]}"#;
 
     conn.execute(
         "
@@ -296,7 +316,7 @@ fn seed_if_empty(conn: &Connection) -> Result<()> {
             welcome_id,
             "Welcome to Vana",
             welcome,
-            "Vana 0.6 本地优先主线已切换到 SQLite。先在这里写，再决定是否连接 Supabase。",
+            "Vana 0.7 本地优先主线现在默认连接可选的 Supabase Hosted 同步，同时保留访客模式。",
             now,
         ],
     )?;
@@ -316,31 +336,36 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
     let last_error = get_config_value(&conn, "sync.last_error")?;
     let supabase = effective_supabase_config(&conn)?;
     let session = get_supabase_session(app)?;
+    let service_profile = current_service_profile(&conn)?;
     let account_mode = if session.is_some() {
-        "authenticated".to_string()
+        if service_profile == "self-hosted" {
+            "advanced-self-hosted".to_string()
+        } else {
+            "authenticated".to_string()
+        }
     } else {
         "guest".to_string()
     };
     let account_email = session.as_ref().and_then(|value| value.email.clone());
+    let onboarding_completed = is_onboarding_completed(&conn, session.is_some())?;
 
     Ok(AppState {
         account_mode,
+        onboarding_completed,
+        service_profile: service_profile.clone(),
         account_email,
         local_db_path: db_path(app)?.to_string_lossy().to_string(),
         legacy_workspace_path: legacy_workspace_dir(app)?.to_string_lossy().to_string(),
         supabase: supabase.clone(),
         sync: SyncSnapshot {
-            mode: if supabase.url.is_some() && supabase.anon_key.is_some() {
-                "configured".to_string()
-            } else {
-                "local-only".to_string()
-            },
+            mode: current_sync_mode(&conn)?,
             pending_jobs: pending_jobs as usize,
             last_synced_at,
             last_pulled_at,
             auto_sync_enabled: get_auto_sync(&conn)?,
             last_error,
         },
+        limits: current_usage_limits(&conn)?,
     })
 }
 
@@ -474,6 +499,12 @@ pub fn create_document(
     } else {
         DEFAULT_DOCUMENT_CONTENT.trim()
     };
+    ensure_write_budget(&conn)?;
+    if resolved_kind == "document" {
+        ensure_document_count_capacity(&conn, 1)?;
+        ensure_document_content_size(content)?;
+        ensure_total_storage_capacity(&conn, estimate_document_storage_bytes(&resolved_title, content, "") as isize)?;
+    }
     let depth = resolve_parent_depth(&conn, parent_id.as_deref(), None)?;
 
     conn.execute(
@@ -503,14 +534,29 @@ pub fn create_document(
 pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<DocumentRecord> {
     let conn = open_db(app)?;
     let now = now_iso();
+    ensure_write_budget(&conn)?;
 
-    let existing_content: Option<String> = conn
+    let existing_document: Option<(String, String, String, String)> = conn
         .query_row(
-            "SELECT content_json FROM documents WHERE id = ?1",
+            "SELECT node_kind, title, content_json, plain_text FROM documents WHERE id = ?1",
             params![input.id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
+
+    let is_document = existing_document
+        .as_ref()
+        .map(|(node_kind, _, _, _)| node_kind == "document")
+        .unwrap_or(true);
+    if is_document {
+        ensure_document_content_size(&input.content_json)?;
+        let old_size = existing_document
+            .as_ref()
+            .map(|(_, title, content, plain)| estimate_document_storage_bytes(title, content, plain))
+            .unwrap_or(0);
+        let new_size = estimate_document_storage_bytes(&input.title, &input.content_json, &input.plain_text);
+        ensure_total_storage_capacity(&conn, new_size as isize - old_size as isize)?;
+    }
 
     conn.execute(
         "
@@ -524,7 +570,11 @@ pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<Docume
     replace_document_tags(&conn, &input.id, &input.tags)?;
     queue_job(&conn, "document", &input.id, "update", &input.content_json)?;
 
-    if existing_content.as_deref() != Some(input.content_json.as_str()) {
+    if existing_document
+        .as_ref()
+        .map(|(_, _, content, _)| content.as_str())
+        != Some(input.content_json.as_str())
+    {
         append_history(&conn, &input.id, &input.content_json)?;
     }
 
@@ -534,6 +584,7 @@ pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<Docume
 pub fn move_document(app: &AppHandle, id: &str, parent_id: Option<&str>) -> Result<DocumentRecord> {
     let conn = open_db(app)?;
     let now = now_iso();
+    ensure_write_budget(&conn)?;
     let depth = resolve_parent_depth(&conn, parent_id, Some(id))?;
 
     conn.execute(
@@ -558,6 +609,7 @@ pub fn move_document(app: &AppHandle, id: &str, parent_id: Option<&str>) -> Resu
 pub fn set_document_status(app: &AppHandle, id: &str, status: &str) -> Result<DocumentRecord> {
     let conn = open_db(app)?;
     let now = now_iso();
+    ensure_write_budget(&conn)?;
     apply_status_to_subtree(&conn, id, status, &now)?;
     queue_job(&conn, "document", id, "status", status)?;
     get_document(app, id)?.ok_or_else(|| anyhow::anyhow!("更新文档状态失败"))
@@ -566,6 +618,7 @@ pub fn set_document_status(app: &AppHandle, id: &str, status: &str) -> Result<Do
 pub fn toggle_favorite(app: &AppHandle, id: &str, favorite: bool) -> Result<DocumentRecord> {
     let conn = open_db(app)?;
     let now = now_iso();
+    ensure_write_budget(&conn)?;
     conn.execute(
         "UPDATE documents SET is_favorite = ?2, updated_at = ?3 WHERE id = ?1",
         params![id, if favorite { 1 } else { 0 }, now],
@@ -651,6 +704,7 @@ pub fn save_supabase_session(app: &AppHandle, session: SupabaseSession) -> Resul
     set_config_value(&conn, "supabase.session", Some(&serde_json::to_string(&session)?))?;
     set_config_value(&conn, "supabase.user_id", session.user_id.as_deref())?;
     set_config_value(&conn, "supabase.email", session.email.as_deref())?;
+    set_config_value(&conn, "onboarding.completed", Some("1"))?;
     Ok(session)
 }
 
@@ -667,6 +721,12 @@ pub fn clear_supabase_session(app: &AppHandle) -> Result<()> {
     set_config_value(&conn, "supabase.session", None)?;
     set_config_value(&conn, "supabase.user_id", None)?;
     set_config_value(&conn, "supabase.email", None)?;
+    Ok(())
+}
+
+pub fn complete_onboarding(app: &AppHandle) -> Result<()> {
+    let conn = open_db(app)?;
+    set_config_value(&conn, "onboarding.completed", Some("1"))?;
     Ok(())
 }
 
@@ -687,11 +747,7 @@ pub fn mark_sync_attempt(app: &AppHandle, success: bool, error: Option<&str>) ->
     )?;
 
     Ok(SyncSnapshot {
-        mode: if get_config_value(&conn, "supabase.url")?.is_some() {
-            "configured".to_string()
-        } else {
-            "local-only".to_string()
-        },
+        mode: current_sync_mode(&conn)?,
         pending_jobs: pending_jobs as usize,
         last_synced_at: get_config_value(&conn, "sync.last_synced_at")?,
         last_pulled_at: get_config_value(&conn, "sync.last_pulled_at")?,
@@ -780,6 +836,13 @@ pub fn import_legacy_workspace(
 
         let now = now_iso();
         let id = Uuid::new_v4().to_string();
+        ensure_write_budget(&conn)?;
+        ensure_document_count_capacity(&conn, 1)?;
+        ensure_document_content_size(&content_json)?;
+        ensure_total_storage_capacity(
+            &conn,
+            estimate_document_storage_bytes(&title, &content_json, trimmed) as isize,
+        )?;
         conn.execute(
             "
             INSERT INTO documents (
@@ -899,12 +962,38 @@ pub fn apply_remote_documents(app: &AppHandle, documents: Vec<SyncDocumentRecord
             .optional()?;
 
         let should_apply = match existing_updated_at {
-            Some(local_updated_at) => document.updated_at > local_updated_at,
+            Some(ref local_updated_at) => document.updated_at > *local_updated_at,
             None => true,
         };
 
         if !should_apply {
             continue;
+        }
+
+        if document.node_kind == "document" {
+            ensure_document_content_size(&document.content_json)?;
+            let current_count = current_document_count(&conn)?;
+            if existing_updated_at.is_none() && current_count + 1 > MAX_DOCUMENT_COUNT {
+                return Err(anyhow::anyhow!("已达到 Hosted 模式文档数量上限（{}）", MAX_DOCUMENT_COUNT));
+            }
+
+            let old_size = conn
+                .query_row(
+                    "SELECT title, content_json, plain_text FROM documents WHERE id = ?1",
+                    params![document.id],
+                    |row| {
+                        Ok(estimate_document_storage_bytes(
+                            &row.get::<_, String>(0)?,
+                            &row.get::<_, String>(1)?,
+                            &row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()?
+                .unwrap_or(0);
+            let new_size =
+                estimate_document_storage_bytes(&document.title, &document.content_json, &document.plain_text);
+            ensure_total_storage_capacity(&conn, new_size as isize - old_size as isize)?;
         }
 
         conn.execute(
@@ -988,11 +1077,7 @@ pub fn finalize_sync_jobs(
     )?;
 
     Ok(SyncSnapshot {
-        mode: if get_config_value(&conn, "supabase.url")?.is_some() {
-            "configured".to_string()
-        } else {
-            "local-only".to_string()
-        },
+        mode: current_sync_mode(&conn)?,
         pending_jobs: pending_jobs as usize,
         last_synced_at: get_config_value(&conn, "sync.last_synced_at")?,
         last_pulled_at: get_config_value(&conn, "sync.last_pulled_at")?,
@@ -1071,6 +1156,138 @@ fn queue_job(conn: &Connection, entity_type: &str, entity_id: &str, action: &str
         params![entity_type, entity_id, action, payload, now_iso()],
     )?;
     Ok(())
+}
+
+fn estimate_document_storage_bytes(title: &str, content_json: &str, plain_text: &str) -> usize {
+    title.as_bytes().len() + content_json.as_bytes().len() + plain_text.as_bytes().len()
+}
+
+fn current_document_count(conn: &Connection) -> Result<usize> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM documents WHERE node_kind = 'document'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? as usize)
+}
+
+fn current_total_storage_bytes(conn: &Connection) -> Result<usize> {
+    Ok(conn.query_row(
+        "
+        SELECT COALESCE(SUM(
+            length(CAST(title AS BLOB)) +
+            length(CAST(content_json AS BLOB)) +
+            length(CAST(plain_text AS BLOB))
+        ), 0)
+        FROM documents
+        WHERE node_kind = 'document'
+        ",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? as usize)
+}
+
+fn current_write_ops_last_5_minutes(conn: &Connection) -> Result<usize> {
+    let cutoff = (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
+    Ok(conn.query_row(
+        "
+        SELECT COUNT(*) FROM sync_queue
+        WHERE created_at >= ?1 AND entity_type = 'document'
+        ",
+        params![cutoff],
+        |row| row.get::<_, i64>(0),
+    )? as usize)
+}
+
+fn current_usage_limits(conn: &Connection) -> Result<UsageLimits> {
+    Ok(UsageLimits {
+        max_document_content_bytes: MAX_DOCUMENT_CONTENT_BYTES,
+        max_total_storage_bytes: MAX_TOTAL_STORAGE_BYTES,
+        max_document_count: MAX_DOCUMENT_COUNT,
+        max_write_ops_per_5_minutes: MAX_WRITE_OPS_PER_5_MINUTES,
+        attachments_enabled: HOSTED_ATTACHMENTS_ENABLED,
+        current_document_count: current_document_count(conn)?,
+        current_total_storage_bytes: current_total_storage_bytes(conn)?,
+        current_write_ops_last_5_minutes: current_write_ops_last_5_minutes(conn)?,
+    })
+}
+
+fn ensure_document_content_size(content_json: &str) -> Result<()> {
+    let bytes = content_json.as_bytes().len();
+    if bytes > MAX_DOCUMENT_CONTENT_BYTES {
+        return Err(anyhow::anyhow!(
+            "单篇文档内容超过 Hosted 模式上限（{} KB）",
+            MAX_DOCUMENT_CONTENT_BYTES / 1024
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_document_count_capacity(conn: &Connection, additional_documents: usize) -> Result<()> {
+    let current = current_document_count(conn)?;
+    if current + additional_documents > MAX_DOCUMENT_COUNT {
+        return Err(anyhow::anyhow!(
+            "已达到 Hosted 模式文档数量上限（{}）",
+            MAX_DOCUMENT_COUNT
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_total_storage_capacity(conn: &Connection, delta_bytes: isize) -> Result<()> {
+    let current = current_total_storage_bytes(conn)? as isize;
+    let projected = (current + delta_bytes).max(0) as usize;
+    if projected > MAX_TOTAL_STORAGE_BYTES {
+        return Err(anyhow::anyhow!(
+            "已达到 Hosted 模式总存储上限（{} MB）",
+            MAX_TOTAL_STORAGE_BYTES / 1024 / 1024
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_write_budget(conn: &Connection) -> Result<()> {
+    let current = current_write_ops_last_5_minutes(conn)?;
+    if current >= MAX_WRITE_OPS_PER_5_MINUTES {
+        return Err(anyhow::anyhow!(
+            "最近 5 分钟写入次数已达到上限（{}）",
+            MAX_WRITE_OPS_PER_5_MINUTES
+        ));
+    }
+    Ok(())
+}
+
+fn has_supabase_override(conn: &Connection) -> Result<bool> {
+    Ok(
+        get_config_value(conn, "supabase.url")?.is_some()
+            || get_config_value(conn, "supabase.anon_key")?.is_some(),
+    )
+}
+
+fn current_service_profile(conn: &Connection) -> Result<String> {
+    if has_supabase_override(conn)? {
+        Ok("self-hosted".to_string())
+    } else if DEFAULT_SUPABASE_URL.is_some() && DEFAULT_SUPABASE_ANON_KEY.is_some() {
+        Ok("hosted".to_string())
+    } else {
+        Ok("unconfigured".to_string())
+    }
+}
+
+fn current_sync_mode(conn: &Connection) -> Result<String> {
+    match current_service_profile(conn)?.as_str() {
+        "hosted" => Ok("hosted".to_string()),
+        "self-hosted" => Ok("self-hosted".to_string()),
+        _ => Ok("local-only".to_string()),
+    }
+}
+
+fn is_onboarding_completed(conn: &Connection, has_session: bool) -> Result<bool> {
+    if has_session {
+        return Ok(true);
+    }
+    Ok(get_config_value(conn, "onboarding.completed")?
+        .map(|value| value == "1")
+        .unwrap_or(false))
 }
 
 fn resolve_parent_depth(

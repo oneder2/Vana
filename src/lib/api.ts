@@ -101,13 +101,27 @@ export interface SyncSnapshot {
   last_error: string | null;
 }
 
+export interface UsageLimits {
+  max_document_content_bytes: number;
+  max_total_storage_bytes: number;
+  max_document_count: number;
+  max_write_ops_per_5_minutes: number;
+  attachments_enabled: boolean;
+  current_document_count: number;
+  current_total_storage_bytes: number;
+  current_write_ops_last_5_minutes: number;
+}
+
 export interface AppState {
   account_mode: string;
+  onboarding_completed: boolean;
+  service_profile: string;
   account_email: string | null;
   local_db_path: string;
   legacy_workspace_path: string;
   supabase: SupabaseConfig;
   sync: SyncSnapshot;
+  limits: UsageLimits;
 }
 
 export interface SaveDocumentInput {
@@ -284,6 +298,10 @@ export async function saveSupabaseSession(session: SupabaseSession): Promise<Sup
 
 export async function clearSupabaseSession(): Promise<void> {
   return invoke<void>('clear_supabase_session_command');
+}
+
+export async function completeOnboarding(): Promise<void> {
+  return invoke<void>('complete_onboarding_command');
 }
 
 export async function markSyncAttempt(success: boolean, error?: string | null): Promise<SyncSnapshot> {

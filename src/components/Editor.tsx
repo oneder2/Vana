@@ -22,6 +22,7 @@ interface EditorProps {
   layout?: EditorLayout;
   onUnsavedChangesChange?: (hasChanges: boolean) => void;
   onPersisted?: () => void;
+  onPersistError?: (message: string) => void;
   tags?: string[];
 }
 
@@ -38,6 +39,7 @@ export function Editor({
   onEditorReady,
   onUnsavedChangesChange,
   onPersisted,
+  onPersistError,
   tags = [],
 }: EditorProps) {
   const { theme } = useTheme();
@@ -83,6 +85,7 @@ export function Editor({
           onPersisted?.();
         } catch (error) {
           console.error('保存文档失败:', error);
+          onPersistError?.(error instanceof Error ? error.message : String(error));
         }
       }, 600);
     },

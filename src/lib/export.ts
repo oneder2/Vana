@@ -371,7 +371,7 @@ function createPDFRenderRoot(
       </div>
       <div class="nv-pdf-content">${htmlContent}</div>
       <div class="nv-pdf-footer">
-        <span>Created with No Visitors</span>
+        <span>Created with Vana</span>
         <span>Local-first export</span>
       </div>
     </div>

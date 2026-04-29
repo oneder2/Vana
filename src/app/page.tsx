@@ -106,6 +106,16 @@ function formatTimestamp(value?: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function formatBytes(value: number): string {
+  if (value >= 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (value >= 1024) {
+    return `${Math.round(value / 1024)} KB`;
+  }
+  return `${value} B`;
+}
+
 function collectFolderTargets(
   documents: DocumentSummary[],
   target: DocumentSummary | null
@@ -332,7 +342,7 @@ export default function HomePage() {
         setAppState(state);
 
         const canSync =
-          state.account_mode === 'authenticated' &&
+          state.account_mode !== 'guest' &&
           Boolean(state.supabase.url) &&
           state.sync.auto_sync_enabled;
         if (!canSync || syncInFlightRef.current) {
@@ -456,40 +466,52 @@ export default function HomePage() {
 
   const handleCreateDocument = useCallback(
     async (parentId?: string | null) => {
-      const created = await createDocument({ nodeKind: 'document', parentId: parentId ?? null });
-      selectionIntentRef.current = created.id;
-      setSelectedId(created.id);
-      setCurrentDocument(created);
-      setContent(parseContent(created.content_json));
-      setDocumentTags(created.tags);
-      setTagDraft('');
-      if (created.parent_id) {
-        const parentFolderId = created.parent_id;
-        setExpandedFolders((current) => new Set(current).add(parentFolderId));
+      if (appState && appState.limits.current_document_count >= appState.limits.max_document_count) {
+        toast.error(`已达到文档数量上限（${appState.limits.max_document_count}）`);
+        return;
       }
-      setSelectedStatus('active');
-      toast.success('新文档已创建');
-      await refresh(created.id);
-      await triggerAutoSync('create', false, created.id);
+      try {
+        const created = await createDocument({ nodeKind: 'document', parentId: parentId ?? null });
+        selectionIntentRef.current = created.id;
+        setSelectedId(created.id);
+        setCurrentDocument(created);
+        setContent(parseContent(created.content_json));
+        setDocumentTags(created.tags);
+        setTagDraft('');
+        if (created.parent_id) {
+          const parentFolderId = created.parent_id;
+          setExpandedFolders((current) => new Set(current).add(parentFolderId));
+        }
+        setSelectedStatus('active');
+        toast.success('新文档已创建');
+        await refresh(created.id);
+        await triggerAutoSync('create', false, created.id);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      }
     },
-    [refresh, toast, triggerAutoSync]
+    [appState, refresh, toast, triggerAutoSync]
   );
 
   const handleCreateFolder = useCallback(
     async (parentId?: string | null) => {
-      const created = await createDocument({
-        title: 'New Folder',
-        nodeKind: 'folder',
-        parentId: parentId ?? null,
-      });
-      toast.success('分组已创建');
-      setExpandedFolders((current) => new Set(current).add(created.id));
-      if (created.parent_id) {
-        const parentFolderId = created.parent_id;
-        setExpandedFolders((current) => new Set(current).add(parentFolderId));
+      try {
+        const created = await createDocument({
+          title: 'New Folder',
+          nodeKind: 'folder',
+          parentId: parentId ?? null,
+        });
+        toast.success('分组已创建');
+        setExpandedFolders((current) => new Set(current).add(created.id));
+        if (created.parent_id) {
+          const parentFolderId = created.parent_id;
+          setExpandedFolders((current) => new Set(current).add(parentFolderId));
+        }
+        await refresh(selectionIntentRef.current ?? selectedIdRef.current);
+        await triggerAutoSync('folder-create', false, created.id);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
       }
-      await refresh(selectionIntentRef.current ?? selectedIdRef.current);
-      await triggerAutoSync('folder-create', false, created.id);
     },
     [refresh, toast, triggerAutoSync]
   );
@@ -544,6 +566,10 @@ export default function HomePage() {
   );
 
   const handleImportLegacy = useCallback(async () => {
+    if (appState && appState.limits.current_write_ops_last_5_minutes >= appState.limits.max_write_ops_per_5_minutes) {
+      toast.error(`最近 5 分钟写入次数已达到上限（${appState.limits.max_write_ops_per_5_minutes}）`);
+      return;
+    }
     setIsImporting(true);
     try {
       const result = await importLegacyWorkspace();
@@ -555,7 +581,7 @@ export default function HomePage() {
     } finally {
       setIsImporting(false);
     }
-  }, [refresh, toast, triggerAutoSync]);
+  }, [appState, refresh, toast, triggerAutoSync]);
 
   const handleExport = useCallback(
     async (format: 'pdf' | 'docx' | 'md') => {
@@ -1095,6 +1121,11 @@ export default function HomePage() {
                   <span>最近更新 {formatTimestamp(currentDocument.updated_at)}</span>
                   <span>同步 {appState?.sync.mode ?? 'local-only'}</span>
                   <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
+                  {appState && (
+                    <span>
+                      存储 {formatBytes(appState.limits.current_total_storage_bytes)} / {formatBytes(appState.limits.max_total_storage_bytes)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1151,6 +1182,7 @@ export default function HomePage() {
                   tags={documentTags}
                   onEditorReady={setEditorInstance}
                   onContentChange={setContent}
+                  onPersistError={(message) => toast.error(message)}
                   onPersisted={() => {
                     void triggerAutoSync('editor-save');
                   }}
