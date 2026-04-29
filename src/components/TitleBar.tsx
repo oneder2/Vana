@@ -73,20 +73,7 @@ export function TitleBar({ menuBar }: { menuBar?: React.ReactNode }) {
   }, [appWindow, shouldHide]);
 
   if (shouldHide) {
-    if (!menuBar) {
-      return null;
-    }
-    return (
-      <div
-        className="select-none"
-        style={{
-          backgroundColor: getThemeSurfaceColor(theme),
-          borderBottom: `1px solid ${getThemeBorderColor(theme)}`,
-        }}
-      >
-        <div className="flex h-8 items-center px-2">{menuBar}</div>
-      </div>
-    );
+    return null;
   }
 
   const handleMinimize = async () => {

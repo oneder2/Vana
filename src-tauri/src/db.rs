@@ -156,6 +156,14 @@ pub struct SyncDocumentRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncDocumentStructure {
+    pub id: String,
+    pub node_kind: String,
+    pub parent_id: Option<String>,
+    pub depth: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncExport {
     pub pending_job_ids: Vec<i64>,
     pub documents: Vec<SyncDocumentRecord>,
@@ -948,21 +956,53 @@ pub fn export_sync_documents(app: &AppHandle) -> Result<SyncExport> {
     })
 }
 
+pub fn export_document_structures(app: &AppHandle) -> Result<Vec<SyncDocumentStructure>> {
+    let conn = open_db(app)?;
+    let mut stmt = conn.prepare(
+        "
+        SELECT id, node_kind, parent_id, depth
+        FROM documents
+        WHERE node_kind = 'folder' OR parent_id IS NOT NULL OR depth > 0
+        ORDER BY depth ASC, id ASC
+        ",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(SyncDocumentStructure {
+            id: row.get(0)?,
+            node_kind: row.get(1)?,
+            parent_id: row.get(2)?,
+            depth: row.get(3)?,
+        })
+    })?;
+
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 pub fn apply_remote_documents(app: &AppHandle, documents: Vec<SyncDocumentRecord>) -> Result<usize> {
     let conn = open_db(app)?;
     let mut applied = 0usize;
 
     for document in documents {
-        let existing_updated_at: Option<String> = conn
+        let existing: Option<(String, Option<String>, i64, String)> = conn
             .query_row(
-                "SELECT updated_at FROM documents WHERE id = ?1",
+                "SELECT node_kind, parent_id, depth, updated_at FROM documents WHERE id = ?1",
                 params![document.id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
 
-        let should_apply = match existing_updated_at {
-            Some(ref local_updated_at) => document.updated_at > *local_updated_at,
+        let structure_changed = existing
+            .as_ref()
+            .map(|(node_kind, parent_id, depth, _)| {
+                node_kind != &document.node_kind
+                    || parent_id.as_deref() != document.parent_id.as_deref()
+                    || *depth != document.depth
+            })
+            .unwrap_or(false);
+
+        let should_apply = match existing {
+            Some((_, _, _, ref local_updated_at)) => structure_changed || document.updated_at > *local_updated_at,
             None => true,
         };
 
@@ -970,10 +1010,28 @@ pub fn apply_remote_documents(app: &AppHandle, documents: Vec<SyncDocumentRecord
             continue;
         }
 
+        let remote_is_newer = existing
+            .as_ref()
+            .map(|(_, _, _, local_updated_at)| document.updated_at > *local_updated_at)
+            .unwrap_or(true);
+
+        if structure_changed && !remote_is_newer {
+            conn.execute(
+                "
+                UPDATE documents
+                SET node_kind = ?2, parent_id = ?3, depth = ?4
+                WHERE id = ?1
+                ",
+                params![document.id, document.node_kind, document.parent_id, document.depth],
+            )?;
+            applied += 1;
+            continue;
+        }
+
         if document.node_kind == "document" {
             ensure_document_content_size(&document.content_json)?;
             let current_count = current_document_count(&conn)?;
-            if existing_updated_at.is_none() && current_count + 1 > MAX_DOCUMENT_COUNT {
+            if existing.is_none() && current_count + 1 > MAX_DOCUMENT_COUNT {
                 return Err(anyhow::anyhow!("已达到 Hosted 模式文档数量上限（{}）", MAX_DOCUMENT_COUNT));
             }
 

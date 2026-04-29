@@ -12,7 +12,6 @@ import {
   FolderOpen,
   Heart,
   Import,
-  Menu,
   Plus,
   RefreshCw,
   Tag,
@@ -20,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
-import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
+import type { MenuAction } from '@/components/AppMenuBar';
 import { Editor } from '@/components/Editor';
 import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
 import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
@@ -56,6 +55,9 @@ import {
 } from '@/lib/themeStyles';
 import { AppLink, useRouter } from '@/lib/router';
 import type { ThemeId } from '@/lib/themes';
+import { isMobile } from '@/lib/platform';
+import { DesktopHomeShell } from './home/DesktopHomeShell';
+import { MobileHomeShell } from './home/MobileHomeShell';
 
 type StatusFilter = 'active' | 'recent' | 'trashed';
 
@@ -274,6 +276,7 @@ export default function HomePage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     favorites: true,
@@ -295,6 +298,12 @@ export default function HomePage() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    void isMobile()
+      .then(setIsMobileLayout)
+      .catch(() => setIsMobileLayout(false));
+  }, []);
 
   const refresh = useCallback(
     async (preferredId?: string | null) => {
@@ -812,54 +821,27 @@ export default function HomePage() {
     [content, currentDocument, documentTags, handlePersistMetadata]
   );
 
-  if (loading) {
-    return (
-      <div className="min-h-screen" style={{ backgroundColor: background }}>
-        <TitleBar />
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="shell-page flex h-screen min-h-0 flex-col overflow-hidden"
+  const renderSidebar = (mobile: boolean) => (
+    <aside
+      className={
+        mobile
+          ? 'shell-panel absolute inset-y-0 left-0 z-40 w-[88dvw] min-w-[300px] max-w-[380px] border-r shadow-2xl'
+          : `shell-panel absolute inset-y-0 left-0 z-40 w-[88vw] max-w-[320px] transform border-r transition-transform md:relative md:block md:h-full md:w-[308px] md:max-w-none md:translate-x-0 ${
+              sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+            }`
+      }
       style={{
-        backgroundColor: background,
-        color: accent,
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
+        backgroundColor: surface,
+        borderColor: border,
       }}
     >
-      <TitleBar
-        menuBar={
-          <div data-tauri-drag-region className="flex h-8 w-full items-center gap-3">
-            <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-              <button data-tauri-drag-region="false" className="border p-2 md:hidden" style={{ borderColor: border }} onClick={() => setSidebarOpen(true)}>
-                <Menu size={16} />
-              </button>
-              <AppMenuBar onAction={handleMenuAction} onHelp={() => navigate('/help')} onSettings={() => navigate('/settings')} />
-            </div>
-          </div>
-        }
-      />
-
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <aside
-          className={`shell-panel absolute inset-y-0 left-0 z-40 w-[88vw] max-w-[320px] transform border-r transition-transform md:relative md:block md:h-full md:w-[308px] md:max-w-none md:translate-x-0 ${
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-          }`}
-          style={{
-            backgroundColor: surface,
-            borderColor: border,
-          }}
-        >
           <div className="flex h-full min-h-0 flex-col" onContextMenu={openExplorerMenu}>
             <div className="shrink-0 flex items-center justify-between border-b px-4 py-3" style={{ borderColor: border }}>
               <div className="min-w-0">
                 <div className="shell-label">Explorer</div>
                 <div className="shell-title truncate text-sm font-medium">Vana</div>
               </div>
-              <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
+              <button className={mobile ? '' : 'md:hidden'} onClick={() => setSidebarOpen(false)}>
                 <X size={18} />
               </button>
             </div>
@@ -1070,132 +1052,198 @@ export default function HomePage() {
               </ExplorerSection>
             </div>
           </div>
-        </aside>
+    </aside>
+  );
 
-        <main className="min-w-0 flex-1 min-h-0 overflow-hidden">
-          {!currentDocument ? (
-            <section className="h-full overflow-y-auto px-6 py-10" style={{ backgroundColor: background }}>
-              <div className="flex min-h-full w-full items-center justify-center">
-                <div className="w-full max-w-[760px]">
-                  <div className="mx-auto max-w-[560px] text-center">
-                    <div className="shell-label mb-3">Threshold</div>
-                    <h1 className="shell-title text-3xl font-semibold sm:text-4xl">书页尚未翻开。</h1>
-                    <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
-                      左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
-                    </p>
-                  </div>
+  const renderEmptyState = () => (
+    <section className="h-full overflow-y-auto px-6 py-10" style={{ backgroundColor: background }}>
+      <div className="flex min-h-full w-full items-center justify-center">
+        <div className="w-full max-w-[760px]">
+          <div className="mx-auto max-w-[560px] text-center">
+            <div className="shell-label mb-3">Threshold</div>
+            <h1 className="shell-title text-3xl font-semibold sm:text-4xl">书页尚未翻开。</h1>
+            <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
+              左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
+            </p>
+          </div>
 
-                  <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
-                    <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument()}>
-                      新建文档
-                    </button>
-                    <button className="border px-4 py-2 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()}>
-                      导入旧工作区
-                    </button>
-                    <AppLink href="/settings" className="border px-4 py-2 text-sm" style={{ borderColor: border }}>
-                      进入设置
-                    </AppLink>
-                  </div>
-                </div>
-              </div>
-            </section>
+          <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
+            <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument()}>
+              新建文档
+            </button>
+            <button className="border px-4 py-2 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()}>
+              导入旧工作区
+            </button>
+            <AppLink href="/settings" className="border px-4 py-2 text-sm" style={{ borderColor: border }}>
+              进入设置
+            </AppLink>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderDocumentEditor = (mobile: boolean) => (
+    <section className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div
+        className={`shell-panel border-b ${mobile ? 'px-4 py-2' : 'px-4 py-3 sm:px-5'}`}
+        style={{ backgroundColor: surface, borderColor: border }}
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs opacity-70">
+          <span className="shell-label">Document</span>
+          <span className="opacity-35">/</span>
+          {currentSegments.length > 0 ? (
+            currentSegments.map((segment, index) => (
+              <React.Fragment key={`${segment}-${index}`}>
+                <span className={index === currentSegments.length - 1 ? 'opacity-100' : 'opacity-65'}>{segment}</span>
+                {index < currentSegments.length - 1 && <span className="opacity-35">/</span>}
+              </React.Fragment>
+            ))
           ) : (
-            <section className="flex h-full min-h-0 flex-col overflow-hidden">
-              <div className="shell-panel border-b px-4 py-3 sm:px-5" style={{ backgroundColor: surface, borderColor: border }}>
-                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs opacity-70">
-                  <span className="shell-label">Document</span>
-                  <span className="opacity-35">/</span>
-                  {currentSegments.length > 0 ? (
-                    currentSegments.map((segment, index) => (
-                      <React.Fragment key={`${segment}-${index}`}>
-                        <span className={index === currentSegments.length - 1 ? 'opacity-100' : 'opacity-65'}>{segment}</span>
-                        {index < currentSegments.length - 1 && <span className="opacity-35">/</span>}
-                      </React.Fragment>
-                    ))
-                  ) : (
-                    <span>Untitled</span>
-                  )}
-                </div>
-
-                <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] opacity-72">
-                  <span>最近更新 {formatTimestamp(currentDocument.updated_at)}</span>
-                  <span>同步 {appState?.sync.mode ?? 'local-only'}</span>
-                  <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
-                  {appState && (
-                    <span>
-                      存储 {formatBytes(appState.limits.current_total_storage_bytes)} / {formatBytes(appState.limits.max_total_storage_bytes)}
-                    </span>
-                  )}
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <div className="flex min-w-[280px] flex-1 items-center gap-2 border px-3 py-2" style={{ borderColor: border }}>
-                    <Tag size={14} className="mt-0.5 shrink-0 opacity-60" />
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                      {documentTags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs"
-                          style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
-                        >
-                          <span>{tag}</span>
-                          <button
-                            type="button"
-                            className="opacity-70 transition-opacity hover:opacity-100"
-                            onClick={() => void removeTag(tag)}
-                          >
-                            <X size={12} />
-                          </button>
-                        </span>
-                      ))}
-                      <div className="flex min-w-[140px] flex-1 items-center gap-2">
-                        <input
-                          value={tagDraft}
-                          onChange={(event) => setTagDraft(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault();
-                              void addTag(tagDraft);
-                            }
-                          }}
-                          placeholder="输入标签后回车"
-                          className="w-full min-w-0 bg-transparent text-sm outline-none"
-                        />
-                        <button
-                          type="button"
-                          className="opacity-70 transition-opacity hover:opacity-100"
-                          onClick={() => void addTag(tagDraft)}
-                          disabled={!tagDraft.trim()}
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="min-h-0 flex-1 overflow-hidden p-0 md:p-3">
-                <Editor
-                  filePath={currentDocument.id}
-                  initialContent={content}
-                  tags={documentTags}
-                  onEditorReady={setEditorInstance}
-                  onContentChange={setContent}
-                  onPersistError={(message) => toast.error(message)}
-                  onPersisted={() => {
-                    void triggerAutoSync('editor-save');
-                  }}
-                />
-              </div>
-            </section>
+            <span>Untitled</span>
           )}
-        </main>
+        </div>
+
+        <div className={`${mobile ? 'mt-1 gap-x-3 text-[11px]' : 'mt-2 gap-x-5 text-[12px]'} flex flex-wrap items-center gap-y-2 opacity-72`}>
+          <span>最近更新 {formatTimestamp(currentDocument?.updated_at)}</span>
+          <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
+          {!mobile && <span>同步 {appState?.sync.mode ?? 'local-only'}</span>}
+          {!mobile && appState && (
+            <span>
+              存储 {formatBytes(appState.limits.current_total_storage_bytes)} / {formatBytes(appState.limits.max_total_storage_bytes)}
+            </span>
+          )}
+        </div>
+
+        <div className={`${mobile ? 'mt-2' : 'mt-3'} flex flex-wrap items-center gap-2`}>
+          <div
+            className={`flex flex-1 items-center gap-2 border px-3 py-2 ${mobile ? 'min-w-0 rounded-lg' : 'min-w-[280px]'}`}
+            style={{ borderColor: border }}
+          >
+            <Tag size={14} className="mt-0.5 shrink-0 opacity-60" />
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              {documentTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs"
+                  style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
+                >
+                  <span>{tag}</span>
+                  <button
+                    type="button"
+                    className="opacity-70 transition-opacity hover:opacity-100"
+                    onClick={() => void removeTag(tag)}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+              <div className={`flex flex-1 items-center gap-2 ${mobile ? 'min-w-0' : 'min-w-[140px]'}`}>
+                <input
+                  value={tagDraft}
+                  onChange={(event) => setTagDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void addTag(tagDraft);
+                    }
+                  }}
+                  placeholder="输入标签后回车"
+                  className="w-full min-w-0 bg-transparent text-sm outline-none"
+                />
+                <button
+                  type="button"
+                  className="opacity-70 transition-opacity hover:opacity-100"
+                  onClick={() => void addTag(tagDraft)}
+                  disabled={!tagDraft.trim()}
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
-      )}
+      <div className={`min-h-0 flex-1 overflow-hidden ${mobile ? 'p-0' : 'p-0 md:p-3'}`}>
+        {currentDocument && (
+          <Editor
+            filePath={currentDocument.id}
+            initialContent={content}
+            tags={documentTags}
+            mobile={mobile}
+            onEditorReady={setEditorInstance}
+            onContentChange={setContent}
+            onPersistError={(message) => toast.error(message)}
+            onPersisted={() => {
+              void triggerAutoSync('editor-save');
+            }}
+          />
+        )}
+      </div>
+    </section>
+  );
+
+  const renderMainContent = (mobile: boolean) => (
+    <main className={mobile ? 'absolute inset-0 min-h-0 w-full max-w-full overflow-hidden' : 'min-w-0 flex-1 min-h-0 overflow-hidden'}>
+          {!currentDocument ? (
+            renderEmptyState()
+          ) : (
+            renderDocumentEditor(mobile)
+          )}
+    </main>
+  );
+
+  const renderDesktopShell = () => (
+    <DesktopHomeShell
+      sidebar={renderSidebar(false)}
+      mainContent={renderMainContent(false)}
+      sidebarOpen={sidebarOpen}
+      onCloseSidebar={() => setSidebarOpen(false)}
+      onMenuAction={handleMenuAction}
+      onHelp={() => navigate('/help')}
+      onSettings={() => navigate('/settings')}
+    />
+  );
+
+  const renderMobileShell = () => (
+    <MobileHomeShell
+      title={currentDocument ? documentLeafTitle(currentDocument) : '文档库'}
+      sidebar={renderSidebar(true)}
+      mainContent={renderMainContent(true)}
+      sidebarOpen={sidebarOpen}
+      isSyncing={isSyncing}
+      accent={accent}
+      border={border}
+      surface={surface}
+      onOpenSidebar={() => setSidebarOpen(true)}
+      onCloseSidebar={() => setSidebarOpen(false)}
+      onManualSync={() => void triggerAutoSync('mobile-manual', true)}
+      onMenuAction={handleMenuAction}
+      onHelp={() => navigate('/help')}
+      onSettings={() => navigate('/settings')}
+    />
+  );
+
+  if (loading) {
+    return (
+      <div className="min-h-screen" style={{ backgroundColor: background }}>
+        {!isMobileLayout && <TitleBar />}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="shell-page flex h-screen min-h-0 flex-col overflow-hidden"
+      style={{
+        backgroundColor: background,
+        color: accent,
+        paddingTop: isMobileLayout ? 'env(safe-area-inset-top)' : undefined,
+        paddingBottom: isMobileLayout ? 'env(safe-area-inset-bottom)' : undefined,
+      }}
+    >
+      {isMobileLayout ? renderMobileShell() : renderDesktopShell()}
 
       <SearchModal
         isOpen={showSearchModal}

@@ -33,6 +33,8 @@ pub fn run() {
             commands::complete_onboarding_command,
             commands::mark_sync_attempt_command,
             commands::export_sync_documents_command,
+            commands::export_document_structures_command,
+            commands::export_documents_structured_command,
             commands::apply_remote_documents_command,
             commands::finalize_sync_jobs_command,
             commands::import_legacy_workspace_command,

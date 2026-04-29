@@ -24,6 +24,7 @@ interface EditorProps {
   onPersisted?: () => void;
   onPersistError?: (message: string) => void;
   tags?: string[];
+  mobile?: boolean;
 }
 
 function extractPlainText(node?: JSONContent): string {
@@ -41,6 +42,7 @@ export function Editor({
   onPersisted,
   onPersistError,
   tags = [],
+  mobile = false,
 }: EditorProps) {
   const { theme } = useTheme();
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
@@ -91,7 +93,7 @@ export function Editor({
     },
     editorProps: {
       attributes: {
-        class: 'tiptap-editor focus:outline-none min-h-[360px] px-5 py-6 sm:px-8',
+        class: `tiptap-editor focus:outline-none ${mobile ? 'min-h-[calc(100dvh-210px)] px-4 py-5' : 'min-h-[360px] px-5 py-6 sm:px-8'}`,
       },
     },
   });
@@ -191,13 +193,16 @@ export function Editor({
         ...getDocumentStyleCssVars(theme),
       }}
     >
-      <div className="flex flex-wrap items-center gap-1 border-b px-3 py-2" style={{ borderColor: border }}>
+      <div
+        className={`border-b px-3 py-2 ${mobile ? 'flex items-center gap-1 overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center gap-1'}`}
+        style={{ borderColor: border }}
+      >
         {toolbarButtons.map((button) => (
           <button
             key={button.key}
             type="button"
             onClick={button.action}
-            className="border px-2 py-1 transition-colors"
+            className={`shrink-0 border transition-colors ${mobile ? 'min-h-9 min-w-9 px-2 py-2' : 'px-2 py-1'}`}
             style={{
               borderColor: border,
               backgroundColor: button.active ? accentBg : 'transparent',

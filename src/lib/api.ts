@@ -163,6 +163,13 @@ export interface SyncDocumentRecord {
   tags: string[];
 }
 
+export interface SyncDocumentStructure {
+  id: string;
+  node_kind: 'document' | 'folder';
+  parent_id: string | null;
+  depth: number;
+}
+
 export interface SyncExport {
   pending_job_ids: number[];
   documents: SyncDocumentRecord[];
@@ -313,6 +320,18 @@ export async function markSyncAttempt(success: boolean, error?: string | null): 
 
 export async function exportSyncDocuments(): Promise<SyncExport> {
   return invoke<SyncExport>('export_sync_documents_command');
+}
+
+export async function exportDocumentStructures(): Promise<SyncDocumentStructure[]> {
+  try {
+    return await invoke<SyncDocumentStructure[]>('export_document_structures_command');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('not found')) {
+      throw error;
+    }
+    return invoke<SyncDocumentStructure[]>('export_documents_structured_command');
+  }
 }
 
 export async function applyRemoteDocuments(documents: SyncDocumentRecord[]): Promise<number> {

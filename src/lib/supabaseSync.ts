@@ -1,12 +1,14 @@
 import {
   applyRemoteDocuments,
   clearSupabaseSession,
+  exportDocumentStructures,
   exportSyncDocuments,
   finalizeSyncJobs,
   getSupabaseConfig,
   getSupabaseSession,
   saveSupabaseSession,
   type SupabaseSession,
+  type SyncDocumentStructure,
   type SyncDocumentRecord,
   type SyncSnapshot,
 } from './api';
@@ -346,6 +348,41 @@ function remoteDocumentToLocal(document: Record<string, unknown>): SyncDocumentR
   };
 }
 
+function localStructureToRemote(structure: SyncDocumentStructure, userId: string) {
+  return {
+    user_id: userId,
+    node_kind: structure.node_kind,
+    parent_id: structure.parent_id,
+    depth: structure.depth,
+  };
+}
+
+async function pushLocalStructureRepair(
+  url: string,
+  anonKey: string,
+  session: SupabaseSession,
+  userId: string
+): Promise<void> {
+  const structures = await exportDocumentStructures();
+  for (const structure of structures) {
+    const response = await fetch(
+      `${normalizeUrl(url)}/rest/v1/documents?user_id=eq.${encodeURIComponent(userId)}&id=eq.${encodeURIComponent(structure.id)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          ...authHeaders(session.access_token, anonKey),
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(localStructureToRemote(structure, userId)),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error((await response.text()) || '结构修复上行失败');
+    }
+  }
+}
+
 export async function runSupabaseSync(): Promise<SyncSnapshot> {
   const config = await getSupabaseConfig();
 
@@ -358,6 +395,40 @@ export async function runSupabaseSync(): Promise<SyncSnapshot> {
   if (!userId) {
     throw new Error('会话缺少 user_id，请重新导入。');
   }
+
+  await pushLocalStructureRepair(config.url, config.anon_key, session, userId);
+
+  const beforePull = await exportSyncDocuments();
+  const remoteQuery = new URLSearchParams({
+    select: 'id,title,node_kind,parent_id,depth,content_json,plain_text,status,is_favorite,is_template,created_at,updated_at,archived_at,deleted_at,tags',
+    user_id: `eq.${userId}`,
+    order: 'updated_at.asc',
+  });
+  // Keep pull full for now: early mobile builds pulled without structural fields,
+  // so incremental cursors could permanently miss folder/parent repairs.
+
+  const pullResponse = await fetch(
+    `${normalizeUrl(config.url)}/rest/v1/documents?${remoteQuery.toString()}`,
+    {
+      headers: authHeaders(session.access_token, config.anon_key),
+    }
+  );
+
+  if (!pullResponse.ok) {
+    const message = await pullResponse.text();
+    if (message.includes('JWT expired')) {
+      await refreshSupabaseSession(config.url, config.anon_key, session);
+      return runSupabaseSync();
+    }
+    return finalizeSyncJobs(beforePull.pending_job_ids, false, message || '下行同步失败');
+  }
+
+  const remoteDocuments = ((await pullResponse.json()) as Record<string, unknown>[]).map(remoteDocumentToLocal);
+  const pulledCursor =
+    remoteDocuments.length > 0
+      ? remoteDocuments[remoteDocuments.length - 1]?.updated_at ?? beforePull.last_pulled_at
+      : beforePull.last_pulled_at;
+  await applyRemoteDocuments(remoteDocuments);
 
   const local = await exportSyncDocuments();
   if (local.documents.length > 0) {
@@ -383,36 +454,5 @@ export async function runSupabaseSync(): Promise<SyncSnapshot> {
     }
   }
 
-  const remoteQuery = new URLSearchParams({
-    select: 'id,title,content_json,plain_text,status,is_favorite,is_template,created_at,updated_at,archived_at,deleted_at,tags',
-    user_id: `eq.${userId}`,
-    order: 'updated_at.asc',
-  });
-  if (local.last_pulled_at) {
-    remoteQuery.set('updated_at', `gt.${local.last_pulled_at}`);
-  }
-
-  const pullResponse = await fetch(
-    `${normalizeUrl(config.url)}/rest/v1/documents?${remoteQuery.toString()}`,
-    {
-      headers: authHeaders(session.access_token, config.anon_key),
-    }
-  );
-
-  if (!pullResponse.ok) {
-    const message = await pullResponse.text();
-    if (message.includes('JWT expired')) {
-      await refreshSupabaseSession(config.url, config.anon_key, session);
-      return runSupabaseSync();
-    }
-    return finalizeSyncJobs(local.pending_job_ids, false, message || '下行同步失败');
-  }
-
-  const remoteDocuments = ((await pullResponse.json()) as Record<string, unknown>[]).map(remoteDocumentToLocal);
-  const pulledCursor =
-    remoteDocuments.length > 0
-      ? remoteDocuments[remoteDocuments.length - 1]?.updated_at ?? local.last_pulled_at
-      : local.last_pulled_at;
-  await applyRemoteDocuments(remoteDocuments);
   return finalizeSyncJobs(local.pending_job_ids, true, null, pulledCursor ?? null);
 }

@@ -1,6 +1,7 @@
 use crate::db::{
     self, AppState, DocumentRecord, DocumentSummary, LegacyImportResult, SaveDocumentInput,
-    SupabaseConfig, SupabaseSession, SyncDocumentRecord, SyncExport, SyncSnapshot, TagRecord,
+    SupabaseConfig, SupabaseSession, SyncDocumentRecord, SyncDocumentStructure, SyncExport,
+    SyncSnapshot, TagRecord,
 };
 use crate::keychain::{export_master_key, import_master_key};
 use crate::storage::{
@@ -223,6 +224,16 @@ pub fn mark_sync_attempt_command(
 #[tauri::command]
 pub fn export_sync_documents_command(app: AppHandle) -> Result<SyncExport, String> {
     db::export_sync_documents(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn export_document_structures_command(app: AppHandle) -> Result<Vec<SyncDocumentStructure>, String> {
+    db::export_document_structures(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn export_documents_structured_command(app: AppHandle) -> Result<Vec<SyncDocumentStructure>, String> {
+    db::export_document_structures(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
