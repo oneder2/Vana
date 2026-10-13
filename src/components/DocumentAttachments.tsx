@@ -5,6 +5,7 @@ import { documentDrafts } from '@/lib/documentDrafts';
 import { isMobile } from '@/lib/platform';
 import { useTheme } from './ThemeProvider';
 import { getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
+import { FadeContent } from './motion/FadeContent';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 function bytesLabel(bytes: number) { return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${Math.ceil(bytes / 1024)} KiB`; }
@@ -56,7 +57,7 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
       {busy && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-label="正在处理附件" />}
       <ChevronDown size={14} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
     </summary>
-    <div className="max-h-64 overflow-y-auto px-4 pb-4">
+    <FadeContent className="max-h-64 overflow-y-auto px-4 pb-4">
       <p className="mb-3 text-xs leading-6 opacity-65">附件随空间备份保留，暂不跨设备同步，也不随正文历史恢复。每个文件最多 5 MiB，每篇最多 20 个；本空间附件共用 25 MiB。</p>
       {files.length > 0 && <ul aria-label="文档附件" className="divide-y" style={{ borderColor: border }}>
         {files.map(file => <li key={file.id} className="flex flex-wrap items-center gap-2 py-3">
@@ -89,6 +90,6 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
       }} />
       {error && <p role="alert" className="mt-3 break-words text-xs leading-6">附件操作失败：{error}</p>}
       {message && <p role="status" className="mt-3 break-all text-xs leading-6">{message}</p>}
-    </div>
+    </FadeContent>
   </details>;
 }
