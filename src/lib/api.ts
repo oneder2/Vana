@@ -314,6 +314,16 @@ export async function listTags(): Promise<TagRecord[]> {
   return invoke<TagRecord[]>('list_tags_command');
 }
 
+export interface DocumentHistoryEntry {
+  id: string;
+  created_at: string;
+  content_json: string;
+}
+
+export async function listDocumentHistory(id: string, scope: string): Promise<DocumentHistoryEntry[]> {
+  return invoke<DocumentHistoryEntry[]>('list_document_history_command', { id, expectedScope: scope });
+}
+
 export async function upsertTag(name: string, color?: string | null, id?: string): Promise<TagRecord> {
   return invoke<TagRecord>('upsert_tag_command', { expectedScope: await expectedScope(),
     id: id ?? null,

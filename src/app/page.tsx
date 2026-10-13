@@ -6,6 +6,7 @@ import type { Editor as TiptapEditor } from '@tiptap/react';
 import { onBackButtonPress } from '@tauri-apps/api/app';
 import {
   ChevronRight,
+  ArrowLeft,
   Clock3,
   Info,
   FilePlus2,
@@ -21,6 +22,9 @@ import {
 import { TitleBar } from '@/components/TitleBar';
 import type { MenuAction } from '@/components/AppMenuBar';
 import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
+import { DocumentNavigation } from '@/components/DocumentNavigation';
+import { DocumentHistoryModal } from '@/components/DocumentHistoryModal';
+import { documentPath } from '@/lib/documentNavigation';
 import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
 import { InputModal } from '@/components/InputModal';
 import { SearchModal } from '@/components/SearchModal';
@@ -288,6 +292,10 @@ export default function HomePage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [explorerFolderId, setExplorerFolderId] = useState<string | null>(null);
+  const [readOnly, setReadOnly] = useState(true);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     favorites: true,
     explorer: true,
@@ -316,6 +324,18 @@ export default function HomePage() {
   const syncInFlightRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const selectionIntentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setExplorerFolderId(null);
+    setReadOnly(true);
+    setHistoryDocument(null);
+  }, [appState?.account_scope]);
+
+  useEffect(() => {
+    if (explorerFolderId && !documents.some(item => item.id === explorerFolderId && item.node_kind === 'folder')) {
+      setExplorerFolderId(null);
+    }
+  }, [documents, explorerFolderId]);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -505,6 +525,9 @@ export default function HomePage() {
       setContent(parseContent(detail.content_json));
       setDocumentTags(detail.tags);
       setTagDraft('');
+      setReadOnly(true);
+      setHistoryDocument(null);
+      setExplorerFolderId(detail.parent_id);
       setSidebarOpen(false);
     } catch {
       if (selectionIntentRef.current === id) selectionIntentRef.current = selectedIdRef.current;
@@ -513,7 +536,7 @@ export default function HomePage() {
 
   const handleCreateDocument = useCallback(
     async (parentId?: string | null) => {
-      if (appState && appState.limits.current_document_count >= appState.limits.max_document_count) {
+      if (appState && appState.limits.max_document_count > 0 && appState.limits.current_document_count >= appState.limits.max_document_count) {
         toast.error(`已达到文档数量上限（${appState.limits.max_document_count}）`);
         return;
       }
@@ -526,6 +549,8 @@ export default function HomePage() {
         setContent(parseContent(created.content_json));
         setDocumentTags(created.tags);
         setTagDraft('');
+        setReadOnly(false);
+        setHistoryDocument(null);
         if (created.parent_id) {
           const parentFolderId = created.parent_id;
           setExpandedFolders((current) => new Set(current).add(parentFolderId));
@@ -567,6 +592,7 @@ export default function HomePage() {
   const handlePersistMetadata = useCallback(
     async (nextContent: JSONContent = content, nextTagList: string[] = documentTags) => {
       if (!currentDocument) return;
+      if (readOnly) { toast.info('请先进入编辑模式'); return; }
       const title =
         extractPlainText(nextContent.content?.find((node) => node.type === 'heading')) ||
         currentDocument.title ||
@@ -588,7 +614,7 @@ export default function HomePage() {
       await refresh(updated.id);
       await triggerAutoSync('metadata', false, updated.id);
     },
-    [content, currentDocument, documentTags, refresh, triggerAutoSync]
+    [content, currentDocument, documentTags, refresh, triggerAutoSync, readOnly, toast]
   );
 
   const handleMoveDocument = useCallback(
@@ -737,6 +763,10 @@ export default function HomePage() {
 
   const handleMenuAction = useCallback(
     (action: MenuAction) => {
+      if (readOnly && ['paste', 'cut', 'undo', 'redo', 'replace'].includes(action)) {
+        toast.info('请先进入编辑模式');
+        return;
+      }
       switch (action) {
         case 'newDocument':
           void handleCreateDocument();
@@ -789,7 +819,7 @@ export default function HomePage() {
           return;
       }
     },
-    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme]
+    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast]
   );
 
   const openDocumentMenu = useCallback(
@@ -866,10 +896,41 @@ export default function HomePage() {
     [handleCreateDocument, handleCreateFolder, handleImportLegacy]
   );
 
-  const currentSegments = documentDisplaySegments(currentDocument);
+  const currentPath = documentPath(currentDocument, documents);
+  const folderPath = documentPath(documents.find(item => item.id === explorerFolderId) ?? null, documents);
+  const closeHistory = useCallback(() => setHistoryDocument(null), []);
+  const openFolder = useCallback(async (id: string | null) => {
+    try {
+      if (currentDocument) await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
+      setExplorerFolderId(id);
+      const target = id ? documents.find(item => item.id === id) : currentDocument;
+      setSelectedStatus(target && target.status !== 'active' ? 'trashed' : 'active');
+      setSelectedTag(null);
+      setExpandedSections(current => ({ ...current, explorer: true }));
+      setSidebarOpen(true);
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
+  }, [currentDocument, documents, toast]);
+  const toggleReading = useCallback(async () => {
+    if (!currentDocument || modeBusy) return;
+    setModeBusy(true);
+    try {
+      await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
+      if (selectedIdRef.current === currentDocument.id) setReadOnly(value => !value);
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
+    finally { setModeBusy(false); }
+  }, [currentDocument, modeBusy, toast]);
+  const openHistory = useCallback(async () => {
+    if (!currentDocument) return;
+    try {
+      await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
+      const detail = await getDocument(currentDocument.id);
+      if (detail?.account_scope === currentDocument.account_scope && selectedIdRef.current === detail.id) setHistoryDocument(detail);
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
+  }, [currentDocument, toast]);
   const availableMoveTargets = useMemo(() => collectFolderTargets(documents, moveTarget), [documents, moveTarget]);
   const addTag = useCallback(
     async (rawValue: string) => {
+      if (readOnly) { toast.info('请先进入编辑模式'); return; }
       const next = rawValue.trim();
       if (!next || !currentDocument) return;
       if (documentTags.includes(next)) {
@@ -886,7 +947,7 @@ export default function HomePage() {
       setMobileTagEditorOpen(false);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, toast]
+    [content, currentDocument, documentTags, handlePersistMetadata, toast, readOnly]
   );
 
   const handleDropNode = useCallback(
@@ -937,17 +998,26 @@ export default function HomePage() {
 
   const removeTag = useCallback(
     async (tagName: string) => {
+      if (readOnly) { toast.info('请先进入编辑模式'); return; }
       if (!currentDocument) return;
       const nextTags = documentTags.filter((tag) => tag !== tagName);
       setDocumentTags(nextTags);
       setMobileTagDeleteTarget(null);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata]
+    [content, currentDocument, documentTags, handlePersistMetadata, readOnly, toast]
   );
 
   const closeTopMobileLayer = useCallback(() => {
+    if (historyDocument) {
+      setHistoryDocument(null);
+      return true;
+    }
     if (sidebarOpen) {
+      if (explorerFolderId) {
+        setExplorerFolderId(documents.find(item => item.id === explorerFolderId)?.parent_id ?? null);
+        return true;
+      }
       setSidebarOpen(false);
       return true;
     }
@@ -1000,6 +1070,9 @@ export default function HomePage() {
     showSearchModal,
     sidebarMenu,
     sidebarOpen,
+    historyDocument,
+    explorerFolderId,
+    documents,
   ]);
 
   useEffect(() => {
@@ -1008,7 +1081,7 @@ export default function HomePage() {
     let disposed = false;
     let listener: { unregister: () => Promise<void> } | null = null;
     void onBackButtonPress(() => {
-      closeTopMobileLayer();
+      if (!closeTopMobileLayer() && currentDocument) void openFolder(currentDocument.parent_id);
     })
       .then((nextListener) => {
         if (disposed) {
@@ -1031,7 +1104,7 @@ export default function HomePage() {
       window.removeEventListener('keydown', onEscape);
       void listener?.unregister();
     };
-  }, [closeTopMobileLayer, isMobileLayout]);
+  }, [closeTopMobileLayer, isMobileLayout, currentDocument, openFolder]);
 
   const renderSidebar = (mobile: boolean) => (
     <aside
@@ -1078,7 +1151,7 @@ export default function HomePage() {
               ] as const).map(([value, label, Icon]) => (
                 <button
                   key={value}
-                  onClick={() => setSelectedStatus(value)}
+                  onClick={() => { setSelectedStatus(value); setExplorerFolderId(null); }}
                   className="flex items-center gap-2 px-2 py-2 text-left"
                   style={{
                     backgroundColor: selectedStatus === value ? accentBg : 'transparent',
@@ -1190,6 +1263,20 @@ export default function HomePage() {
                   ))}
                 </div>
 
+                {selectedStatus !== 'recent' && (
+                  <nav aria-label="分组位置" className="mb-2 flex flex-wrap items-center gap-1 border-b pb-2 text-xs" style={{ borderColor: border }}>
+                    {explorerFolderId && <button type="button" aria-label="返回上一级分组" className="p-2"
+                      onClick={() => setExplorerFolderId(documents.find(item => item.id === explorerFolderId)?.parent_id ?? null)}><ArrowLeft size={14} /></button>}
+                    <button type="button" className="px-1 py-2 hover:underline" onClick={() => setExplorerFolderId(null)}>文档库</button>
+                    {folderPath.map((item, index) => <React.Fragment key={item.id}>
+                      <ChevronRight size={12} className="opacity-40" />
+                      <button type="button" aria-current={index === folderPath.length - 1 ? 'location' : undefined}
+                        className="max-w-32 truncate px-1 py-2 hover:underline" title={item.title}
+                        onClick={() => setExplorerFolderId(item.id)}>{item.title}</button>
+                    </React.Fragment>)}
+                  </nav>
+                )}
+
                 {selectedStatus === 'recent' ? (
                   recentDocuments.length === 0 ? (
                     <div className="px-3 py-2 text-[12px]" style={{ color: muted }}>最近还没有文档记录</div>
@@ -1220,9 +1307,11 @@ export default function HomePage() {
                 ) : (
                   <DocumentExplorerTree
                     documents={filteredDocuments}
+                    rootParentId={explorerFolderId}
                     selectedId={selectedId}
-                    expandedFolders={expandedFolders}
-                    onToggleFolder={(folderId) =>
+                    expandedFolders={mobile ? new Set() : expandedFolders}
+                    onToggleFolder={(folderId) => {
+                      if (mobile) { setExplorerFolderId(folderId); return; }
                       setExpandedFolders((current) => {
                         const next = new Set(current);
                         if (next.has(folderId)) {
@@ -1231,8 +1320,8 @@ export default function HomePage() {
                           next.add(folderId);
                         }
                         return next;
-                      })
-                    }
+                      });
+                    }}
                     onSelectDocument={(id) => void handleSelectDocument(id)}
                     onNodeContextMenu={openDocumentMenu}
                     onMoveNode={handleDropNode}
@@ -1302,10 +1391,14 @@ export default function HomePage() {
   );
 
   const renderDocumentEditor = (mobile: boolean) => {
+    const navigation = <DocumentNavigation path={currentPath} readOnly={readOnly} busy={modeBusy}
+      onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} />;
     if (mobile) {
       if (!currentDocument) return null;
       return (
         <MobileDocumentEditor
+          navigation={navigation}
+          readOnly={readOnly}
           currentDocument={currentDocument}
           content={content}
           documentTags={documentTags}
@@ -1321,8 +1414,9 @@ export default function HomePage() {
 
     return (
       <DesktopDocumentEditor
+        navigation={navigation}
+        readOnly={readOnly}
         currentDocument={currentDocument}
-        currentSegments={currentSegments}
         content={content}
         documentTags={documentTags}
         tagDraft={tagDraft}
@@ -1382,7 +1476,7 @@ export default function HomePage() {
       accent={accent}
       border={border}
       surface={surface}
-      onOpenSidebar={() => setSidebarOpen(true)}
+      onOpenSidebar={() => void openFolder(currentDocument?.parent_id ?? explorerFolderId)}
       onCloseSidebar={() => setSidebarOpen(false)}
       onOpenProperties={() => setMobilePropertyOpen(true)}
       onOpenExportMenu={() => {
@@ -1431,6 +1525,10 @@ export default function HomePage() {
           void handleSelectDocument(documentId);
         }}
       />
+
+      {historyDocument && historyDocument.account_scope === currentDocument?.account_scope && historyDocument.id === currentDocument.id && (
+        <DocumentHistoryModal document={historyDocument} onClose={closeHistory} />
+      )}
 
       {sidebarMenu && (
         <ContextMenu
@@ -1492,9 +1590,11 @@ export default function HomePage() {
                       style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
                       onContextMenu={(event) => {
                         event.preventDefault();
+                        if (readOnly) return;
                         setMobileTagDeleteTarget(tag);
                       }}
                       onPointerDown={(event) => {
+                        if (readOnly) return;
                         const target = event.currentTarget;
                         const timer = window.setTimeout(() => setMobileTagDeleteTarget(tag), 520);
                         const clear = () => window.clearTimeout(timer);
@@ -1511,7 +1611,8 @@ export default function HomePage() {
                   type="button"
                   className="shrink-0 rounded-full border px-3 py-2 text-sm"
                   style={{ borderColor: border, color: accent, opacity: documentTags.length >= 7 ? 0.45 : 1 }}
-                  disabled={documentTags.length >= 7}
+                  disabled={readOnly || documentTags.length >= 7}
+                  title={readOnly ? '请先进入编辑模式' : '添加标签'}
                   onClick={() => setMobileTagEditorOpen(true)}
                 >
                   + 添加

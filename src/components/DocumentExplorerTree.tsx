@@ -33,7 +33,7 @@ type DragState = {
   targetParentId: DragTarget;
 };
 
-function buildDocumentTree(documents: DocumentSummary[]): TreeNode[] {
+function buildDocumentTree(documents: DocumentSummary[], rootParentId: string | null): TreeNode[] {
   const byParent = new Map<string | null, DocumentSummary[]>();
   for (const document of documents) {
     const parentId = document.parent_id ?? null;
@@ -68,7 +68,7 @@ function buildDocumentTree(documents: DocumentSummary[]): TreeNode[] {
     );
   };
 
-  return buildLevel(null);
+  return buildLevel(rootParentId);
 }
 
 function isDescendantOf(
@@ -249,6 +249,7 @@ export function DocumentExplorerTree({
   onSelectDocument,
   onNodeContextMenu,
   onMoveNode,
+  rootParentId = null,
 }: {
   documents: DocumentSummary[];
   selectedId: string | null;
@@ -257,6 +258,7 @@ export function DocumentExplorerTree({
   onSelectDocument: (id: string) => void;
   onNodeContextMenu: (event: React.MouseEvent, document: DocumentSummary) => void;
   onMoveNode: (sourceId: string, targetParentId: string | null) => Promise<void>;
+  rootParentId?: string | null;
 }) {
   const { theme } = useTheme();
   const accent = getThemeAccentColor(theme);
@@ -266,7 +268,7 @@ export function DocumentExplorerTree({
   const muted = getThemeMutedColor(theme);
   const [dragState, setDragState] = useState<DragState | null>(null);
 
-  const tree = useMemo(() => buildDocumentTree(documents), [documents]);
+  const tree = useMemo(() => buildDocumentTree(documents, rootParentId), [documents, rootParentId]);
   const documentsById = useMemo(() => new Map(documents.map((document) => [document.id, document])), [documents]);
 
   useEffect(() => {
@@ -333,7 +335,8 @@ export function DocumentExplorerTree({
   return (
     <div className="relative">
       <div
-        data-drop-root="true"
+        data-drop-root={rootParentId === null ? 'true' : undefined}
+        data-drop-folder-id={rootParentId ?? undefined}
         className="mb-2 rounded border border-dashed px-3 py-2 text-[11px] transition-colors"
         style={{
           borderColor: rootDropActive ? accent : border,
@@ -342,7 +345,7 @@ export function DocumentExplorerTree({
           opacity: dragState?.phase === 'dragging' ? 1 : 0.72,
         }}
       >
-        拖到这里移回根目录
+        {rootParentId ? '拖到这里移至当前分组' : '拖到这里移回根目录'}
       </div>
 
       {dragState?.phase === 'dragging' && (

@@ -9,7 +9,6 @@ import type { AppState, DocumentRecord } from '@/lib/api';
 
 export function DesktopDocumentEditor({
   currentDocument,
-  currentSegments,
   content,
   documentTags,
   tagDraft,
@@ -28,9 +27,10 @@ export function DesktopDocumentEditor({
   onPersisted,
   formatTimestamp,
   formatBytes,
+  navigation,
+  readOnly,
 }: {
   currentDocument: DocumentRecord | null;
-  currentSegments: string[];
   content: JSONContent;
   documentTags: string[];
   tagDraft: string;
@@ -49,32 +49,20 @@ export function DesktopDocumentEditor({
   onPersisted: () => void;
   formatTimestamp: (value?: string | null) => string;
   formatBytes: (value: number) => string;
+  navigation: React.ReactNode;
+  readOnly: boolean;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
+      {navigation}
       <div className="shell-panel border-b px-4 py-3 sm:px-5" style={{ backgroundColor: surface, borderColor: border }}>
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs opacity-70">
-          <span className="shell-label">Document</span>
-          <span className="opacity-35">/</span>
-          {currentSegments.length > 0 ? (
-            currentSegments.map((segment, index) => (
-              <React.Fragment key={`${segment}-${index}`}>
-                <span className={index === currentSegments.length - 1 ? 'opacity-100' : 'opacity-65'}>{segment}</span>
-                {index < currentSegments.length - 1 && <span className="opacity-35">/</span>}
-              </React.Fragment>
-            ))
-          ) : (
-            <span>Untitled</span>
-          )}
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] opacity-72">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] opacity-72">
           <span>最近更新 {formatTimestamp(currentDocument?.updated_at)}</span>
           <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
           <span>同步 {appState?.sync.mode ?? 'local-only'}</span>
           {appState && (
             <span>
-              存储 {formatBytes(appState.limits.current_total_storage_bytes)} / {formatBytes(appState.limits.max_total_storage_bytes)}
+              存储 {formatBytes(appState.limits.current_total_storage_bytes)}{appState.limits.max_total_storage_bytes > 0 ? ` / ${formatBytes(appState.limits.max_total_storage_bytes)}` : ''}
             </span>
           )}
         </div>
@@ -90,16 +78,16 @@ export function DesktopDocumentEditor({
                   style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
                 >
                   <span>{tag}</span>
-                  <button
+                  {!readOnly && <button
                     type="button"
                     className="opacity-70 transition-opacity hover:opacity-100"
                     onClick={() => onRemoveTag(tag)}
                   >
                     <X size={12} />
-                  </button>
+                  </button>}
                 </span>
               ))}
-              <div className="flex min-w-[140px] flex-1 items-center gap-2">
+              {!readOnly && <div className="flex min-w-[140px] flex-1 items-center gap-2">
                 <input
                   value={tagDraft}
                   onChange={(event) => onTagDraftChange(event.target.value)}
@@ -120,7 +108,8 @@ export function DesktopDocumentEditor({
                 >
                   <Plus size={14} />
                 </button>
-              </div>
+              </div>}
+              {readOnly && !documentTags.length && <span className="text-xs opacity-60">无标签</span>}
             </div>
           </div>
         </div>
@@ -136,6 +125,7 @@ export function DesktopDocumentEditor({
             initialContent={content}
             tags={documentTags}
             mobile={false}
+            readOnly={readOnly}
             onEditorReady={onEditorReady}
             onContentChange={onContentChange}
             onPersistError={onPersistError}

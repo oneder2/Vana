@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import { Editor } from '@/components/Editor';
@@ -13,6 +14,8 @@ export function MobileDocumentEditor({
   onContentChange,
   onPersistError,
   onPersisted,
+  navigation,
+  readOnly,
 }: {
   currentDocument: DocumentRecord;
   content: JSONContent;
@@ -21,18 +24,22 @@ export function MobileDocumentEditor({
   onContentChange: (content: JSONContent) => void;
   onPersistError: (message: string) => void;
   onPersisted: () => void;
+  navigation: ReactNode;
+  readOnly: boolean;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
+      {navigation}
       <div className="min-h-0 flex-1 overflow-hidden p-0">
         <Editor
           key={`${currentDocument.account_scope}:${currentDocument.id}`}
           filePath={currentDocument.id}
-            accountScope={currentDocument.account_scope}
-            contentGeneration={currentDocument.content_generation}
+          accountScope={currentDocument.account_scope}
+          contentGeneration={currentDocument.content_generation}
           initialContent={content}
           tags={documentTags}
           mobile
+          readOnly={readOnly}
           onEditorReady={onEditorReady}
           onContentChange={onContentChange}
           onPersistError={onPersistError}

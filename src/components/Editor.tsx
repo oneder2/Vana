@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
-import { Bold, Heading1, Heading2, Italic, List, ListOrdered, Quote, Underline } from 'lucide-react';
+import { Bold, Copy, Heading1, Heading2, Italic, List, ListOrdered, MousePointer2, Quote, Underline } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
 import { getDocumentStyleCssVars } from '@/lib/documentStyles';
@@ -27,6 +27,7 @@ interface EditorProps {
   onPersistError?: (message: string) => void;
   tags?: string[];
   mobile?: boolean;
+  readOnly?: boolean;
 }
 
 function extractPlainText(node?: JSONContent): string {
@@ -47,6 +48,7 @@ export function Editor({
   onPersistError,
   tags = [],
   mobile = false,
+  readOnly = false,
 }: EditorProps) {
   const { theme } = useTheme();
   const latestTags = useRef(tags);
@@ -57,7 +59,7 @@ export function Editor({
   const restoredContent = useMemo(() => {
     const draft = filePath ? documentDrafts.get(filePath, accountScope) : undefined;
     return draft ? JSON.parse(draft.content_json) as JSONContent : undefined;
-  }, [filePath]);
+  }, [filePath, accountScope]);
 
   useEffect(() => {
     latestTags.current = tags;
@@ -67,8 +69,10 @@ export function Editor({
     extensions,
     content: restoredContent ?? initialContent ?? { type: 'doc', content: [{ type: 'paragraph', content: [] }] },
     immediatelyRender: false,
-    autofocus: true,
+    autofocus: false,
+    editable: !readOnly,
     onUpdate: ({ editor }) => {
+      if (!editor.isEditable) return;
       const content = editor.getJSON();
       const title =
         extractPlainText(content.content?.find((node) => node.type === 'heading')) ||
@@ -90,11 +94,32 @@ export function Editor({
       });
     },
     editorProps: {
+      handleKeyDown: (view, event) => {
+        if (view.editable) return false;
+        // ProseMirror keymaps can run even when its DOM is not contenteditable.
+        // Keep selection/navigation/copy, block undo, paste and formatting mutations.
+        const key = event.key.toLowerCase();
+        if ((event.ctrlKey || event.metaKey) && ['a', 'c', 'f'].includes(key)) return false;
+        return !['tab', 'escape', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown',
+          'home', 'end', 'pageup', 'pagedown', 'shift', 'control', 'alt', 'meta'].includes(key);
+      },
+      handlePaste: (view) => !view.editable,
+      handleDOMEvents: {
+        beforeinput: (view, event) => {
+          if (view.editable) return false;
+          event.preventDefault();
+          return true;
+        },
+      },
       attributes: {
         class: `tiptap-editor focus:outline-none ${mobile ? 'min-h-[calc(100dvh-210px)] px-4 py-5' : 'min-h-[360px] px-5 py-6 sm:px-8'}`,
       },
     },
   });
+
+  useEffect(() => {
+    editor?.setEditable(!readOnly, false);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     onEditorReady?.(editor);
@@ -110,7 +135,7 @@ export function Editor({
     if (current !== next) {
       editor.commands.setContent(initialContent, { emitUpdate: false });
     }
-  }, [editor, initialContent, filePath, contentGeneration]);
+  }, [editor, initialContent, filePath, contentGeneration, accountScope]);
 
   useEffect(() => documentDrafts.subscribe((event) => {
     if (event.id !== filePath || event.account_scope !== accountScope) return;
@@ -118,7 +143,7 @@ export function Editor({
       onUnsavedChangesChange?.(false);
       onPersisted?.();
     }
-  }), [filePath, onUnsavedChangesChange, onPersisted, onPersistError]);
+  }), [filePath, accountScope, onUnsavedChangesChange, onPersisted, onPersistError]);
 
   const handleContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -128,6 +153,7 @@ export function Editor({
   const handleMenuAction = useCallback(
     (action: string) => {
       if (!editor) return;
+      if (!editor.isEditable && action !== 'copy' && action !== 'selectAll') return;
 
       const focusEditor = () => {
         editor.chain().focus().run();
@@ -197,7 +223,9 @@ export function Editor({
         ...getDocumentStyleCssVars(theme),
       }}
     >
-      <div
+      {readOnly ? <div className="border-b px-4 py-2 text-xs opacity-65" style={{ borderColor: border }}>
+        阅读模式 · 正文与标签已锁定，选中文字仍可复制
+      </div> : <div
         className={`border-b px-3 py-2 ${mobile ? 'flex items-center gap-1 overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center gap-1'}`}
         style={{ borderColor: border }}
       >
@@ -205,6 +233,7 @@ export function Editor({
           <button
             key={button.key}
             type="button"
+            aria-label={button.key}
             onClick={button.action}
             className={`shrink-0 border transition-colors ${mobile ? 'min-h-9 min-w-9 px-2 py-2' : 'px-2 py-1'}`}
             style={{
@@ -216,7 +245,7 @@ export function Editor({
             {button.icon}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div className="min-h-0 flex-1 overflow-y-auto relative" onContextMenu={handleContextMenu}>
         <EditorContent editor={editor} />
@@ -230,6 +259,10 @@ export function Editor({
           onAction={handleMenuAction}
           hasSelection={!editor.state.selection.empty}
           isBlock
+          items={readOnly ? [
+            { id: 'copy', label: '复制', icon: Copy },
+            { id: 'selectAll', label: '全选', icon: MousePointer2 },
+          ] : undefined}
         />
       )}
     </div>

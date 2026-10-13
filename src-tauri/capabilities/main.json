@@ -4,6 +4,8 @@
   "description": "Main application capabilities",
   "windows": ["main"],
   "permissions": [
+    "core:app:allow-register-listener",
+    "core:app:allow-remove-listener",
     "core:webview:default",
     "core:webview:allow-internal-toggle-devtools",
     "core:event:allow-listen",
