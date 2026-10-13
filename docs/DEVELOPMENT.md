@@ -71,7 +71,7 @@ npm run tauri:build:android
 1. 文档先写入本地 SQLite
 2. 本地改动写入 `sync_queue`
 3. 前端在保存、回前台、联网恢复、定时轮询时触发自动同步
-4. 同步层只推送有变更的文档，并按 `last_pulled_at` 增量拉取远端更新
+4. 同步层只推送待处理文档，使用服务端 revision 条件写入；下行创建完整固定快照并按 500 条分页拉取，`last_pulled_at` 仅记录状态，不是增量游标
 
 说明：
 
@@ -85,3 +85,4 @@ npm run tauri:build:android
 - [附件 / 图片 Storage 方案](./ATTACHMENT_STORAGE_PLAN.md)
 - [版本号管理策略](./VERSIONING.md)
 - [部署与发布指南](./DEPLOYMENT.md)
+- [下一阶段开发路线与验收条件](./ROADMAP.md)

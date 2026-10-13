@@ -1,5 +1,18 @@
 # 更新日志
 
+## 0.7.0 主线审查修复（dev，尚未发布）
+
+本节对应当前 Vite/React/Tauri/SQLite/Supabase 主线。下方 Git/PAT、Next.js 和旧加密存储条目保留为历史记录，不代表当前功能或安全承诺；旧密钥实现也不是系统 Keychain。当前事实以 [架构文档](ARCHITECTURE.md) 为准。
+
+- 保存：按账号和文档保存不可变草稿，切换、导航及关闭前提交；通知与刷新保留未保存内容，撤销记录按文档隔离。
+- 数据：访客、账号和 Supabase 项目使用独立空间；旧库保留并提供明确复制恢复；文档、标签、历史、子树变更及 outbox 在同一事务提交。
+- 同步：revision 条件写入、mutation 幂等、固定快照分页和完整树冲突副本；保护迟到草稿、丢失确认及并发删除；失败保留任务并反馈错误。
+- 功能：字面量搜索和真实片段、历史保留与任务压缩、回收站子树永久删除、JSONB 正文校验与已验证的会话导入。
+- 导出：跨平台文件名、扩展名和路径边界校验；Android 使用应用 ClassLoader，保留并验证 Release DEX 的 JNI 分享入口。
+- 验证：17 项原生领域测试、14 项前端行为测试、独立 PostgreSQL 协议及浏览器回归通过；Linux/Windows/Android 预览 CI 全部通过；本地 Android Release APK 构建及 JNI 检查通过。
+
+服务端新迁移尚未部署到真实 Supabase，必须与客户端升级协调；真机分享仍待验证。正文与会话仍为明文，本地 Release 验证 APK 使用 Debug 证书。提交分组与证据见 [修复记录](REMEDIATION_2026-10-12.md)，后续工作见 [开发路线](ROADMAP.md)。
+
 ## v1.0.0-mvp (In Progress)
 
 ### 1.0 MVP 新增

@@ -31,7 +31,7 @@
 - APK：`dist/android/vana-0.7.0-android-release.apk`，70,906,562 字节，SHA-256 `9d90aa695a2793327f39b34a33bf51f7861e3bb9088199f7ef02a2a2e2ddeb09`。包内含 `lib/arm64-v8a/libvana.so`，版本 0.7.0、minSdk 24、targetSdk 36；实际 Manifest 的 FileProvider authority、禁止导出和 URI 临时授权，以及引用的 `exports/` 路径资源均已检查。签名验证通过，证书为 Android Debug，仅作本地验证产物，正式发布须使用发布密钥。
 - 无连接真机，安装运行和真实系统分享的设备验证仍是发布验证范围。
 - 服务端迁移尚未部署到真实 Supabase。新客户端需要 202610120001_revision_sync.sql；旧直接写入客户端应同步升级。
-- CI 已接入前端、原生领域及独立 PostgreSQL 协议测试。`e821aa1` 对应运行 `38335742376` 的 Validate Project 已成功；记录时 Linux、Windows、Android Preview 构建仍在进行，未计为通过。
+- CI 已接入前端、原生领域及独立 PostgreSQL 协议测试。`6e89166` 对应 [运行 38336504044](https://github.com/oneder2/Vana/actions/runs/38336504044) 的 Validate Project、Linux Preview、Windows Preview、Android Preview 全部成功；`e821aa1` 与 `1e2de9f` 对应运行也已全部成功。Android Preview 是 Debug 构建，Release/R8 的证据来自上述本地完整打包验证。
 
 ## 提交
 
@@ -42,5 +42,6 @@
 - `cfd9b7c`：修正 Android SDK 安装及发布 JNI 检查。
 - `1e2de9f`：并发删除收敛、一致状态读取、实际 DEX 检查及容器正式服务 readiness。
 - `e821aa1`：当前架构、登录与迁移说明及修复验证文档。
+- `6e89166`：完成 Android Release APK 打包、签名及包内配置验证记录。
 
-以上提交已推送 `origin/dev`。后续架构与使用文档随验证记录一同提交；不变更审查报告中的历史基线结论。
+以上提交已推送 `origin/dev`。提交按草稿保存、原生导出、账号/事务/同步、CI 和文档分组保留，便于逐项追溯；不变更审查报告中的历史基线结论。下一阶段以 [开发路线](ROADMAP.md) 为准，版本发布另行进行。

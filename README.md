@@ -45,6 +45,7 @@ python3 scripts/test-supabase-protocol.py  # 需要 Docker
 - [当前架构、同步契约与安全边界](docs/ARCHITECTURE.md)
 - [Supabase 配置与迁移](docs/SUPABASE_SETUP.md)
 - [审查报告](docs/CODE_REVIEW_2026-10-12.md) · [逐项修复记录](docs/REMEDIATION_2026-10-12.md)
+- [变更记录](docs/CHANGELOG.md) · [下一阶段开发路线与验收条件](docs/ROADMAP.md)
 - [开发指南](docs/DEVELOPMENT.md) · [部署指南](docs/DEPLOYMENT.md)
 - [附件规划](docs/ATTACHMENT_STORAGE_PLAN.md)（尚未实现）
 
