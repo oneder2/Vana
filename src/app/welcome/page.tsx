@@ -160,6 +160,16 @@ export default function WelcomePage() {
               {syncConfigured ? '可登录已配置的同步服务，或先以访客身份离线使用。访客与账号文档分别保存。' : '当前可离线使用。登录和注册需要先在高级配置中连接同步服务。'}
             </p>
 
+            <button
+              type="button"
+              className="mt-5 w-full border px-4 py-3 text-sm"
+              style={{ borderColor: border, color: accent, backgroundColor: `${accentBg}18` }}
+              onClick={() => void finishAsGuest()}
+              disabled={busy}
+            >
+              继续以访客身份使用
+            </button>
+
             <div className="mt-6 space-y-3">
               <div>
                 <div className="mb-2 text-sm opacity-75">邮箱</div>
@@ -202,15 +212,6 @@ export default function WelcomePage() {
                 disabled={busy || !syncConfigured}
               >
                 注册账号
-              </button>
-              <button
-                type="button"
-                className="border px-4 py-2 text-sm"
-                style={{ borderColor: border, color: accent }}
-                onClick={() => void finishAsGuest()}
-                disabled={busy}
-              >
-                继续以访客身份使用
               </button>
             </div>
 
