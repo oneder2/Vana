@@ -11,7 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { X, CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeBgColor } from '@/lib/themeStyles';
-import { useToast, type ToastItem } from './ToastProvider';
+import { useToast, useToastList, type ToastItem } from './ToastProvider';
 
 /**
  * 单个 Toast 项组件
@@ -100,7 +100,7 @@ function ToastItemComponent({ toast }: { toast: ToastItem }) {
  * 显示所有 Toast 消息
  */
 export function Toast() {
-  const { toasts } = useToast();
+  const toasts = useToastList();
 
   if (toasts.length === 0) {
     return null;
@@ -122,4 +122,3 @@ export function Toast() {
     </div>
   );
 }
-

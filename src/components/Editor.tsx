@@ -8,7 +8,7 @@ import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
 import { getDocumentStyleCssVars } from '@/lib/documentStyles';
 import { getThemeAccentBgColor, getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
-import { saveDocument } from '@/lib/api';
+import { documentDrafts } from '@/lib/documentDrafts';
 import { ContextMenu } from './ContextMenu';
 
 export type EditorLayout = 'center' | 'left' | 'right';
@@ -45,12 +45,14 @@ export function Editor({
   mobile = false,
 }: EditorProps) {
   const { theme } = useTheme();
-  const saveTimer = useRef<NodeJS.Timeout | null>(null);
-  const latestTitle = useRef('Untitled');
   const latestTags = useRef(tags);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const extensions = useMemo(() => getTiptapExtensions(theme.id), [theme.id]);
+  const restoredContent = useMemo(() => {
+    const draft = filePath ? documentDrafts.get(filePath) : undefined;
+    return draft ? JSON.parse(draft.content_json) as JSONContent : undefined;
+  }, [filePath]);
 
   useEffect(() => {
     latestTags.current = tags;
@@ -58,7 +60,7 @@ export function Editor({
 
   const editor = useEditor({
     extensions,
-    content: initialContent ?? { type: 'doc', content: [{ type: 'paragraph', content: [] }] },
+    content: restoredContent ?? initialContent ?? { type: 'doc', content: [{ type: 'paragraph', content: [] }] },
     immediatelyRender: false,
     autofocus: true,
     onUpdate: ({ editor }) => {
@@ -68,28 +70,17 @@ export function Editor({
         extractPlainText(content).slice(0, 48) ||
         'Untitled';
 
-      latestTitle.current = title;
       onContentChange?.(content);
       onUnsavedChangesChange?.(true);
 
       if (!filePath) return;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(async () => {
-        try {
-          await saveDocument({
-            id: filePath,
-            title: latestTitle.current,
-            content_json: JSON.stringify(content),
-            plain_text: extractPlainText(content),
-            tags: latestTags.current,
-          });
-          onUnsavedChangesChange?.(false);
-          onPersisted?.();
-        } catch (error) {
-          console.error('保存文档失败:', error);
-          onPersistError?.(error instanceof Error ? error.message : String(error));
-        }
-      }, 600);
+      documentDrafts.queue({
+        id: filePath,
+        title,
+        content_json: JSON.stringify(content),
+        plain_text: extractPlainText(content),
+        tags: documentDrafts.get(filePath)?.tags ?? [...latestTags.current],
+      });
     },
     editorProps: {
       attributes: {
@@ -105,16 +96,21 @@ export function Editor({
 
   useEffect(() => {
     if (!editor || !initialContent) return;
+    if (filePath && documentDrafts.isDirty(filePath)) return;
     const current = JSON.stringify(editor.getJSON());
     const next = JSON.stringify(initialContent);
     if (current !== next) {
       editor.commands.setContent(initialContent, { emitUpdate: false });
     }
-  }, [editor, initialContent]);
+  }, [editor, initialContent, filePath]);
 
-  useEffect(() => () => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-  }, []);
+  useEffect(() => documentDrafts.subscribe((event) => {
+    if (event.id !== filePath) return;
+    if (event.type === 'saved' && event.clean) {
+      onUnsavedChangesChange?.(false);
+      onPersisted?.();
+    }
+  }), [filePath, onUnsavedChangesChange, onPersisted, onPersistError]);
 
   const handleContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();

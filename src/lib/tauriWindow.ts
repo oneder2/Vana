@@ -9,6 +9,7 @@ export interface TauriWindowHandle {
   minimize(): Promise<void>;
   onMoved(handler: () => void | Promise<void>): Promise<WindowCleanup>;
   onResized(handler: () => void | Promise<void>): Promise<WindowCleanup>;
+  onCloseRequested(handler: (event: { preventDefault(): void }) => void | Promise<void>): Promise<WindowCleanup>;
   setPosition(position: unknown): Promise<void>;
   setSize(size: unknown): Promise<void>;
   unmaximize(): Promise<void>;

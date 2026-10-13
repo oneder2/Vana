@@ -45,6 +45,7 @@ import {
 } from '@/lib/api';
 import { exportToDOCX, exportToMarkdown, exportToPDF, saveMarkdownExport, shareExportFile } from '@/lib/export';
 import { runSupabaseSync } from '@/lib/supabaseSync';
+import { documentDrafts } from '@/lib/documentDrafts';
 import {
   getThemeAccentBgColor,
   getThemeAccentColor,
@@ -332,7 +333,7 @@ export default function HomePage() {
       setDocuments(nextDocs);
       setTags(nextTags);
 
-      const desiredDocumentId = preferredId ?? selectionIntentRef.current ?? selectedIdRef.current;
+      const desiredDocumentId = selectionIntentRef.current ?? preferredId ?? selectedIdRef.current;
       const preferredDocumentId = desiredDocumentId
         ? nextDocs.find((doc) => doc.id === desiredDocumentId && doc.node_kind === 'document')?.id ?? null
         : null;
@@ -344,13 +345,15 @@ export default function HomePage() {
 
       if (fallbackId) {
         const detail = await getDocument(fallbackId);
+        if (selectionIntentRef.current && selectionIntentRef.current !== fallbackId) return;
         if (detail && detail.node_kind === 'document') {
           selectionIntentRef.current = detail.id;
           setSelectedId(fallbackId);
           setCurrentDocument(detail);
-          setContent(parseContent(detail.content_json));
-          setDocumentTags(detail.tags);
-          setTagDraft('');
+          if (!documentDrafts.isDirty(detail.id)) {
+            setContent(parseContent(detail.content_json));
+            setDocumentTags(detail.tags);
+          }
         }
       } else {
         selectionIntentRef.current = null;
@@ -489,15 +492,21 @@ export default function HomePage() {
   }, [filteredDocuments]);
 
   const handleSelectDocument = useCallback(async (id: string) => {
-    const detail = await getDocument(id);
-    if (!detail || detail.node_kind !== 'document') return;
     selectionIntentRef.current = id;
-    setSelectedId(id);
-    setCurrentDocument(detail);
-    setContent(parseContent(detail.content_json));
-    setDocumentTags(detail.tags);
-    setTagDraft('');
-    setSidebarOpen(false);
+    try {
+      if (selectedIdRef.current) await documentDrafts.flush(selectedIdRef.current);
+      const detail = await getDocument(id);
+      if (selectionIntentRef.current !== id || !detail || detail.node_kind !== 'document') return;
+      selectedIdRef.current = id;
+      setSelectedId(id);
+      setCurrentDocument(detail);
+      setContent(parseContent(detail.content_json));
+      setDocumentTags(detail.tags);
+      setTagDraft('');
+      setSidebarOpen(false);
+    } catch {
+      if (selectionIntentRef.current === id) selectionIntentRef.current = selectedIdRef.current;
+    }
   }, []);
 
   const handleCreateDocument = useCallback(
@@ -507,6 +516,7 @@ export default function HomePage() {
         return;
       }
       try {
+        await documentDrafts.flushAll();
         const created = await createDocument({ nodeKind: 'document', parentId: parentId ?? null });
         selectionIntentRef.current = created.id;
         setSelectedId(created.id);
@@ -560,15 +570,17 @@ export default function HomePage() {
         currentDocument.title ||
         'Untitled';
 
-      const updated = await saveDocument({
+      setDocumentTags(nextTagList);
+      documentDrafts.queue({
         id: currentDocument.id,
         title,
         content_json: JSON.stringify(nextContent),
         plain_text: extractPlainText(nextContent),
         tags: nextTagList,
       });
-      setCurrentDocument(updated);
-      setDocumentTags(updated.tags);
+      const updated = await documentDrafts.flush(currentDocument.id);
+      if (!updated) return;
+      if (selectedIdRef.current === updated.id) setCurrentDocument(updated);
       await refresh(updated.id);
       await triggerAutoSync('metadata', false, updated.id);
     },
@@ -709,13 +721,15 @@ export default function HomePage() {
     }
 
     const replaced = replaceTextInContent(content, findValue, replaceNextValue);
+    editorInstance?.commands.setContent(replaced, { emitUpdate: false });
     setContent(replaced);
-    await handlePersistMetadata(replaced, documentTags);
+    try { await handlePersistMetadata(replaced, documentTags); }
+    catch { return; }
     toast.success('替换已应用');
     setReplaceDialogOpen(false);
     setReplaceFindValue('');
     setReplaceNextValue('');
-  }, [content, currentDocument, documentTags, handlePersistMetadata, replaceFindValue, replaceNextValue, toast]);
+  }, [content, currentDocument, documentTags, editorInstance, handlePersistMetadata, replaceFindValue, replaceNextValue, toast]);
 
   const handleMenuAction = useCallback(
     (action: MenuAction) => {

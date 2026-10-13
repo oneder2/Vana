@@ -6,7 +6,7 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 
 // Toast 项接口
 export interface ToastItem {
@@ -18,7 +18,6 @@ export interface ToastItem {
 
 // Toast 上下文类型
 interface ToastContextType {
-  toasts: ToastItem[];
   addToast: (toast: Omit<ToastItem, 'id'>) => void;
   removeToast: (id: string) => void;
   success: (message: string, duration?: number) => void;
@@ -29,6 +28,7 @@ interface ToastContextType {
 
 // 创建 Toast 上下文
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
+const ToastListContext = createContext<ToastItem[]>([]);
 
 /**
  * Toast 提供者组件属性
@@ -43,6 +43,10 @@ interface ToastProviderProps {
  */
 export function ToastProvider({ children }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
 
   // 添加 Toast
   const addToast = useCallback((toast: Omit<ToastItem, 'id'>) => {
@@ -60,12 +64,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
         removeToast(id);
       }, newToast.duration);
     }
-  }, []);
-
-  // 移除 Toast
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  }, []);
+  }, [removeToast]);
 
   // 便捷方法
   const success = useCallback((message: string, duration?: number) => {
@@ -84,22 +83,17 @@ export function ToastProvider({ children }: ToastProviderProps) {
     addToast({ type: 'info', message, duration });
   }, [addToast]);
 
+  const actions = useMemo(() => ({ addToast, removeToast, success, error, warning, info }),
+    [addToast, removeToast, success, error, warning, info]);
+
   return (
-    <ToastContext.Provider
-      value={{
-        toasts,
-        addToast,
-        removeToast,
-        success,
-        error,
-        warning,
-        info,
-      }}
-    >
-      {children}
+    <ToastContext.Provider value={actions}>
+      <ToastListContext.Provider value={toasts}>{children}</ToastListContext.Provider>
     </ToastContext.Provider>
   );
 }
+
+export function useToastList() { return useContext(ToastListContext); }
 
 /**
  * 使用 Toast 的 Hook

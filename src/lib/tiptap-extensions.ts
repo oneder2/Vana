@@ -62,6 +62,7 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
       bulletList: false, // 使用自定义 BulletList 配置
       orderedList: false, // 使用自定义 OrderedList 配置
       paragraph: false, // 使用自定义 Paragraph 配置
+      underline: false,
     }),
     // 为 Paragraph 添加 UUID 支持
     Paragraph.extend({
@@ -336,4 +337,3 @@ export function getTiptapExtensions(themeId: string = 'arcane') {
     }),
   ];
 }
-

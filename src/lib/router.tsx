@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { documentDrafts } from './documentDrafts';
 
 type RouterContextValue = {
   path: string;
@@ -26,9 +27,18 @@ function getCurrentPath(): string {
 
 export function RouterProvider({ children }: { children: React.ReactNode }) {
   const [path, setPath] = useState(getCurrentPath());
+  const currentPath = useRef(path);
+  const navigationIntent = useRef(0);
+  currentPath.current = path;
 
   useEffect(() => {
-    const handleChange = () => setPath(getCurrentPath());
+    const handleChange = () => {
+      const next = getCurrentPath();
+      const intent = ++navigationIntent.current;
+      void documentDrafts.flushAll().then(() => {
+        if (intent === navigationIntent.current) setPath(next);
+      }).catch(() => window.history.replaceState({}, '', currentPath.current));
+    };
     window.addEventListener('popstate', handleChange);
     window.addEventListener('hashchange', handleChange);
     return () => {
@@ -42,12 +52,16 @@ export function RouterProvider({ children }: { children: React.ReactNode }) {
       path,
       navigate: (to: string) => {
         const next = normalizeTarget(to);
-        if (next.startsWith('http://') || next.startsWith('https://')) {
-          window.location.href = next;
-          return;
-        }
-        window.history.pushState({}, '', next);
-        setPath(next);
+        const intent = ++navigationIntent.current;
+        void documentDrafts.flushAll().then(() => {
+          if (intent !== navigationIntent.current) return;
+          if (next.startsWith('http://') || next.startsWith('https://')) {
+            window.location.href = next;
+            return;
+          }
+          window.history.pushState({}, '', next);
+          setPath(next);
+        }).catch(() => {});
       },
     }),
     [path]

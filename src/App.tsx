@@ -10,6 +10,7 @@ import AuthCallbackPage from '@/app/auth/callback/page';
 import HelpPage from '@/app/help/page';
 import WelcomePage from '@/app/welcome/page';
 import '@/app/globals.css';
+import { DraftLifecycle } from '@/components/DraftLifecycle';
 
 function RoutedApp() {
   const { path } = useRouter();
@@ -74,6 +75,7 @@ export default function App() {
     <ThemeProvider>
       <ToastProvider>
         <RouterProvider>
+          <DraftLifecycle />
           <RoutedApp />
           <Toast />
         </RouterProvider>
