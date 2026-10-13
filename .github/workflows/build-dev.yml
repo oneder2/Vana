@@ -210,11 +210,14 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android dependencies
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1"
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
           NDK_PATH=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | tail -1)
           if [ -z "$NDK_PATH" ]; then
