@@ -1,4 +1,9 @@
 # Add project specific ProGuard rules here.
+# Rust calls these names through JNI; R8 cannot discover those references.
+-keep class com.vana.no_visitors.AndroidShare {
+    public static void shareExportFile(java.lang.String, java.lang.String, java.lang.String);
+    public static java.lang.String lastShareError;
+}
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
 #

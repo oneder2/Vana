@@ -455,8 +455,9 @@ pub fn save_export_file(app: AppHandle, filename: String, content: Vec<u8>, file
 }
 
 #[tauri::command]
-pub fn share_export_file(path: String, file_type: String, title: String) -> Result<(), String> {
-    share_export_path(&path, &file_type, &title)
+pub fn share_export_file(app: AppHandle, path: String, file_type: String, title: String) -> Result<(), String> {
+    let path = crate::export_file::validate_share_path(&export_dir(&app)?, &PathBuf::from(path), &file_type)?;
+    share_export_path(&path.to_string_lossy(), &file_type, &title)
 }
 
 #[tauri::command]
@@ -490,128 +491,13 @@ fn export_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn save_export_bytes(app: &AppHandle, filename: &str, content: &[u8], file_type: &str) -> Result<String, String> {
-    let vana_dir = export_dir(app)?;
-    std::fs::create_dir_all(&vana_dir).map_err(|error| format!("创建 vana 目录失败: {}", error))?;
-
-    let mut final_path = vana_dir.join(format!("{}.{}", filename, file_type));
-    let mut counter = 1;
-    while final_path.exists() {
-        final_path = vana_dir.join(format!("{}({}).{}", filename, counter, file_type));
-        counter += 1;
-    }
-
-    std::fs::write(&final_path, content).map_err(|error| format!("保存文件失败: {}", error))?;
-    Ok(final_path.to_string_lossy().to_string())
-}
-
-#[cfg(target_os = "android")]
-fn export_mime_type(file_type: &str) -> &'static str {
-    match file_type {
-        "pdf" => "application/pdf",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "md" => "text/markdown",
-        _ => "application/octet-stream",
-    }
+    crate::export_file::save_bytes(&export_dir(app)?, filename, content, file_type)
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 #[cfg(target_os = "android")]
 fn share_export_path(path: &str, file_type: &str, title: &str) -> Result<(), String> {
-    use jni::objects::{JObject, JValue};
-
-    let context = ndk_context::android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) }
-        .map_err(|error| format!("获取 Android VM 失败: {}", error))?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|error| format!("附加 Android 线程失败: {}", error))?;
-
-    let class = env
-        .find_class("com/vana/no_visitors/AndroidShare")
-        .map_err(|error| format!("查找分享入口失败: {}", error))?;
-    let path = env
-        .new_string(path)
-        .map_err(|error| format!("创建路径参数失败: {}", error))?;
-    let mime_type = env
-        .new_string(export_mime_type(file_type))
-        .map_err(|error| format!("创建 MIME 参数失败: {}", error))?;
-    let title = env
-        .new_string(title)
-        .map_err(|error| format!("创建标题参数失败: {}", error))?;
-
-    let call_result = env.call_static_method(
-        &class,
-        "shareExportFile",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
-        &[
-            JValue::Object(&JObject::from(path)),
-            JValue::Object(&JObject::from(mime_type)),
-            JValue::Object(&JObject::from(title)),
-        ],
-    );
-
-    if let Err(error) = call_result {
-        let java_error = describe_java_exception(&mut env);
-        return Err(match java_error {
-            Some(message) => format!("调用 Android 分享失败: {}; {}", error, message),
-            None => format!("调用 Android 分享失败: {}", error),
-        });
-    }
-
-    if let Some(message) = read_static_string_field(&mut env, &class, "lastShareError") {
-        if !message.trim().is_empty() {
-            return Err(message);
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(target_os = "android")]
-fn read_static_string_field(
-    env: &mut jni::JNIEnv<'_>,
-    class: &jni::objects::JClass<'_>,
-    field_name: &str,
-) -> Option<String> {
-    let field = match env.get_static_field(class, field_name, "Ljava/lang/String;") {
-        Ok(value) => value,
-        Err(error) => {
-            let java_error = describe_java_exception(env);
-            return Some(match java_error {
-                Some(message) => format!("读取 Android 分享状态失败: {}; {}", error, message),
-                None => format!("读取 Android 分享状态失败: {}", error),
-            });
-        }
-    };
-
-    let object = field.l().ok()?;
-    if object.is_null() {
-        return None;
-    }
-
-    env.get_string(&jni::objects::JString::from(object))
-        .ok()
-        .map(|value| value.to_string_lossy().into_owned())
-}
-
-#[cfg(target_os = "android")]
-fn describe_java_exception(env: &mut jni::JNIEnv<'_>) -> Option<String> {
-    if !env.exception_check().ok()? {
-        return None;
-    }
-
-    let throwable = env.exception_occurred().ok()?;
-    let _ = env.exception_clear();
-    let message_object = env
-        .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])
-        .ok()?
-        .l()
-        .ok()?;
-    let message = env
-        .get_string(&jni::objects::JString::from(message_object))
-        .ok()?
-        .to_string_lossy()
-        .into_owned();
-    Some(format!("Java 异常: {}", message))
+    crate::android_share::share_export_path(path, file_type, title)
 }
 
 #[cfg(not(target_os = "android"))]

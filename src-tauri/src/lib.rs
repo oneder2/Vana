@@ -6,6 +6,9 @@ mod db;
 mod keychain;
 mod storage;
 mod typst_export;
+mod export_file;
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod android_share;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
