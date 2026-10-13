@@ -23,6 +23,7 @@ pub fn run() {
             commands::get_document_command,
             commands::create_document_command,
             commands::save_document_command,
+            commands::list_document_history_command,
             commands::move_document_command,
             commands::set_document_status_command,
             commands::toggle_favorite_command,

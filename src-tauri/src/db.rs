@@ -994,6 +994,13 @@ pub fn simple_search(app: &AppHandle, query: &str) -> Result<Vec<SearchResult>> 
 }
 
 fn append_history(conn: &Connection, document_id: &str, snapshot: &str) -> Result<()> {
+    let previous: Option<String> = conn.query_row(
+        "SELECT snapshot FROM document_history WHERE document_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT 1",
+        params![document_id], |row| row.get(0),
+    ).optional()?;
+    if previous.as_deref() == Some(snapshot) {
+        return Ok(());
+    }
     conn.execute(
         "
         INSERT INTO document_history (id, document_id, snapshot, created_at)
@@ -1437,10 +1444,13 @@ use accounts::{active_scope, canonical_project, open_control, open_scoped_db};
 
 #[path = "db/documents.rs"]
 mod documents;
+#[path = "db/history.rs"]
+mod history;
 pub use documents::{
     create_document, move_document, permanently_delete_document, save_document,
     set_document_status, toggle_favorite,
 };
+pub use history::{list_document_history, DocumentHistoryEntry};
 
 #[path = "db/sync.rs"]
 mod sync;

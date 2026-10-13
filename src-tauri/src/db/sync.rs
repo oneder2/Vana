@@ -154,6 +154,20 @@ pub(super) fn write_remote(conn: &Connection, d: &SyncDocumentRecord) -> Result<
     );
     validate_content(&d.content_json)?;
     ensure_document_content_size(&d.content_json)?;
+    if !d.is_purged && d.node_kind == "document" {
+        let previous: Option<String> = conn
+            .query_row(
+                "SELECT content_json FROM documents WHERE id=?1 AND is_purged=0",
+                params![d.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(previous) = previous.as_deref() {
+            if previous != d.content_json {
+                append_history(conn, &d.id, previous)?;
+            }
+        }
+    }
     conn.execute("INSERT INTO documents(id,title,node_kind,parent_id,depth,content_json,plain_text,status,
         is_favorite,is_template,created_at,updated_at,archived_at,deleted_at,revision,is_purged)
         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
@@ -164,6 +178,9 @@ pub(super) fn write_remote(conn: &Connection, d: &SyncDocumentRecord) -> Result<
         params![d.id,d.title,d.node_kind,d.parent_id,d.depth,d.content_json,d.plain_text,d.status,
             d.is_favorite,d.is_template,d.created_at,d.updated_at,d.archived_at,d.deleted_at,d.revision,d.is_purged])?;
     replace_document_tags(conn, &d.id, &d.tags)?;
+    if !d.is_purged && d.node_kind == "document" {
+        append_history(conn, &d.id, &d.content_json)?;
+    }
     if d.is_purged {
         conn.execute(
             "DELETE FROM document_history WHERE document_id=?1",

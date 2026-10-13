@@ -87,6 +87,27 @@ pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<Docume
             |r| r.get(0),
         )
         .context("文档不存在")?;
+    let existing = get_document_from_conn(&conn, &input.id)?.context("文档不存在")?;
+    let mut normalized_tags: Vec<_> = input
+        .tags
+        .iter()
+        .map(|tag| tag.trim().to_owned())
+        .filter(|tag| !tag.is_empty())
+        .collect();
+    normalized_tags.sort();
+    normalized_tags.dedup();
+    validate_content(&input.content_json)?;
+    let same_body = serde_json::from_str::<serde_json::Value>(&existing.content_json)?
+        == serde_json::from_str::<serde_json::Value>(&input.content_json)?;
+    if existing.title == input.title
+        && same_body
+        && existing.plain_text == input.plain_text
+        && existing.tags == normalized_tags
+    {
+        // Opening/reading/re-submitting an unchanged document must not create a mutation.
+        conn.commit()?;
+        return Ok(existing);
+    }
     if generation != input.content_generation {
         // A queued in-memory edit predating a pull cannot overwrite the newly applied remote version.
         validate_content(&input.content_json)?;

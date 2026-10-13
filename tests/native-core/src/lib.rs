@@ -93,6 +93,63 @@ mod regressions {
         }
     }
     #[test]
+    fn reading_and_identical_saves_do_not_change_timestamp_outbox_or_history() {
+        let app = app();
+        let d = create(&app, "guest", "document", None);
+        let d = save_document(&app, input(&d, "kept content")).unwrap();
+        let before = export_sync_documents(&app, "guest").unwrap();
+        let history = list_document_history(&app, "guest", &d.id).unwrap();
+        for _ in 0..3 {
+            let read = get_document(&app, &d.id).unwrap().unwrap();
+            let mut unchanged = input(&read, "kept content");
+            unchanged.content_json = serde_json::to_string_pretty(
+                &serde_json::from_str::<serde_json::Value>(&read.content_json).unwrap()).unwrap();
+            unchanged.tags = vec![" kept content ".into(), "kept content".into()];
+            let saved = save_document(&app, unchanged).unwrap();
+            assert_eq!(saved.updated_at, d.updated_at);
+        }
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids, before.pending_job_ids);
+        assert_eq!(list_document_history(&app, "guest", &d.id).unwrap().len(), history.len());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn history_observes_cloud_changes_without_queueing_writes_and_is_account_scoped() {
+        let app = app();
+        configure(&app);
+        let d = create(&app, "guest", "document", None);
+        let d = save_document(&app, input(&d, "local version")).unwrap();
+        let first = export_sync_documents(&app, "guest").unwrap();
+        finalize_sync_jobs(&app, "guest", &first.pending_job_ids, &[remote(&d, 1, "local version")], true, None, None).unwrap();
+        apply_remote_documents(&app, "guest", vec![remote(&d, 2, "cloud version")]).unwrap();
+        let entries = list_document_history(&app, "guest", &d.id).unwrap();
+        assert!(entries[0].content_json.contains("cloud version"));
+        assert!(entries.iter().any(|entry| entry.content_json.contains("local version")));
+        assert!(export_sync_documents(&app, "guest").unwrap().pending_job_ids.is_empty());
+        apply_remote_documents(&app, "guest", vec![remote(&d, 2, "cloud version")]).unwrap();
+        assert_eq!(list_document_history(&app, "guest", &d.id).unwrap().len(), entries.len());
+        save_supabase_session(&app, session("00000000-0000-0000-0000-000000000001")).unwrap();
+        assert!(list_document_history(&app, "guest", &d.id).is_err());
+        let scope = get_app_state(&app).unwrap().account_scope;
+        assert!(list_document_history(&app, &scope, &d.id).is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn history_is_bounded_and_purged_documents_cannot_be_read() {
+        let app = app();
+        let d = create(&app, "guest", "document", None);
+        for n in 0..24 { save_document(&app, input(&d, &format!("version {n}"))).unwrap(); }
+        let entries = list_document_history(&app, "guest", &d.id).unwrap();
+        assert_eq!(entries.len(), 20);
+        assert!(entries[0].content_json.contains("version 23"));
+        set_document_status(&app, "guest", &d.id, "trashed").unwrap();
+        permanently_delete_document(&app, "guest", &d.id).unwrap();
+        assert!(list_document_history(&app, "guest", &d.id).is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
     fn accounts_projects_and_guest_have_separate_data_and_late_work_is_rejected() {
         let app = app();
         configure(&app);

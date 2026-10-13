@@ -139,6 +139,15 @@ pub fn save_document_command(
 }
 
 #[tauri::command]
+pub fn list_document_history_command(
+    app: AppHandle,
+    expected_scope: String,
+    id: String,
+) -> Result<Vec<db::DocumentHistoryEntry>, String> {
+    db::list_document_history(&app, &expected_scope, &id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn move_document_command(
     app: AppHandle,
     expected_scope: String,
