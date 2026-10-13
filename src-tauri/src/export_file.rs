@@ -37,6 +37,15 @@ pub fn save_backup(directory: &Path, title: &str, json: &str) -> Result<PathBuf,
     save_with_extension(directory, title, json.as_bytes(), "vana-backup.json")
 }
 
+pub fn save_attachment(directory: &Path, filename: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let (stem, extension) = filename.rsplit_once('.').ok_or("附件缺少扩展名")?;
+    let extension = extension.to_ascii_lowercase();
+    if !matches!(extension.as_str(), "txt"|"md"|"csv"|"pdf"|"png"|"jpg"|"jpeg"|"gif"|"webp"|"docx"|"zip") {
+        return Err("不支持的附件类型".into());
+    }
+    save_with_extension(directory, stem, bytes, &extension)
+}
+
 fn save_with_extension(directory: &Path, title: &str, bytes: &[u8], extension: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(directory).map_err(|e| format!("创建导出目录失败: {e}"))?;
     let root = directory.canonicalize().map_err(|e| format!("无法访问导出目录: {e}"))?;

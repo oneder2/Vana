@@ -264,10 +264,18 @@ pub fn apply_remote_documents(
     let mut stmt = conn.prepare(
         "SELECT entity_id FROM sync_queue WHERE entity_type='document' AND processed_at IS NULL",
     )?;
-    let pending = stmt
+    let mut pending = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
     drop(stmt);
+    // A local-only file is unsynchronized user data even when the document
+    // body is clean. A remote permanent deletion must preserve it in a copy.
+    for (id, _, revision, purged) in &local {
+        if !*purged && remote.get(id).is_some_and(|d| d.is_purged && d.revision > *revision) {
+            let has_local_files: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM attachments WHERE document_id=?1 AND upload_state='local-only')", params![id], |r| r.get(0))?;
+            if has_local_files { pending.insert(id.clone()); }
+        }
+    }
     let dirty_roots = pending
         .iter()
         .map(|id| root_of(id))
@@ -310,6 +318,7 @@ pub fn apply_remote_documents(
                         copy.archived_at = None;
                         copy.deleted_at = None;
                         write_remote(&conn, &copy)?;
+                        super::attachments::copy_between(&conn, &conn, id, &copy.id)?;
                         queue_job(&conn, "document", &copy.id, "conflict-copy", "")?;
                         record_conflict(&conn, &copy.id, id, "cloud-edit-during-delete")?;
                     }
@@ -344,6 +353,7 @@ pub fn apply_remote_documents(
         }
         copy.parent_id = copy.parent_id.and_then(|p| remap.get(&p).cloned());
         write_remote(&conn, &copy)?;
+        super::attachments::copy_between(&conn, &conn, id, &copy.id)?;
         queue_job(&conn, "document", &copy.id, "conflict-copy", "")?;
         record_conflict(&conn, &copy.id, id, "concurrent-tree-change")?;
         conn.execute("DELETE FROM sync_queue WHERE entity_id=?1", params![id])?;
@@ -370,6 +380,7 @@ pub fn apply_remote_documents(
         }
     }
     validate_tree(&conn)?;
+    super::attachments::validate_capacity(&conn)?;
     conn.commit()?;
     Ok(ApplyRemoteResult {
         applied,

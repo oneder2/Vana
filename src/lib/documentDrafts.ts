@@ -12,6 +12,7 @@ export class DocumentDraftStore {
   private listeners = new Set<(event: DraftEvent) => void>();
   private version = 0;
   private exclusive = new Set<string>();
+  private operations = new Map<string, Set<Promise<unknown>>>();
 
   constructor(private persist: (input: SaveDocumentInput) => Promise<DocumentRecord>, private delay = 600) {}
 
@@ -29,9 +30,22 @@ export class DocumentDraftStore {
     return input ? { ...input, tags: [...input.tags] } : undefined;
   }
 
-  isDirty(id: string, scope?: string) { const key = this.key(id, scope); return this.drafts.has(key) || this.writers.has(key); }
+  isDirty(id: string, scope?: string) { const key = this.key(id, scope); return this.drafts.has(key) || this.writers.has(key) || this.operations.has(key); }
   pendingIds(scope: string) { return [...this.drafts.values()].filter(d => d.input.account_scope === scope).map(d => d.input.id); }
-  hasPending() { return this.drafts.size > 0 || this.writers.size > 0; }
+  hasPending() { return this.drafts.size > 0 || this.writers.size > 0 || this.operations.size > 0; }
+
+  /** Attachment reads/writes must drain before navigation, logout or normal close. */
+  trackOperation<T>(id: string, scope: string, operation: () => Promise<T>): Promise<T> {
+    const key = this.key(id, scope);
+    if (this.exclusive.has(key)) return Promise.reject(new Error('文档操作正在进行，请稍后再试'));
+    const operations = this.operations.get(key) ?? new Set<Promise<unknown>>();
+    const writer = Promise.resolve().then(operation).finally(() => {
+      operations.delete(writer);
+      if (!operations.size && this.operations.get(key) === operations) this.operations.delete(key);
+    });
+    operations.add(writer); this.operations.set(key, operations);
+    return writer;
+  }
 
   queue(input: SaveDocumentInput) {
     const key = this.key(input.id, input.account_scope);
@@ -63,6 +77,8 @@ export class DocumentDraftStore {
   }
 
   private async flushKey(id: string): Promise<DocumentRecord | undefined> {
+    const operations = this.operations.get(id);
+    if (operations?.size) await Promise.all([...operations]);
     const active = this.writers.get(id);
     if (active) {
       const record = await active;
@@ -95,7 +111,7 @@ export class DocumentDraftStore {
 
   async flushAll() {
     while (this.hasPending()) {
-      await Promise.all([...new Set([...this.drafts.keys(), ...this.writers.keys()])].map((id) => this.flushKey(id)));
+      await Promise.all([...new Set([...this.drafts.keys(), ...this.writers.keys(), ...this.operations.keys()])].map((id) => this.flushKey(id)));
     }
   }
 }

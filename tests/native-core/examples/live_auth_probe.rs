@@ -8,6 +8,8 @@ mod credentials;
 mod db;
 #[path = "../../../src-tauri/src/document_content.rs"]
 mod document_content;
+#[path = "../../../src-tauri/src/export_file.rs"]
+mod export_file;
 #[path = "../../../src-tauri/src/auth.rs"]
 mod auth;
 

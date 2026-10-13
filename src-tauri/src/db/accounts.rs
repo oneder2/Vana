@@ -84,7 +84,7 @@ pub fn open_db(app: &AppHandle) -> Result<Connection> {
         "ATTACH DATABASE ?1 AS control",
         params![dir.join("control.db").to_string_lossy()],
     )?;
-    if conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? < 4 {
+    if conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? < 5 {
         let tx = conn.unchecked_transaction()?;
         init_schema(&tx)?;
         // Migrated space databases must not retain credentials from their old global configuration.
@@ -92,7 +92,7 @@ pub fn open_db(app: &AppHandle) -> Result<Connection> {
             "DELETE FROM app_config WHERE key LIKE 'supabase.%' OR key LIKE 'onboarding.%'",
             [],
         )?;
-        tx.pragma_update(None, "user_version", 4)?;
+        tx.pragma_update(None, "user_version", 5)?;
         tx.commit()?;
     }
     if get_config_value(&conn, "space.id")?.as_deref() != Some(&scope) {

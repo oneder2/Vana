@@ -119,6 +119,8 @@ pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<Docume
         conn.execute("INSERT INTO documents(id,title,node_kind,depth,content_json,plain_text,status,created_at,updated_at)
             VALUES (?1,?2,'document',0,?3,?4,'active',?5,?5)",params![id,title,input.content_json,input.plain_text,now])?;
         replace_document_tags(&conn, &id, &input.tags)?;
+        super::attachments::copy_between(&conn, &conn, &input.id, &id)?;
+        super::attachments::validate_capacity(&conn)?;
         append_history(&conn, &id, &input.content_json)?;
         queue_job(&conn, "document", &id, "draft-conflict", "")?;
         record_conflict(&conn, &id, &input.id, "edit-during-sync")?;

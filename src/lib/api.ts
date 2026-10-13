@@ -336,9 +336,28 @@ export async function restoreDocumentHistory(document: DocumentRecord, historyId
 export interface BackupPreview {
   created_at: string; documents: number; folders: number; tags: number;
   retained_history: number; discarded_history: number; titles: string[];
+  attachments: number; attachment_bytes: number;
 }
 export interface BackupImportResult {
   documents: number; folders: number; retained_history: number; first_document_id: string | null;
+  attachments: number;
+}
+
+export interface AttachmentSummary {
+  id: string; document_id: string; file_name: string; mime_type: string;
+  size_bytes: number; checksum_sha256: string; created_at: string;
+}
+export function listAttachments(scope: string, documentId: string): Promise<AttachmentSummary[]> {
+  return invoke('list_attachments_command', { expectedScope: scope, documentId });
+}
+export function addAttachment(scope: string, documentId: string, filename: string, dataBase64: string): Promise<AttachmentSummary> {
+  return invoke('add_attachment_command', { expectedScope: scope, documentId, filename, dataBase64 });
+}
+export function removeAttachment(scope: string, documentId: string, id: string): Promise<void> {
+  return invoke('remove_attachment_command', { expectedScope: scope, documentId, id });
+}
+export function exportAttachment(scope: string, documentId: string, id: string, share: boolean): Promise<string> {
+  return invoke('export_attachment_command', { expectedScope: scope, documentId, id, share });
 }
 export async function exportSpaceBackup(scope: string): Promise<string> {
   return invoke<string>('export_space_backup_command', { expectedScope: scope });

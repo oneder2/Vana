@@ -118,3 +118,33 @@ test('failed draft flush prevents recovery and releases the operation lock', asy
   store.queue(input('a', 'retry'));
   await store.flushAll();
 });
+
+test('document and application flush wait for attachment work in the captured account space', async () => {
+  const store = new DocumentDraftStore(async value => record(value), 60_000);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let persisted = false;
+  const write = store.trackOperation('same-id', 'account-A', async () => { await gate; persisted = true; });
+  assert.equal(store.isDirty('same-id', 'account-A'), true);
+  assert.equal(store.isDirty('same-id', 'account-B'), false);
+  await store.flush('same-id', 'account-B');
+  let navigated = false, closed = false;
+  const navigation = store.flush('same-id', 'account-A').then(() => { assert.equal(persisted, true); navigated = true; });
+  const close = store.flushAll().then(() => { assert.equal(persisted, true); closed = true; });
+  await Promise.resolve(); assert.equal(navigated, false); assert.equal(closed, false);
+  release(); await Promise.all([write, navigation, close]);
+  assert.equal(store.hasPending(), false);
+});
+
+test('an attachment failure rejects an in-progress close and releases its operation slot', async () => {
+  const store = new DocumentDraftStore(async value => record(value), 60_000);
+  let reject!: (error: Error) => void;
+  const gate = new Promise<void>((_, fail) => { reject = fail; });
+  const write = store.trackOperation('a', 'guest', () => gate);
+  const failure = assert.rejects(write, /disk full/);
+  const close = assert.rejects(store.flushAll(), /disk full/);
+  reject(new Error('disk full')); await Promise.all([failure, close]);
+  assert.equal(store.hasPending(), false);
+  await store.trackOperation('a', 'guest', async () => {});
+  await store.flushAll();
+});

@@ -94,6 +94,140 @@ mod regressions {
         }
     }
 
+    fn attachment_data(bytes: &[u8]) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn local_attachments_reopen_remain_out_of_sync_and_copy_explicitly_between_spaces() {
+        let app = app(); configure(&app);
+        let d = create(&app, "guest", "document", None);
+        let before = export_sync_documents(&app, "guest").unwrap();
+        let payload = attachment_data("离线附件\nretained bytes".as_bytes());
+        let a = add_attachment(&app, "guest", &d.id, "notes.txt", &payload).unwrap();
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids, before.pending_job_ids);
+        assert!(!serde_json::to_string(&export_sync_documents(&app, "guest").unwrap()).unwrap().contains(&payload));
+        assert_eq!(get_document(&app, &d.id).unwrap().unwrap().content_json, d.content_json);
+        assert_eq!(read_attachment(&AppHandle(app.0.clone()), "guest", &d.id, &a.id).unwrap().data_base64, payload);
+        save_supabase_session(&app, session("00000000-0000-0000-0000-000000000001")).unwrap();
+        let scope = get_app_state(&app).unwrap().account_scope;
+        assert!(list_attachments(&app, "guest", &d.id).is_err());
+        assert!(read_attachment(&app, &scope, &d.id, &a.id).is_err());
+        assert!(remove_attachment(&app, "guest", &d.id, &a.id).is_err());
+        assert!(add_attachment(&app, "guest", &d.id, "late.txt", &payload).is_err());
+        recover_local_documents(&app, &scope, "guest").unwrap();
+        let copied = list_documents(&app, None).unwrap().into_iter().find(|doc| doc.title == d.title).unwrap();
+        let files = list_attachments(&app, &scope, &copied.id).unwrap();
+        assert_eq!(files.len(), 1); assert_ne!(files[0].id, a.id);
+        assert_eq!(read_attachment(&app, &scope, &copied.id, &files[0].id).unwrap().data_base64, payload);
+        remove_attachment(&app, &scope, &copied.id, &files[0].id).unwrap();
+        assert!(read_attachment(&app, &scope, &copied.id, &files[0].id).is_err());
+        clear_supabase_session(&app, &scope).unwrap();
+        assert_eq!(read_attachment(&app, "guest", &d.id, &a.id).unwrap().data_base64, payload);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn attachments_reject_bad_inputs_and_database_failure_rolls_back_metadata_payload_and_import() {
+        let app = app(); let d = create(&app, "guest", "document", None);
+        let good = attachment_data(b"actual file bytes");
+        let a = add_attachment(&app, "guest", &d.id, "evidence.txt", &good).unwrap();
+        let before = export_sync_documents(&app, "guest").unwrap();
+        for (name, data) in [("../escape.txt", good.clone()),("CON.txt",good.clone()),("wrong.png",good.clone()),
+            ("run.exe",good.clone()),("broken.txt","%%%".into()),("huge.txt",attachment_data(&vec![b'x';5*1024*1024+1]))] {
+            assert!(add_attachment(&app, "guest", &d.id, name, &data).is_err());
+        }
+        let backup = export_space_backup(&app, "guest").unwrap();
+        let count = list_documents(&app, None).unwrap().len();
+        let conn = open_db(&app).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_blob BEFORE INSERT ON attachment_blobs BEGIN SELECT RAISE(ABORT,'injected disk full'); END;").unwrap();
+        assert!(add_attachment(&app, "guest", &d.id, "second.txt", &good).is_err());
+        assert!(import_space_backup(&app, "guest", &backup).is_err());
+        assert_eq!(list_documents(&app, None).unwrap().len(), count);
+        assert_eq!(list_attachments(&app, "guest", &d.id).unwrap().len(), 1);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM attachment_blobs", [], |r|r.get::<_,usize>(0)).unwrap(),1);
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids,before.pending_job_ids);
+        conn.execute("UPDATE attachment_blobs SET data=?1 WHERE attachment_id=?2", rusqlite::params![b"corrupt".as_slice(),a.id]).unwrap();
+        assert!(read_attachment(&app, "guest", &d.id, &a.id).is_err());
+        assert!(export_space_backup(&app, "guest").is_err());
+        drop(conn); std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn backup_v2_preserves_attachment_bytes_remaps_ids_rejects_corruption_and_reads_v1() {
+        let app = app(); let folder = create(&app,"guest","folder",None);
+        let d = create(&app,"guest","document",Some(&folder.id));
+        let payload = attachment_data(b"portable attachment body");
+        let a = add_attachment(&app,"guest",&d.id,"portable.md",&payload).unwrap();
+        let backup = export_space_backup(&app,"guest").unwrap();
+        let original:serde_json::Value = serde_json::from_str(&backup).unwrap();
+        assert_eq!(original["version"],2);
+        let preview = preview_space_backup(&app,"guest",&backup).unwrap();
+        assert_eq!(preview.attachments,1);assert_eq!(preview.attachment_bytes,a.size_bytes);
+        let count = list_documents(&app,None).unwrap().len();
+        for mutation in 0..7 {
+            let mut invalid=original.clone();
+            match mutation {
+                0=>invalid["attachments"][0]["metadata"]["checksum_sha256"]=serde_json::json!("0".repeat(64)),
+                1=>invalid["attachments"][0]["metadata"]["size_bytes"]=serde_json::json!(999),
+                2=>invalid["attachments"][0]["metadata"]["document_id"]=serde_json::json!(folder.id),
+                3=>invalid["attachments"][0]["data_base64"]=serde_json::json!("broken"),
+                4=>invalid["attachments"][0]["metadata"]["file_name"]=serde_json::json!("../x.md"),
+                5=>{let duplicate=invalid["attachments"][0].clone();invalid["attachments"].as_array_mut().unwrap().push(duplicate);},
+                _=>invalid["version"]=serde_json::json!(1),
+            }
+            assert!(preview_space_backup(&app,"guest",&invalid.to_string()).is_err());
+            assert!(import_space_backup(&app,"guest",&invalid.to_string()).is_err());
+            assert_eq!(list_documents(&app,None).unwrap().len(),count);
+        }
+        let copied=import_space_backup(&app,"guest",&backup).unwrap();assert_eq!(copied.attachments,1);
+        let copied_document=list_documents(&app,None).unwrap().into_iter().find(|doc| doc.title==d.title && doc.id!=d.id).unwrap();
+        let files=list_attachments(&app,"guest",&copied_document.id).unwrap();
+        assert_ne!(files[0].id,a.id);assert_ne!(files[0].document_id,d.id);
+        assert_eq!(read_attachment(&app,"guest",&files[0].document_id,&files[0].id).unwrap().data_base64,payload);
+        let mut old=original;old["version"]=serde_json::json!(1);old.as_object_mut().unwrap().remove("attachments");
+        assert_eq!(preview_space_backup(&app,"guest",&old.to_string()).unwrap().attachments,0);
+        assert_eq!(import_space_backup(&app,"guest",&old.to_string()).unwrap().attachments,0);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn attachment_limits_and_trash_preservation_apply_to_real_payloads() {
+        let app=app();let d=create(&app,"guest","document",None);
+        let payload=attachment_data(&vec![b'x';5*1024*1024]);
+        for i in 0..5 {add_attachment(&app,"guest",&d.id,&format!("large-{i}.txt"),&payload).unwrap();}
+        assert!(add_attachment(&app,"guest",&d.id,"over.txt",&attachment_data(b"x")).is_err());
+        set_document_status(&app,"guest",&d.id,"trashed").unwrap();
+        assert_eq!(list_attachments(&app,"guest",&d.id).unwrap().len(),5);
+        assert!(add_attachment(&app,"guest",&d.id,"trash.txt",&attachment_data(b"x")).is_err());
+        permanently_delete_document(&app,"guest",&d.id).unwrap();
+        assert_eq!(open_db(&app).unwrap().query_row("SELECT COUNT(*) FROM attachment_blobs",[],|r|r.get::<_,usize>(0)).unwrap(),0);
+        let d=create(&app,"guest","document",None);
+        for i in 0..20 {add_attachment(&app,"guest",&d.id,&format!("empty-{i}.txt"),"").unwrap();}
+        assert!(add_attachment(&app,"guest",&d.id,"twenty-first.txt","").is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn remote_purge_preserves_unsynchronized_local_files_even_without_body_edits() {
+        let app=app();let d=create(&app,"guest","document",None);
+        let queued=export_sync_documents(&app,"guest").unwrap();
+        finalize_sync_jobs(&app,"guest",&queued.pending_job_ids,&[remote(&d,1,"")],true,None,None).unwrap();
+        let payload=attachment_data(b"local file must survive remote permanent deletion");
+        let a=add_attachment(&app,"guest",&d.id,"local.txt",&payload).unwrap();
+        assert!(export_sync_documents(&app,"guest").unwrap().pending_job_ids.is_empty());
+        let mut purged=remote(&d,2,"");purged.is_purged=true;purged.status="trashed".into();purged.tags.clear();
+        purged.content_json="{\"type\":\"doc\",\"content\":[]}".into();
+        assert_eq!(apply_remote_documents(&app,"guest",vec![purged]).unwrap().conflict_copies,1);
+        assert!(read_attachment(&app,"guest",&d.id,&a.id).is_err());
+        let copy=list_document_conflicts(&app,"guest").unwrap().pop().unwrap();
+        let files=list_attachments(&app,"guest",&copy.copy_id).unwrap();assert_eq!(files.len(),1);
+        assert_eq!(read_attachment(&app,"guest",&copy.copy_id,&files[0].id).unwrap().data_base64,payload);
+        assert_eq!(open_db(&app).unwrap().query_row("SELECT COUNT(*) FROM attachment_blobs",[],|r|r.get::<_,usize>(0)).unwrap(),1);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
     #[test]
     fn portable_backup_round_trip_copies_tree_tags_and_history_without_secrets_or_revision() {
         let app = app(); configure(&app);
@@ -216,15 +350,16 @@ mod regressions {
     }
 
     #[test]
-    fn existing_v3_space_gains_conflict_schema_without_changing_documents() {
+    fn existing_v3_space_gains_conflict_and_attachment_schema_without_changing_documents() {
         let app = app();
         let d = create(&app, "guest", "document", None);
         let conn = open_db(&app).unwrap();
-        conn.execute_batch("DROP TABLE document_conflicts; PRAGMA user_version=3;").unwrap();
+        conn.execute_batch("DROP TABLE document_conflicts; DROP TABLE attachment_blobs; PRAGMA user_version=3;").unwrap();
         drop(conn);
         assert!(list_document_conflicts(&app, "guest").unwrap().is_empty());
         assert_eq!(get_document(&app, &d.id).unwrap().unwrap().content_json, d.content_json);
-        assert_eq!(open_db(&app).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 4);
+        assert_eq!(open_db(&app).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 5);
+        assert!(list_attachments(&app, "guest", &d.id).unwrap().is_empty());
         std::fs::remove_dir_all(app.0).unwrap();
     }
 

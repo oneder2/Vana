@@ -71,6 +71,7 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
         ['文档', pending.preview.documents], ['分组', pending.preview.folders], ['标签', pending.preview.tags], ['保留记录', pending.preview.retained_history],
       ].map(([label, count]) => <div key={label}><dt className="text-xs opacity-60">{label}</dt><dd className="mt-1 text-xl tabular-nums">{count}</dd></div>)}</dl>
       <p className="mt-4 break-words text-xs leading-6 opacity-70">{pending.preview.titles.join(' · ') || '此备份为空'}</p>
+      {(pending.preview.attachments ?? 0) > 0 && <p className="mt-2 text-xs leading-6 opacity-70">包含 {pending.preview.attachments} 个附件，共 {(pending.preview.attachment_bytes / 1024 / 1024).toFixed(1)} MiB；将复制文件内容并生成新附件 ID。</p>}
       {pending.preview.discarded_history > 0 && <p className="mt-2 text-xs opacity-70">{pending.preview.discarded_history} 条历史超过保留期限或上限，导入时将略过。</p>}
       <p className="mt-3 text-xs leading-6 opacity-70">确认后将复制到当前空间，生成新文档 ID，并进入待同步队列。已有同名标签沿用当前颜色；历史仍受 20 个 / 30 天 / 共用 5 MiB 上限约束。</p>
       <button disabled={busy || disabled || pending.preview.documents + pending.preview.folders === 0} className="mt-4 rounded-md border px-4 py-3 text-sm" style={{ borderColor: border, backgroundColor: getThemeAccentBgColor(theme) }} onClick={() => void perform(async captured => {
@@ -79,7 +80,7 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
         await documentDrafts.flushAll();
         const result = await importSpaceBackup(captured, backup.json);
         if (activeScope.current !== captured) return;
-        setPending(null); setMessage(`已复制 ${result.documents} 篇文档、${result.folders} 个分组，保留 ${result.retained_history} 条正文记录。`);
+        setPending(null); setMessage(`已复制 ${result.documents} 篇文档、${result.folders} 个分组、${result.attachments ?? 0} 个附件，保留 ${result.retained_history} 条正文记录。`);
         await onImported();
       })}>确认复制到当前空间</button>
     </FadeContent>}

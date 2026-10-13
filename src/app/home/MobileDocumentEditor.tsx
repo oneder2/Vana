@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import { Editor } from '@/components/Editor';
+import { DocumentAttachments } from '@/components/DocumentAttachments';
 import type { DocumentRecord } from '@/lib/api';
 
 export function MobileDocumentEditor({
@@ -30,6 +31,7 @@ export function MobileDocumentEditor({
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
       {navigation}
+      <DocumentAttachments key={`${currentDocument.account_scope}:${currentDocument.id}`} scope={currentDocument.account_scope} documentId={currentDocument.id} generation={currentDocument.content_generation} readOnly={readOnly} />
       <div className="min-h-0 flex-1 overflow-hidden p-0">
         <Editor
           key={`${currentDocument.account_scope}:${currentDocument.id}`}

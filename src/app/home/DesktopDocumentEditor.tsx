@@ -5,6 +5,7 @@ import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import { Plus, Tag, X } from 'lucide-react';
 import { Editor } from '@/components/Editor';
+import { DocumentAttachments } from '@/components/DocumentAttachments';
 import type { AppState, DocumentRecord } from '@/lib/api';
 
 export function DesktopDocumentEditor({
@@ -115,6 +116,7 @@ export function DesktopDocumentEditor({
         </div>
       </div>
 
+      {currentDocument && <DocumentAttachments key={`${currentDocument.account_scope}:${currentDocument.id}`} scope={currentDocument.account_scope} documentId={currentDocument.id} generation={currentDocument.content_generation} readOnly={readOnly} />}
       <div className="min-h-0 flex-1 overflow-hidden p-0 md:p-3">
         {currentDocument && (
           <Editor

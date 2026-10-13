@@ -4,6 +4,13 @@ fn export_mime_type(file_type: &str) -> &'static str {
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "md" => "text/markdown",
         "backup" => "application/json",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "zip" => "application/zip",
         _ => "application/octet-stream",
     }
 }

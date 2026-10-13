@@ -316,7 +316,15 @@ fn init_schema(conn: &Connection) -> Result<()> {
     )?;
     ensure_column(conn, "documents", "revision", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "documents", "is_purged", "INTEGER NOT NULL DEFAULT 0")?;
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS write_events (created_at TEXT NOT NULL);
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS attachment_blobs (
+        attachment_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+        data BLOB NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS delete_document_attachments BEFORE DELETE ON documents
+    BEGIN DELETE FROM attachments WHERE document_id=OLD.id; END;
+    CREATE TRIGGER IF NOT EXISTS purge_document_attachments AFTER UPDATE OF is_purged ON documents
+    WHEN NEW.is_purged=1 BEGIN DELETE FROM attachments WHERE document_id=NEW.id; END;
+    CREATE TABLE IF NOT EXISTS write_events (created_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS queue_pending_entity ON sync_queue(entity_type, entity_id, processed_at);
         DELETE FROM sync_queue WHERE processed_at IS NOT NULL;
         DELETE FROM sync_queue WHERE id NOT IN (SELECT MAX(id) FROM sync_queue GROUP BY entity_type, entity_id);
@@ -892,10 +900,12 @@ pub fn recover_local_documents(
             estimate_document_storage_bytes(&d.title, &d.content_json, &d.plain_text) as isize,
         )?;
         write_remote(&conn, &d)?;
+        attachments::copy_between(&original, &conn, id, &d.id)?;
         queue_job(&conn, "document", &d.id, "recover", "")?;
     }
     validate_tree(&conn)?;
     set_config_value(&conn, &marker, Some("1"))?;
+    attachments::validate_capacity(&conn)?;
     conn.commit()?;
     Ok(ids.len())
 }
@@ -1401,6 +1411,9 @@ use accounts::{active_scope, canonical_project, open_control, open_scoped_db};
 
 #[path = "db/documents.rs"]
 mod documents;
+#[path = "db/attachments.rs"]
+mod attachments;
+pub use attachments::{add_attachment, list_attachments, read_attachment, remove_attachment, AttachmentSummary, PortableAttachment};
 #[path = "db/history.rs"]
 mod history;
 #[path = "db/backup.rs"]

@@ -165,6 +165,42 @@ pub async fn export_space_backup_command(app: AppHandle, expected_scope: String)
 }
 
 #[tauri::command]
+pub async fn list_attachments_command(app: AppHandle, expected_scope: String, document_id: String) -> Result<Vec<db::AttachmentSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || db::list_attachments(&app, &expected_scope, &document_id).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn add_attachment_command(app: AppHandle, expected_scope: String, document_id: String, filename: String, data_base64: String) -> Result<db::AttachmentSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || db::add_attachment(&app, &expected_scope, &document_id, &filename, &data_base64).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn remove_attachment_command(app: AppHandle, expected_scope: String, document_id: String, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || db::remove_attachment(&app, &expected_scope, &document_id, &id).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn export_attachment_command(app: AppHandle, expected_scope: String, document_id: String, id: String, share: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use base64::Engine;
+        let attachment = db::read_attachment(&app, &expected_scope, &document_id, &id).map_err(|e| e.to_string())?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(&attachment.data_base64).map_err(|_| "附件编码损坏")?;
+        let filename = &attachment.metadata.file_name;
+        let path = crate::export_file::save_attachment(&export_dir(&app)?, filename, &bytes)?;
+        if share {
+            let state = db::get_app_state(&app).map_err(|e| e.to_string())?;
+            if state.account_scope != expected_scope { return Err("空间已切换，附件已保存但未分享".into()); }
+            let extension = filename.rsplit_once('.').map(|(_,ext)| ext.to_ascii_lowercase()).unwrap_or_default();
+            share_export_path(&path.to_string_lossy(), &extension, filename)?;
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn preview_space_backup_command(app: AppHandle, expected_scope: String, json: String) -> Result<db::BackupPreview, String> {
     tauri::async_runtime::spawn_blocking(move || db::preview_space_backup(&app, &expected_scope, &json).map_err(|e| e.to_string()))
         .await.map_err(|e| e.to_string())?
