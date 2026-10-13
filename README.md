@@ -20,6 +20,8 @@
 
 SQLite 与云端正文均为明文；当前版本不提供端到端加密。详细的数据、令牌存储与安全边界见 [架构文档](docs/ARCHITECTURE.md)。
 
+开发分支 `feat/local-attachments` 已实现本地附件及含文件内容的备份 v2，Linux 原生文件选择器、导出、删除和重启回读已验证；尚未合入 `dev` 或发布。Android 正式签名包附件验收仍待完成，云附件尚未实现，见 [附件验收记录](docs/ATTACHMENT_ACCEPTANCE.md)。
+
 ## 使用
 
 1. 可直接以访客身份写作；登录后进入独立账号空间。设置中可明确复制访客文档或恢复旧数据库到当前空间。
@@ -54,7 +56,7 @@ python3 scripts/test-supabase-protocol.py  # 需要 Docker
 - [审查报告](docs/CODE_REVIEW_2026-10-12.md) · [逐项修复记录](docs/REMEDIATION_2026-10-12.md)
 - [变更记录](docs/CHANGELOG.md) · [下一阶段开发路线与验收条件](docs/ROADMAP.md)
 - [开发指南](docs/DEVELOPMENT.md) · [部署指南](docs/DEPLOYMENT.md)
-- [附件规划](docs/ATTACHMENT_STORAGE_PLAN.md)（尚未实现）
+- [附件规划](docs/ATTACHMENT_STORAGE_PLAN.md) · [开发分支验收记录](docs/ATTACHMENT_ACCEPTANCE.md)
 
 旧 PRD 和 Git Sync Protocol 保留为历史设计；当前主线已停用 Git/PAT 产品同步接口。
 
