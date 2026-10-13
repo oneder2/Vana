@@ -21,6 +21,7 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
   const { theme } = useTheme();
   const [files, setFiles] = useState<AttachmentSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -37,7 +38,10 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
     setLoading(true);
     try {
       const items = await listAttachments(scope, documentId);
-      if (active.current && version === request.current) setFiles(items);
+      if (active.current && version === request.current) { setFiles(items); setLoadFailed(false); }
+    } catch (failure) {
+      if (active.current && version === request.current) setLoadFailed(true);
+      throw failure;
     } finally {
       if (active.current && version === request.current) setLoading(false);
     }
@@ -58,7 +62,7 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
 
   return <details className="group shrink-0 border-b text-sm" style={{ borderColor: border, backgroundColor: getThemeSurfaceColor(theme) }}>
     <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 focus-visible:outline focus-visible:outline-2">
-      <Paperclip size={15} aria-hidden="true" /><span>附件</span><span className="tabular-nums opacity-65">{error ? '读取失败' : loading ? '…' : files.length}</span>
+      <Paperclip size={15} aria-hidden="true" /><span>附件</span><span className="tabular-nums opacity-65">{loading ? '…' : loadFailed ? '读取失败' : files.length}</span>
       <span className="ml-auto text-xs opacity-60">仅此设备</span>
       {busy && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-label="正在处理附件" />}
       <ChevronDown size={14} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
