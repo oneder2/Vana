@@ -1,91 +1,53 @@
 # Vana
 
-**版本**: v0.6.0  
-**当前主线**: Local-first、SQLite、Supabase、Tauri 驱动。
+版本：0.7.0。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
 
-## 项目概述
+## 当前功能
 
-Vana 是一个基于 Tauri v2 + Vite + React 构建的本地优先文档应用。当前主线已经从 Git/PAT 同步切换到 `SQLite + Supabase` 路线：
+- 访客离线写作；各账号和 Supabase 项目使用独立本地空间。
+- 邮箱/密码登录与注册；支持经 Auth 校验的已有会话导入。
+- 文件夹、收藏、标签、归档、回收站、永久删除和本地全文搜索。
+- 按文档独立自动保存；前台触发的 revision 同步和目录树冲突副本。
+- PDF、DOCX、Markdown 导出；Android 系统分享。
+- arcane、terminal、rusty、vellum 主题；Linux、Windows、Android（Beta）。
 
-- 本地写作先落 SQLite
-- Supabase 负责账号与同步中心
-- 保留 PDF / DOCX / Markdown 导出与多主题编辑体验
+同步拉取使用完整固定快照分页，上行仅包含待同步文档。目前没有实时订阅、后台常驻同步、原生登录 deep link 或附件云上传。本地历史有限保留，尚无完整历史恢复界面。
 
-## 核心特性
+SQLite 与云端正文均为明文；当前版本不提供端到端加密。详细的数据、令牌存储与安全边界见 [架构文档](docs/ARCHITECTURE.md)。
 
-- Local-first：文档先写入本地 SQLite
-- Supabase 登录与同步：邮箱 Magic Link + 自动增量同步
-- 文档库能力：收藏、最近文档、归档、回收站、标签、模板入口
-- 导出能力：PDF、DOCX、Markdown
-- 多主题编辑界面：arcane、terminal、rusty、vellum
-- 跨平台：Linux、Windows、Android（Beta）
+## 使用
 
-## 快速开始
+1. 可直接以访客身份写作；登录后进入独立账号空间。设置中可明确复制访客文档或恢复旧数据库到当前空间。
+2. 通过设置页的邮箱/密码登录。内置公共服务需要构建时配置；高级配置可连接自有 Supabase 项目。
+3. 用侧边栏创建文档或分组，正文自动保存；搜索按字面量匹配。
+4. 从文件菜单导出 PDF、DOCX 或 Markdown；Android 会打开系统分享界面。
+5. 回收站节点的右键菜单支持恢复和永久删除。永久删除保留云同步删除标记，正文与历史不可恢复。
 
-### 下载
+[下载 Releases](https://github.com/oneder2/Vana/releases) · [Issues](https://github.com/oneder2/Vana/issues)
 
-从 [GitHub Releases](https://github.com/your-username/Vana/releases) 下载对应平台的安装包。
+## 开发与验证
 
-> **Windows 用户注意**：首次运行可能遇到 SmartScreen 警告，这是正常现象。详见 [部署文档](./docs/DEPLOYMENT.md#windows-下载与-smartscreen-说明重要)。
+```sh
+npm ci
+npm run dev
+npm run typecheck
+npm test
+npm run build
+cargo test -j 2 --manifest-path tests/native-core/Cargo.toml
+cargo check -j 2 --manifest-path src-tauri/Cargo.toml
+python3 scripts/test-supabase-protocol.py  # 需要 Docker
+```
 
-### 基本使用
+原生开发使用 `npm run tauri:dev`；Android 使用 `npm run tauri:dev:android`。Linux 的原生构建需要 GTK/WebKit 系统依赖，详见 [开发指南](docs/DEVELOPMENT.md)。
 
-1. **配置 Supabase**（可选，但推荐）
-   - 打开设置页面
-   - 填写 Supabase URL 和 Anon Key
-  - 发送 Magic Link
-  - 导入回调会话
-  - 返回主页等待自动同步
+## 文档
 
-2. **创建文档**
-   - 在左侧文件树中右键创建文件或目录
-   - 点击文件开始编辑
+- [当前架构、同步契约与安全边界](docs/ARCHITECTURE.md)
+- [Supabase 配置与迁移](docs/SUPABASE_SETUP.md)
+- [审查报告](docs/CODE_REVIEW_2026-10-12.md) · [逐项修复记录](docs/REMEDIATION_2026-10-12.md)
+- [开发指南](docs/DEVELOPMENT.md) · [部署指南](docs/DEPLOYMENT.md)
+- [附件规划](docs/ATTACHMENT_STORAGE_PLAN.md)（尚未实现）
 
-3. **主题切换**
-   - 点击顶部导航栏的"氛围协议"按钮
-   - 预览并选择主题（预览不会应用到实际文件）
+旧 PRD 和 Git Sync Protocol 保留为历史设计；当前主线已停用 Git/PAT 产品同步接口。
 
-4. **导出文档**
-   - 打开文档后，点击顶部工具栏的导出按钮（下载图标）
-   - 选择导出格式（PDF、DOCX 或 Markdown）
-   - 导出的文档会自动应用当前文档的氛围协议主题样式
-
-5. **管理文档库**
-   - 在侧边栏查看文档库、归档、回收站与标签筛选
-   - 使用顶部工具栏完成收藏、归档、移至回收站等操作
-
-## 文档导航
-
-### 用户文档
-
-- [产品需求文档](./docs/产品需求文档%20(PRD)_%20Project_%20No%20Visitors%20(游客止步).md) - 完整的产品设计说明
-- [更新日志](./docs/CHANGELOG.md) - 版本更新记录和功能列表
-
-### 开发者文档
-
-- [Supabase 配置指南](./docs/SUPABASE_SETUP.md) - 主线同步方案的表结构、RLS 和账号配置
-- [附件 / 图片 Storage 方案](./docs/ATTACHMENT_STORAGE_PLAN.md) - Storage 元数据预留与后续实现顺序
-- [开发指南](./docs/DEVELOPMENT.md) - 技术栈、项目结构、构建说明
-- [部署指南](./docs/DEPLOYMENT.md) - CI/CD、发布流程、Windows SmartScreen 说明、工作流测试
-- [版本号管理策略](./docs/VERSIONING.md) - 版本号格式和构建流程
-- [同步协议](./docs/Sync%20Protocol.md) - Git 自动化同步协议详细说明
-
-## 当前状态说明
-
-- 主线不再依赖 GitHub PAT 与远程仓库
-- 旧 Git 同步路线将作为归档/极客分支保留，不再是默认产品方向
-- 当前 Supabase 同步已切到自动增量基础版，后续再继续补实时与附件云同步
-
-## 许可证
-
-ISC
-
-## 开发状态
-
-项目目前处于 **Beta 阶段**。当前主线已覆盖本地写作、基础 Supabase 登录/同步、导出、多主题 UI 与移动端最低可运行支持。
-
----
-
-**相关链接**：
-- [GitHub Issues](https://github.com/your-username/Vana/issues)
-- [GitHub Releases](https://github.com/your-username/Vana/releases)
+许可证：ISC。项目处于 Beta 阶段。
