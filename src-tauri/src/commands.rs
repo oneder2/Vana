@@ -148,6 +148,56 @@ pub fn list_document_history_command(
 }
 
 #[tauri::command]
+pub fn restore_document_history_command(
+    app: AppHandle,
+    input: db::RestoreDocumentHistoryInput,
+) -> Result<DocumentRecord, String> {
+    db::restore_document_history(&app, input).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn export_space_backup_command(app: AppHandle, expected_scope: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let json = db::export_space_backup(&app, &expected_scope).map_err(|e| e.to_string())?;
+        crate::export_file::save_backup(&export_dir(&app)?, "Vana-space", &json)
+            .map(|path| path.to_string_lossy().into_owned())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn preview_space_backup_command(app: AppHandle, expected_scope: String, json: String) -> Result<db::BackupPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || db::preview_space_backup(&app, &expected_scope, &json).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn import_space_backup_command(app: AppHandle, expected_scope: String, json: String) -> Result<db::BackupImportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || db::import_space_backup(&app, &expected_scope, &json).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn share_space_backup_command(app: AppHandle, path: String) -> Result<(), String> {
+    let path = crate::export_file::validate_backup_path(&export_dir(&app)?, &PathBuf::from(path))?;
+    share_export_path(&path.to_string_lossy(), "backup", "Vana 空间备份")
+}
+
+#[tauri::command]
+pub fn list_document_conflicts_command(app: AppHandle, expected_scope: String) -> Result<Vec<db::DocumentConflictSummary>, String> {
+    db::list_document_conflicts(&app, &expected_scope).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_document_conflict_command(app: AppHandle, expected_scope: String, copy_id: String) -> Result<db::DocumentConflict, String> {
+    db::get_document_conflict(&app, &expected_scope, &copy_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn acknowledge_document_conflict_command(app: AppHandle, expected_scope: String, copy_id: String) -> Result<(), String> {
+    db::acknowledge_document_conflict(&app, &expected_scope, &copy_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn move_document_command(
     app: AppHandle,
     expected_scope: String,

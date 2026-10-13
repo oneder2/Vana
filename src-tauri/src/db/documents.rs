@@ -121,6 +121,7 @@ pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<Docume
         replace_document_tags(&conn, &id, &input.tags)?;
         append_history(&conn, &id, &input.content_json)?;
         queue_job(&conn, "document", &id, "draft-conflict", "")?;
+        record_conflict(&conn, &id, &input.id, "edit-during-sync")?;
         ensure_total_storage_capacity(&conn, 0)?;
         let record = get_document_from_conn(&conn, &id)?.context("副本读取失败")?;
         conn.commit()?;

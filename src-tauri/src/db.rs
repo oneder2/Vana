@@ -298,6 +298,14 @@ fn init_schema(conn: &Connection) -> Result<()> {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS document_conflicts (
+            copy_id TEXT PRIMARY KEY,
+            original_id TEXT,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT
+        );
         ",
     )?;
     ensure_column(
@@ -1446,11 +1454,18 @@ use accounts::{active_scope, canonical_project, open_control, open_scoped_db};
 mod documents;
 #[path = "db/history.rs"]
 mod history;
+#[path = "db/backup.rs"]
+mod backup;
+#[path = "db/conflicts.rs"]
+mod conflicts;
+pub use conflicts::{list_document_conflicts, get_document_conflict, acknowledge_document_conflict, DocumentConflict, DocumentConflictSummary};
+use conflicts::record_conflict;
+pub use backup::{export_space_backup, import_space_backup, preview_space_backup, BackupImportResult, BackupPreview};
 pub use documents::{
     create_document, move_document, permanently_delete_document, save_document,
     set_document_status, toggle_favorite,
 };
-pub use history::{list_document_history, DocumentHistoryEntry};
+pub use history::{list_document_history, restore_document_history, DocumentHistoryEntry, RestoreDocumentHistoryInput};
 
 #[path = "db/sync.rs"]
 mod sync;

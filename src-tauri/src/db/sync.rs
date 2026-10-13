@@ -311,6 +311,7 @@ pub fn apply_remote_documents(
                         copy.deleted_at = None;
                         write_remote(&conn, &copy)?;
                         queue_job(&conn, "document", &copy.id, "conflict-copy", "")?;
+                        record_conflict(&conn, &copy.id, id, "cloud-edit-during-delete")?;
                     }
                     conn.execute(
                         "UPDATE documents SET revision=?2 WHERE id=?1",
@@ -344,6 +345,7 @@ pub fn apply_remote_documents(
         copy.parent_id = copy.parent_id.and_then(|p| remap.get(&p).cloned());
         write_remote(&conn, &copy)?;
         queue_job(&conn, "document", &copy.id, "conflict-copy", "")?;
+        record_conflict(&conn, &copy.id, id, "concurrent-tree-change")?;
         conn.execute("DELETE FROM sync_queue WHERE entity_id=?1", params![id])?;
         if !remote.contains_key(id) {
             conn.execute("DELETE FROM documents WHERE id=?1", params![id])?;

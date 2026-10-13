@@ -30,6 +30,14 @@ pub fn sanitize_filename(title: &str) -> String {
 
 pub fn save_bytes(directory: &Path, title: &str, bytes: &[u8], file_type: &str) -> Result<PathBuf, String> {
     let extension = extension(file_type)?;
+    save_with_extension(directory, title, bytes, extension)
+}
+
+pub fn save_backup(directory: &Path, title: &str, json: &str) -> Result<PathBuf, String> {
+    save_with_extension(directory, title, json.as_bytes(), "vana-backup.json")
+}
+
+fn save_with_extension(directory: &Path, title: &str, bytes: &[u8], extension: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(directory).map_err(|e| format!("创建导出目录失败: {e}"))?;
     let root = directory.canonicalize().map_err(|e| format!("无法访问导出目录: {e}"))?;
     let name = sanitize_filename(title);
@@ -52,6 +60,16 @@ pub fn save_bytes(directory: &Path, title: &str, bytes: &[u8], file_type: &str) 
     Err("同名导出文件过多".into())
 }
 
+pub fn validate_backup_path(directory: &Path, path: &Path) -> Result<PathBuf, String> {
+    let root = directory.canonicalize().map_err(|e| format!("无法访问备份目录: {e}"))?;
+    let file = path.canonicalize().map_err(|e| format!("无法访问备份文件: {e}"))?;
+    if !file.starts_with(root) || !file.is_file()
+        || !file.file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with(".vana-backup.json")) {
+        return Err("只能分享备份目录内的 Vana 备份文件".into());
+    }
+    Ok(file)
+}
+
 pub fn validate_share_path(directory: &Path, path: &Path, file_type: &str) -> Result<PathBuf, String> {
     let expected_extension = extension(file_type)?;
     let root = directory.canonicalize().map_err(|e| format!("无法访问导出目录: {e}"))?;
@@ -66,6 +84,20 @@ pub fn validate_share_path(directory: &Path, path: &Path, file_type: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn backup_files_are_unique_and_only_controlled_backups_can_be_shared() {
+        let root = std::env::temp_dir().join(format!("vana-backup-file-{}", uuid::Uuid::new_v4()));
+        let first = save_backup(&root, "../Vana", "{\"version\":1}").unwrap();
+        let second = save_backup(&root, "../Vana", "second").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "{\"version\":1}");
+        assert!(validate_backup_path(&root, &first).is_ok());
+        assert!(validate_share_path(&root, &first, "md").is_err());
+        assert!(save_bytes(&root, "bad", b"", "backup").is_err());
+        fs::write(root.join("wrong.json"), "{}").unwrap();
+        assert!(validate_backup_path(&root, &root.join("wrong.json")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn portable_names_and_utf8_boundaries() {
         for title in ["CON", "con.txt", "AUX", "LPT1", "COM¹"] {

@@ -3,6 +3,7 @@ fn export_mime_type(file_type: &str) -> &'static str {
         "pdf" => "application/pdf",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "md" => "text/markdown",
+        "backup" => "application/json",
         _ => "application/octet-stream",
     }
 }
@@ -112,4 +113,3 @@ fn describe_java_exception(env: &mut jni::JNIEnv<'_>) -> Option<String> {
         .into_owned();
     Some(format!("Java 异常: {}", message))
 }
-

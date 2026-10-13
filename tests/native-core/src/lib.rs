@@ -70,6 +70,216 @@ mod regressions {
         )
         .unwrap();
     }
+    fn restore_input(d: &DocumentRecord, history_id: &str) -> RestoreDocumentHistoryInput {
+        RestoreDocumentHistoryInput {
+            account_scope: d.account_scope.clone(), document_id: d.id.clone(),
+            history_id: history_id.into(), content_generation: d.content_generation,
+            expected_content_json: d.content_json.clone(),
+        }
+    }
+
+    #[test]
+    fn portable_backup_round_trip_copies_tree_tags_and_history_without_secrets_or_revision() {
+        let app = app(); configure(&app);
+        save_supabase_session(&app, session("00000000-0000-0000-0000-000000000001")).unwrap();
+        let scope = get_app_state(&app).unwrap().account_scope;
+        let folder = create(&app, &scope, "folder", None);
+        let d = create(&app, &scope, "document", Some(&folder.id));
+        let d = save_document(&app, input(&d, "portable body")).unwrap();
+        let conn = open_db(&app).unwrap();
+        conn.execute("UPDATE tags SET color='#123456'", []).unwrap();
+        let json = export_space_backup(&app, &scope).unwrap();
+        for secret_field in ["access_token", "refresh_token", "account_scope", "revision", "mutation_id", "last_pulled_at"] {
+            assert!(!json.contains(secret_field));
+        }
+        let preview = preview_space_backup(&app, &scope, &json).unwrap();
+        assert_eq!((preview.documents, preview.folders, preview.tags), (1, 1, 1));
+        let result = import_space_backup(&app, &scope, &json).unwrap();
+        assert_eq!((result.documents, result.folders), (1, 1));
+        assert_eq!(result.retained_history, preview.retained_history);
+        let copied = get_document(&app, result.first_document_id.as_deref().unwrap()).unwrap().unwrap();
+        assert_ne!(copied.id, d.id);
+        assert_ne!(copied.parent_id, d.parent_id);
+        assert_eq!(copied.tags, d.tags);
+        assert_eq!(copied.content_json, d.content_json);
+        assert_eq!(copied.depth, d.depth);
+        assert_eq!(copied.content_generation, 0);
+        assert_eq!(list_tags(&app).unwrap()[0].color.as_deref(), Some("#123456"));
+        let queued = export_sync_documents(&app, &scope).unwrap();
+        assert!(queued.documents.iter().any(|x| x.id == copied.id && x.revision == 0));
+        assert_eq!(list_document_history(&AppHandle(app.0.clone()), &scope, &copied.id).unwrap().len(), result.retained_history);
+        // The snapshot is portable to another space only by explicit copy import.
+        clear_supabase_session(&app, &scope).unwrap();
+        assert!(preview_space_backup(&app, &scope, &json).is_err());
+        assert!(import_space_backup(&app, &scope, &json).is_err());
+        let guest_result = import_space_backup(&app, "guest", &json).unwrap();
+        assert_ne!(guest_result.first_document_id, result.first_document_id);
+        drop(conn); std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn backup_validation_rejects_corruption_and_illegal_trees_without_partial_writes() {
+        let app = app();
+        let folder = create(&app, "guest", "folder", None);
+        let leaf = create(&app, "guest", "document", Some(&folder.id));
+        let json = export_space_backup(&app, "guest").unwrap();
+        let original: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let folder_index = original["documents"].as_array().unwrap().iter().position(|d| d["id"] == folder.id).unwrap();
+        let leaf_index = original["documents"].as_array().unwrap().iter().position(|d| d["id"] == leaf.id).unwrap();
+        let before = list_documents(&app, None).unwrap().len();
+        let jobs = export_sync_documents(&app, "guest").unwrap().pending_job_ids;
+        for mutation in 0..6 {
+            let mut broken = original.clone();
+            match mutation {
+                0 => broken["documents"][leaf_index]["parent_id"] = serde_json::json!(uuid::Uuid::new_v4().to_string()),
+                1 => broken["documents"][folder_index]["parent_id"] = serde_json::json!(folder.id),
+                2 => broken["documents"][leaf_index]["status"] = serde_json::json!("trashed"),
+                3 => broken["documents"][leaf_index]["id"] = broken["documents"][folder_index]["id"].clone(),
+                4 => broken["documents"][leaf_index]["content_json"] = serde_json::json!("malformed"),
+                _ => broken["refresh_token"] = serde_json::json!("unexpected secret"),
+            }
+            let broken = broken.to_string();
+            assert!(preview_space_backup(&app, "guest", &broken).is_err(), "mutation {mutation}");
+            assert!(import_space_backup(&app, "guest", &broken).is_err());
+            assert_eq!(list_documents(&app, None).unwrap().len(), before);
+            assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids, jobs);
+        }
+        assert!(import_space_backup(&app, "guest", &json.chars().take(json.chars().count()/2).collect::<String>()).is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn backup_import_rolls_back_all_records_on_outbox_failure_and_reports_history_retention() {
+        let app = app();
+        let d = create(&app, "guest", "document", None);
+        save_document(&app, input(&d, "backup me")).unwrap();
+        let json = export_space_backup(&app, "guest").unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["history"][0]["created_at"] = serde_json::json!("2000-01-01T00:00:00Z");
+        let aged = value.to_string();
+        let preview = preview_space_backup(&app, "guest", &aged).unwrap();
+        assert_eq!(preview.discarded_history, 1);
+        let conn = open_db(&app).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_import BEFORE INSERT ON sync_queue WHEN NEW.action='import-backup' BEGIN SELECT RAISE(ABORT,'injected import failure'); END;").unwrap();
+        let count = list_documents(&app, None).unwrap().len();
+        let jobs = export_sync_documents(&app, "guest").unwrap().pending_job_ids;
+        assert!(import_space_backup(&app, "guest", &aged).is_err());
+        assert_eq!(list_documents(&app, None).unwrap().len(), count);
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids, jobs);
+        conn.execute_batch("DROP TRIGGER fail_import").unwrap();
+        let result = import_space_backup(&app, "guest", &aged).unwrap();
+        assert_eq!(result.retained_history, preview.retained_history);
+        drop(conn); std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn conflict_relations_survive_sync_ack_and_acknowledgement_keeps_both_bodies() {
+        let app = app(); configure(&app);
+        let d = create(&app, "guest", "document", None);
+        let local = save_document(&app, input(&d, "local pending")).unwrap();
+        apply_remote_documents(&app, "guest", vec![remote(&local, 2, "cloud body")]).unwrap();
+        let rows = list_document_conflicts(&app, "guest").unwrap();
+        assert_eq!(rows.len(), 1);
+        let pair = get_document_conflict(&app, "guest", &rows[0].copy_id).unwrap();
+        assert_eq!(pair.copy.content_json, local.content_json);
+        assert_eq!(pair.original.unwrap().plain_text, "cloud body");
+        let queued = export_sync_documents(&app, "guest").unwrap();
+        let copy = queued.documents.iter().find(|x| x.id == rows[0].copy_id).unwrap().clone();
+        let mut acknowledged = copy; acknowledged.revision = 3;
+        finalize_sync_jobs(&app, "guest", &queued.pending_job_ids, &[acknowledged], true, None, None).unwrap();
+        assert_eq!(list_document_conflicts(&app, "guest").unwrap().len(), 1);
+        acknowledge_document_conflict(&app, "guest", &rows[0].copy_id).unwrap();
+        assert!(list_document_conflicts(&app, "guest").unwrap().is_empty());
+        assert_eq!(get_document(&app, &rows[0].copy_id).unwrap().unwrap().content_json, local.content_json);
+        assert_eq!(get_document(&app, &d.id).unwrap().unwrap().plain_text, "cloud body");
+        assert!(acknowledge_document_conflict(&app, "guest", &d.id).is_err());
+        save_supabase_session(&app, session("00000000-0000-0000-0000-000000000001")).unwrap();
+        assert!(list_document_conflicts(&app, "guest").is_err());
+        assert!(get_document_conflict(&app, "guest", &rows[0].copy_id).is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn restore_preserves_metadata_and_current_body_survives_reopen_and_sync() {
+        let app = app();
+        let folder = create(&app, "guest", "folder", None);
+        let d = create(&app, "guest", "document", Some(&folder.id));
+        let old = save_document(&app, input(&d, "old body")).unwrap();
+        let history_id = list_document_history(&app, "guest", &d.id).unwrap()[0].id.clone();
+        let current = save_document(&app, input(&old, "current body")).unwrap();
+        let restored = restore_document_history(&app, restore_input(&current, &history_id)).unwrap();
+        assert_eq!(restored.title, current.title);
+        assert_eq!(restored.tags, current.tags);
+        assert_eq!(restored.parent_id, current.parent_id);
+        assert_eq!(restored.content_json, old.content_json);
+        assert_eq!(restored.plain_text, "old body");
+        assert_eq!(restored.content_generation, current.content_generation + 1);
+        assert!(list_document_history(&app, "guest", &d.id).unwrap().iter().any(|h| h.content_json == current.content_json));
+        let reopened = AppHandle(app.0.clone());
+        assert_eq!(get_document(&reopened, &d.id).unwrap().unwrap().content_json, old.content_json);
+        let snapshot = export_sync_documents(&reopened, "guest").unwrap();
+        assert_eq!(snapshot.documents.iter().find(|x| x.id == d.id).unwrap().content_json, old.content_json);
+        // An acknowledgement for the restore cannot remove an edit queued after it.
+        let edited = save_document(&app, input(&restored, "edited after restore")).unwrap();
+        finalize_sync_jobs(&app, "guest", &snapshot.pending_job_ids, &[remote(&restored, 1, "old body")], true, None, None).unwrap();
+        assert!(!export_sync_documents(&app, "guest").unwrap().pending_job_ids.is_empty());
+        assert_eq!(get_document(&app, &d.id).unwrap().unwrap().content_json, edited.content_json);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn restore_rejects_local_remote_expired_cross_document_and_account_races() {
+        let app = app(); configure(&app);
+        let d = create(&app, "guest", "document", None);
+        let old = save_document(&app, input(&d, "old")).unwrap();
+        let history = list_document_history(&app, "guest", &d.id).unwrap()[0].id.clone();
+        let preview = save_document(&app, input(&old, "preview")).unwrap();
+        let local = save_document(&app, input(&preview, "late local")).unwrap();
+        assert_eq!(preview.content_generation, local.content_generation);
+        assert!(restore_document_history(&app, restore_input(&preview, &history)).unwrap_err().to_string().contains("预览"));
+        let jobs = export_sync_documents(&app, "guest").unwrap();
+        finalize_sync_jobs(&app, "guest", &jobs.pending_job_ids, &[remote(&local, 1, "late local")], true, None, None).unwrap();
+        apply_remote_documents(&app, "guest", vec![remote(&local, 2, "cloud")]).unwrap();
+        assert!(restore_document_history(&app, restore_input(&local, &history)).is_err());
+        let cloud = get_document(&app, &d.id).unwrap().unwrap();
+        let other = create(&app, "guest", "document", None);
+        let other_history = list_document_history(&app, "guest", &other.id).unwrap()[0].id.clone();
+        assert!(restore_document_history(&app, restore_input(&cloud, &other_history)).is_err());
+        for n in 0..22 { save_document(&app, input(&cloud, &format!("evict {n}"))).unwrap(); }
+        let latest = get_document(&app, &d.id).unwrap().unwrap();
+        assert!(restore_document_history(&app, restore_input(&latest, &history)).is_err());
+        let available = list_document_history(&app, "guest", &d.id).unwrap()[1].id.clone();
+        save_supabase_session(&app, session("00000000-0000-0000-0000-000000000001")).unwrap();
+        assert!(restore_document_history(&app, restore_input(&latest, &available)).is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn failed_restore_rolls_back_body_generation_history_and_outbox() {
+        let app = app();
+        let d = create(&app, "guest", "document", None);
+        let old = save_document(&app, input(&d, "old")).unwrap();
+        let history_id = list_document_history(&app, "guest", &d.id).unwrap()[0].id.clone();
+        let current = save_document(&app, input(&old, "current")).unwrap();
+        let before = export_sync_documents(&app, "guest").unwrap();
+        let histories = list_document_history(&app, "guest", &d.id).unwrap();
+        let conn = open_db(&app).unwrap();
+        conn.execute_batch("CREATE TRIGGER fail_restore BEFORE INSERT ON sync_queue WHEN NEW.action='restore-history' BEGIN SELECT RAISE(ABORT,'injected outbox failure'); END;").unwrap();
+        assert!(restore_document_history(&app, restore_input(&current, &history_id)).is_err());
+        let after = get_document(&app, &d.id).unwrap().unwrap();
+        assert_eq!(after.content_json, current.content_json);
+        assert_eq!(after.content_generation, current.content_generation);
+        assert_eq!(after.updated_at, current.updated_at);
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids, before.pending_job_ids);
+        assert_eq!(list_document_history(&app, "guest", &d.id).unwrap().iter().map(|h| &h.id).collect::<Vec<_>>(), histories.iter().map(|h| &h.id).collect::<Vec<_>>());
+        conn.execute_batch("DROP TRIGGER fail_restore;").unwrap();
+        restore_document_history(&app, restore_input(&current, &history_id)).unwrap();
+        set_document_status(&app, "guest", &d.id, "trashed").unwrap();
+        permanently_delete_document(&app, "guest", &d.id).unwrap();
+        assert!(restore_document_history(&app, restore_input(&current, &history_id)).is_err());
+        drop(conn);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
     fn remote(d: &DocumentRecord, revision: i64, text: &str) -> SyncDocumentRecord {
         SyncDocumentRecord {
             revision,
