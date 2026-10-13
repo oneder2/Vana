@@ -13,7 +13,7 @@ import '@/app/globals.css';
 import { DraftLifecycle } from '@/components/DraftLifecycle';
 
 function RoutedApp() {
-  const { path } = useRouter();
+  const { path, navigationVersion } = useRouter();
   const [appState, setAppState] = React.useState<AppState | null>(null);
   const [loading, setLoading] = React.useState(true);
 
@@ -41,7 +41,7 @@ function RoutedApp() {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, navigationVersion]);
 
   if (loading) {
     return null;

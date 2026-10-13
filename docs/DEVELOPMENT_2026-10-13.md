@@ -23,6 +23,12 @@
 
 产物：`dist/android/vana-0.7.0-android-release.apk`（SHA-256 `7a6a8caf95b6029a8226a6475fa487e0ad0a9d601ff47f2b4b57b334cb03d4da`），AAB（SHA-256 `9080acfe88f57ae5d35e738ab005f96a89d09423d6ee7b4281ca27472ba8168d`）。包名 `com.vana.no_visitors.preview`，标签 Vana Preview，使用 Android Debug 测试证书，不是正式签名。已安装到连接设备，未覆盖原有 Vana；设备锁屏，尚未完成交互、重启、分享或 Keystore 真机验收。
 
-dev 三平台 CI 的结果在完成后补记。真实 Supabase 专用项目、两账号/两端验收、Windows 实机与正式签名尚未完成；未部署生产迁移、合并 main、创建发布标签或 Release。`git diff --check` 通过；全仓 `cargo fmt --check` 仍存在历史及当前文件格式差异，不是本轮 CI 必需项，未做全仓格式重写。
+`021a6f8` 的 [dev CI](https://github.com/oneder2/Vana/actions/runs/38451662971) 全部通过：项目检查及 Linux/Windows/Android 预览构建，包含 Android minified Release 分享/Keystore JNI 验证。
+
+设备解锁后，Android Preview 首次使用复现同路径导航问题：访客继续已保存 onboarding 状态，但根路径没有变化，应用门控没有重新读取状态，停留在欢迎页。Linux CI 原生包在隔离 XDG 目录中也复现。修复为成功导航均更新 navigationVersion，应用按该版本刷新门控；同路径不重复加入浏览器历史。访客继续失败也显示可重试错误。欢迎页移除访客“Hosted 总存储 0 B”误导，明确离线/修改记录/备份能力；未配置同步时登录/注册不可用，并说明设置入口。浏览器真实 React + 模拟 IPC 的首启回归通过；新版真机与构建证据随后补记。
+
+已检查本地 `.env.local`、`supabase/.temp/project-ref` 和原有应用数据库的 URL，均指向项目 `csacipzifjwlyqroojho`。项目 API 与数据库域名在系统、Cloudflare 和 Google DNS 中均无法解析（NXDOMAIN）；当前 CLI 账号访问迁移列表返回 403，项目列表没有该项目。仅查询连接及权限元数据，没有读取用户正文、令牌或执行远端迁移。需用户确认可访问的测试环境后继续真实验收。
+
+真实 Supabase 两账号/两端验收、Windows 实机与正式签名尚未完成；未部署生产迁移、合并 main、创建发布标签或 Release。`git diff --check` 通过；全仓 `cargo fmt --check` 仍存在历史及当前文件格式差异，不是本轮 CI 必需项，未做全仓格式重写。
 
 完整路线保持 [ROADMAP](ROADMAP.md) 的五个工作包。当前完成的是本地实现和验证准备；全路线验收仍在进行。附件按路线保留在第 5 包，云附件需要前四包验收及服务端配额/权限/重试/孤儿清理，当前不开启云附件。

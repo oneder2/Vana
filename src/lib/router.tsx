@@ -5,6 +5,7 @@ import { documentDrafts } from './documentDrafts';
 
 type RouterContextValue = {
   path: string;
+  navigationVersion: number;
   navigate: (to: string) => void;
 };
 
@@ -27,6 +28,7 @@ function getCurrentPath(): string {
 
 export function RouterProvider({ children }: { children: React.ReactNode }) {
   const [path, setPath] = useState(getCurrentPath());
+  const [navigationVersion, setNavigationVersion] = useState(0);
   const currentPath = useRef(path);
   const navigationIntent = useRef(0);
   currentPath.current = path;
@@ -36,7 +38,10 @@ export function RouterProvider({ children }: { children: React.ReactNode }) {
       const next = getCurrentPath();
       const intent = ++navigationIntent.current;
       void documentDrafts.flushAll().then(() => {
-        if (intent === navigationIntent.current) setPath(next);
+        if (intent === navigationIntent.current) {
+          setPath(next);
+          setNavigationVersion(intent);
+        }
       }).catch(() => window.history.replaceState({}, '', currentPath.current));
     };
     window.addEventListener('popstate', handleChange);
@@ -50,6 +55,7 @@ export function RouterProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<RouterContextValue>(
     () => ({
       path,
+      navigationVersion,
       navigate: (to: string) => {
         const next = normalizeTarget(to);
         const intent = ++navigationIntent.current;
@@ -59,12 +65,13 @@ export function RouterProvider({ children }: { children: React.ReactNode }) {
             window.location.href = next;
             return;
           }
-          window.history.pushState({}, '', next);
+          if (next !== currentPath.current) window.history.pushState({}, '', next);
           setPath(next);
+          setNavigationVersion(intent);
         }).catch(() => {});
       },
     }),
-    [path]
+    [path, navigationVersion]
   );
 
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;

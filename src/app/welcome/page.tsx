@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, Database, Link2, Shield, UserRound } from 'lucide-react';
+import { ArrowRight, Database, History, Link2, UserRound } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
 import { useTheme } from '@/components/ThemeProvider';
 import { useToast } from '@/components/ToastProvider';
@@ -15,16 +15,6 @@ import {
   getThemeSurfaceColor,
 } from '@/lib/themeStyles';
 import { AppLink, useRouter } from '@/lib/router';
-
-function formatBytes(value: number): string {
-  if (value >= 1024 * 1024) {
-    return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  }
-  if (value >= 1024) {
-    return `${Math.round(value / 1024)} KB`;
-  }
-  return `${value} B`;
-}
 
 export default function WelcomePage() {
   const { theme } = useTheme();
@@ -40,6 +30,7 @@ export default function WelcomePage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const syncConfigured = Boolean(appState?.supabase.url && appState.supabase.anon_key);
 
   useEffect(() => {
     void (async () => {
@@ -53,6 +44,8 @@ export default function WelcomePage() {
     try {
       await completeOnboarding();
       navigate('/');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -118,7 +111,7 @@ export default function WelcomePage() {
             <div className="shell-label mb-3">Welcome</div>
             <h1 className="shell-title max-w-2xl text-2xl font-semibold sm:text-4xl">本地优先，可同步的个人文档空间。</h1>
             <p className="mt-4 hidden max-w-2xl text-sm leading-7 opacity-78 sm:block">
-              你可以先以访客身份直接开始写作，也可以使用邮箱和密码登录，开启基于 Supabase Hosted 的多设备同步。
+              先离线写作和阅读，通过修改记录理解变化、恢复误改。配置同步服务后，可登录账号在多台设备间同步。
             </p>
 
             <div className="mt-6 grid gap-3 sm:mt-8 sm:grid-cols-3">
@@ -133,19 +126,18 @@ export default function WelcomePage() {
               <div className="rounded border px-4 py-4" style={{ borderColor: border, backgroundColor: `${accentBg}12` }}>
                 <div className="mb-2 flex items-center gap-2 text-sm font-medium">
                   <Link2 size={15} />
-                  Hosted 同步
+                  可选同步
                 </div>
-                <div className="text-sm opacity-75">登录后自动进入同步模式，访问令牌过期后会尝试自动续期。</div>
+                <div className="text-sm opacity-75">{syncConfigured ? '已配置同步服务。登录后进入独立账号空间，可同步文档。' : '尚未配置同步服务。可先离线使用，稍后在设置中连接服务。'}</div>
               </div>
 
               <div className="hidden rounded border px-4 py-4 sm:block" style={{ borderColor: border, backgroundColor: `${accentBg}10` }}>
                 <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  <Shield size={15} />
-                  Hosted 限额
+                  <History size={15} />
+                  修改可见
                 </div>
                 <div className="text-sm opacity-75">
-                  单文档 {appState ? formatBytes(appState.limits.max_document_content_bytes) : '512 KB'}，
-                  总存储 {appState ? formatBytes(appState.limits.max_total_storage_bytes) : '25 MB'}。
+                  查看保留的正文版本、对照增删差异，确认后恢复正文。
                 </div>
               </div>
             </div>
@@ -153,13 +145,10 @@ export default function WelcomePage() {
             <div className="mt-8 hidden rounded border px-4 py-4 text-sm sm:block" style={{ borderColor: border }}>
               <div className="mb-2 flex items-center gap-2 font-medium">
                 <Database size={15} />
-                当前 Hosted 策略
+                本地备份
               </div>
               <div className="space-y-1 opacity-78">
-                <div>文档数量上限：{appState?.limits.max_document_count ?? 5000}</div>
-                <div>5 分钟写入上限：{appState?.limits.max_write_ops_per_5_minutes ?? 300}</div>
-                <div>附件上传：{appState?.limits.attachments_enabled ? '已开启' : '当前公共服务未开放'}</div>
-                <div>服务来源：{appState?.service_profile ?? 'hosted'}</div>
+                <p className="leading-7">在设置中导出空间备份，保留文档、目录、标签和正文记录。备份文件可预览后复制导入，访客空间也可使用。</p>
               </div>
             </div>
           </section>
@@ -167,8 +156,8 @@ export default function WelcomePage() {
           <section className="shell-panel border px-5 py-6 sm:px-6" style={{ backgroundColor: surface, borderColor: border }}>
             <div className="shell-label mb-3">Access</div>
             <h2 className="shell-title text-xl font-semibold">登录或继续使用</h2>
-            <p className="mt-3 hidden text-sm leading-7 opacity-76 sm:block">
-              普通用户直接使用默认公共服务即可。只有需要自托管时，才需要进入高级配置。
+            <p className="mt-3 text-sm leading-7 opacity-76">
+              {syncConfigured ? '可登录已配置的同步服务，或先以访客身份离线使用。访客与账号文档分别保存。' : '当前可离线使用。登录和注册需要先在高级配置中连接同步服务。'}
             </p>
 
             <div className="mt-6 space-y-3">
@@ -201,7 +190,7 @@ export default function WelcomePage() {
                 className="border px-4 py-2 text-sm font-medium"
                 style={{ borderColor: border, backgroundColor: accentBg, color: accent }}
                 onClick={() => void handleLogin()}
-                disabled={busy}
+                disabled={busy || !syncConfigured}
               >
                 登录并开始同步
               </button>
@@ -210,7 +199,7 @@ export default function WelcomePage() {
                 className="border px-4 py-2 text-sm"
                 style={{ borderColor: border, color: accent }}
                 onClick={() => void handleRegister()}
-                disabled={busy}
+                disabled={busy || !syncConfigured}
               >
                 注册账号
               </button>
