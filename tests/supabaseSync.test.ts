@@ -109,3 +109,36 @@ test('logged-out connection check reports reachable and session import delegates
     assert.equal(imports,1);
   } finally {globalThis.fetch=originalFetch;delete (native as {window?:unknown}).window;}
 });
+
+test('expired sessions including epoch zero refresh natively before authenticated requests', async()=>{
+  const originalFetch=globalThis.fetch;
+  const native=(globalThis as unknown as {window?:unknown});
+  const originalWindow=native.window;
+  let expiry:number|null=0, refreshes=0;
+  const refreshed={...session,access_token:'refreshed-token',expires_at:Math.floor(Date.now()/1000)+3600};
+  native.window={__TAURI_INTERNALS__:{invoke:async(command:string)=>{
+    if(command==='get_supabase_config_command')return config;
+    if(command==='get_app_state_command')return state;
+    if(command==='get_supabase_session_command')return {...session,expires_at:expiry};
+    if(command==='refresh_supabase_session_command'){refreshes++;return refreshed;}
+    throw new Error(`unexpected native command ${command}`);
+  }}};
+  try {
+    for (const value of [0,1,Math.floor(Date.now()/1000)-1,null,Math.floor(Date.now()/1000)+3600]) {
+      expiry=value;
+      const expired=value!==null && value<Date.now()/1000;
+      const before=refreshes;
+      globalThis.fetch=async(input,init)=>{
+        if(String(input).endsWith('/auth/v1/user')) {
+          assert.equal(new Headers(init?.headers).get('Authorization'),`Bearer ${expired?'refreshed-token':session.access_token}`);
+        }
+        return response({});
+      };
+      assert.equal((await verifySupabaseConnection()).authenticated,true);
+      assert.equal(refreshes-before,expired?1:0);
+    }
+  } finally {
+    globalThis.fetch=originalFetch;
+    if(originalWindow===undefined)delete native.window;else native.window=originalWindow;
+  }
+});

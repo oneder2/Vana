@@ -29,7 +29,7 @@ function authHeaders(accessToken: string, anonKey: string): HeadersInit {
 async function ensureValidSupabaseSession(url: string, _anonKey: string): Promise<SupabaseSession> {
   const session = await getSupabaseSession();
   if (!session?.access_token) throw new Error('尚未登录。请先登录 Supabase。');
-  if (session.expires_at && Date.now() >= session.expires_at * 1000 - 60_000) {
+  if (session.expires_at != null && Date.now() >= session.expires_at * 1000 - 60_000) {
     const origin = await getAppState();
     if (origin.account_user_id !== session.user_id || normalizeUrl(origin.supabase.url ?? '') !== normalizeUrl(url)) throw new Error('刷新期间账号或项目已切换。');
     return refreshSessionNative(url, origin.account_scope);
