@@ -52,6 +52,8 @@ npm run tauri:build:android
 - `main-verify.yml`：`main` 分支发布前校验
 - `release.yml`：`v*` tag 正式发版
 
+`release.yml` 也支持 `workflow_dispatch`：可先在 dev 验证正式签名构建和产物完整性，不创建 Release。分支手动构建使用源码版本；tag 才强制校验 main 祖先关系和 Hosted schema，并创建 Draft Release。手动构建通过不代表真实同步通过。
+
 正式发布流程：
 
 1. 合并到 `main`
@@ -70,17 +72,14 @@ git push origin v0.6.0
 
 ## Android 说明
 
-Android Release 如需签名，仍然需要：
+正式 Android Release 必须配置以下 GitHub Secrets：
 
 - `ANDROID_KEYSTORE_BASE64`
 - `ANDROID_KEYSTORE_PASSWORD`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-辅助脚本：
-
-- `scripts/configure-android-signing.py`
-- `scripts/test-android-signing.sh`
+发布流程通过 `VANA_ANDROID_KEYSTORE_*` 环境变量配置 Gradle，密钥文件只写入 runner 临时目录，不在 shell 脚本中插值密码，也不再生成 keystore.properties 或改写 Gradle。构建后验证 APK/AAB 签名并与 keystore 导出的证书 SHA-256 比对；只上传这次的正式 Release 产物。Debug 证书仅用于 dev 预览。
 
 ## Windows 说明
 
@@ -88,7 +87,15 @@ Android Release 如需签名，仍然需要：
 
 - `WINDOWS_CERTIFICATE`
 - `WINDOWS_CERTIFICATE_PASSWORD`
-- `WINDOWS_CERTIFICATE_THUMBPRINT`（可选）
+证书指纹从实际导入的 PFX 中读取，并通过 Tauri 配置覆盖传入，安装器和应用可执行文件均需验证签名及指纹一致。当前本机签名证书是项目自签名证书，有效期至 2027-01-21；CI 只在临时 runner 中信任它以验证完整性，不会让用户系统信任该发行者。面向公共发行的商业 CA 证书需另行准备。
+
+## Hosted 配置与发布门槛
+
+GitHub Repository Variables 需配置 `VANA_PUBLIC_SUPABASE_URL` 与 `VANA_PUBLIC_SUPABASE_ANON_KEY`。它们是可公开的应用连接配置，必须指向已验收的项目；绝不能放入 service_role 或 secret key。Release 的所有原生构建都继承这两项配置。
+
+`python3 scripts/check-supabase-release.py --require-protocol` 只读检查公开配置、Auth 和文档同步字段，查询限制为零行，不读取用户正文。它会阻止缺配置、错误项目、特权密钥或未升级 schema 的发布；它不能替代两账号真实 RPC/认证及设备验收，仍须满足 [SYNC_ACCEPTANCE](SYNC_ACCEPTANCE.md)。
+
+当前用户已授权测试通过后推送和发布。服务恢复不等于迁移完成：先使用有项目权限的 CLI 账号备份，核对迁移链并升级，再运行真实验收；未完成这些步骤不得发布 tag。
 
 ## 版本对齐
 

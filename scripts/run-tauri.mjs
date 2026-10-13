@@ -182,7 +182,7 @@ function getTargetTriple(args) {
 
 function getDesktopContext(args) {
   const targetTriple = getTargetTriple(args);
-  if (targetTriple?.includes("windows")) {
+  if (targetTriple?.includes("windows") || (!targetTriple && process.platform === "win32")) {
     return { platform: "windows", arch: "x64", targetTriple };
   }
   return { platform: "linux", arch: "x64", targetTriple: targetTriple ?? nativeLinuxTarget };

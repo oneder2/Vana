@@ -1,12 +1,17 @@
 name: Build and Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
 
 permissions:
   contents: write
+
+env:
+  VANA_PUBLIC_SUPABASE_URL: ${{ vars.VANA_PUBLIC_SUPABASE_URL }}
+  VANA_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VANA_PUBLIC_SUPABASE_ANON_KEY }}
 
 jobs:
   check:
@@ -20,6 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: Ensure tag commit is on main
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           git fetch origin main --depth=1
           if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/main"; then
@@ -65,6 +71,10 @@ jobs:
 
       - name: Supabase protocol regressions
         run: python3 scripts/test-supabase-protocol.py
+
+      - name: Validate hosted release configuration
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/check-supabase-release.py --require-protocol
 
       - name: Build frontend
         run: npm run build
@@ -121,7 +131,11 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Install frontend dependencies
@@ -179,8 +193,12 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $tagName = "${{ github.ref_name }}"
-          $version = $tagName -replace '^v', ''
+          $tagName = $env:GITHUB_REF_NAME
+          $version = if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $tagName -replace '^v', ''
+          } else {
+            (Get-Content package.json -Raw | ConvertFrom-Json).version
+          }
           $baseVersion = [regex]::Match($version, '^\d+\.\d+\.\d+').Value
           if (-not $baseVersion) {
             throw "Unable to derive base version from tag $tagName"
@@ -222,11 +240,26 @@ jobs:
           )
 
           $securePassword = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
-          Import-PfxCertificate `
+          $imported = Import-PfxCertificate `
             -FilePath "$PWD\certificate\certificate.pfx" `
             -CertStoreLocation Cert:\CurrentUser\My `
             -Password $securePassword `
-            -ErrorAction Stop | Out-Null
+            -ErrorAction Stop
+          $signer = @($imported | Where-Object { $_.HasPrivateKey })
+          if ($signer.Count -ne 1) { throw "Expected exactly one certificate with a private key" }
+          if ($signer[0].NotAfter -le (Get-Date)) { throw "Signing certificate has expired" }
+          $thumbprint = $signer[0].Thumbprint
+          "VANA_WINDOWS_SIGNER_THUMBPRINT=$thumbprint" | Out-File -FilePath $env:GITHUB_ENV -Append
+          @{ bundle = @{ windows = @{ certificateThumbprint = $thumbprint } } } |
+            ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 windows-signing.json
+          if ($signer[0].Subject -eq $signer[0].Issuer) {
+            # Trust only on the disposable runner so Authenticode verifies integrity.
+            # This does not give end-user machines a trusted publisher certificate.
+            Export-Certificate -Cert $signer[0] -FilePath "$env:RUNNER_TEMP\vana-signer.cer" | Out-Null
+            Import-Certificate -FilePath "$env:RUNNER_TEMP\vana-signer.cer" `
+              -CertStoreLocation Cert:\CurrentUser\Root -ErrorAction Stop | Out-Null
+            Write-Host "Using a project self-signed certificate; public publisher trust is not provided"
+          }
 
           Remove-Item -Path "$PWD\certificate\certificate.pfx" -Force
           Remove-Item -Path "$PWD\certificate" -Force
@@ -234,8 +267,22 @@ jobs:
       - name: Build Tauri app
         env:
           TAURI_WINDOWS_MSI_VERSION: ${{ steps.version.outputs.msi_version }}
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-        run: npm run tauri:build
+        run: npm run tauri:build -- --config windows-signing.json
+
+      - name: Verify Windows signatures
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem src-tauri/target/release/bundle -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.msi' })
+          $files += Get-Item src-tauri/target/release/vana.exe
+          if ($files.Count -lt 3) { throw "Expected EXE, MSI and application executable" }
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne 'Valid' -or
+                $signature.SignerCertificate.Thumbprint -ne $env:VANA_WINDOWS_SIGNER_THUMBPRINT) {
+              throw "Invalid or unexpected signature: $($file.Name) ($($signature.Status))"
+            }
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -281,7 +328,11 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java JDK
@@ -339,54 +390,53 @@ jobs:
           fi
           test -f src-tauri/gen/android/app/build.gradle.kts
 
-      - name: Validate Android signing secrets
+      - name: Build Android with release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          VANA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VANA_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VANA_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VANA_ANDROID_USE_DEBUG_SIGNING: "0"
         run: |
-          test -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}"
-          test -n "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-          test -n "${{ secrets.ANDROID_KEY_ALIAS }}"
-          test -n "${{ secrets.ANDROID_KEY_PASSWORD }}"
-
-      - name: Setup Android keystore
-        run: |
-          mkdir -p android-keystore
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android-keystore/keystore.jks
-          test -f android-keystore/keystore.jks
-
-          mkdir -p src-tauri/gen/android/app
-          cat > src-tauri/gen/android/app/keystore.properties << EOF
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          storeFile=$PWD/android-keystore/keystore.jks
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          EOF
-
-      - name: Configure Android signing
-        run: |
-          python3 scripts/configure-android-signing.py
-          grep -q "signingConfigs" src-tauri/gen/android/app/build.gradle.kts
-
-      - name: Build Android APK
-        run: |
-          npx tauri android build --target aarch64 --verbose
+          python3 - <<'PY'
+          import base64, os, pathlib
+          names = ['ANDROID_KEYSTORE_BASE64', 'VANA_ANDROID_KEYSTORE_PASSWORD',
+                   'VANA_ANDROID_KEY_ALIAS', 'VANA_ANDROID_KEY_PASSWORD']
+          if any(not os.environ.get(name) for name in names):
+              raise SystemExit('All Android release signing secrets are required')
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'vana-release.jks'
+          path.write_bytes(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+          path.chmod(0o600)
+          PY
+          export VANA_ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/vana-release.jks"
+          npm run tauri:build:android
+          keytool -exportcert -keystore "$VANA_ANDROID_KEYSTORE_PATH" \
+            -alias "$VANA_ANDROID_KEY_ALIAS" -storepass:env VANA_ANDROID_KEYSTORE_PASSWORD \
+            -file "$RUNNER_TEMP/vana-release.der"
+          expected=$(sha256sum "$RUNNER_TEMP/vana-release.der" | cut -d ' ' -f 1)
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            dist/android/vana-*-android-release.apk > "$RUNNER_TEMP/vana-apk-signature.txt"
+          python3 scripts/check-android-release-signature.py "$expected" "$RUNNER_TEMP/vana-apk-signature.txt"
+          python3 scripts/check-android-release-signature.py --aab \
+            "$expected" dist/android/vana-*-android-release.aab
 
       - name: Verify Release JNI contract
-        run: python3 scripts/check-android-jni.py
+        run: python3 scripts/check-android-jni.py src-tauri/gen/android/app/build/outputs/mapping/universalRelease/mapping.txt
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
           name: android-artifacts
           path: |
-            src-tauri/gen/android/**/*.apk
-            src-tauri/gen/android/**/*.aab
+            dist/android/*-android-release.apk
+            dist/android/*-android-release.aab
           if-no-files-found: error
           retention-days: 30
 
       - name: Cleanup keystore
         if: always()
         run: |
-          rm -rf android-keystore
-          rm -f src-tauri/gen/android/app/keystore.properties
+          rm -f "$RUNNER_TEMP/vana-release.jks" "$RUNNER_TEMP/vana-release.der"
 
   create-release:
     name: Create GitHub Release
@@ -425,15 +475,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: "No Visitors ${{ github.ref_name }}"
+          name: "Vana ${{ github.ref_name }}"
           body: |
             ## Release ${{ github.ref_name }}
 
-            Automated release build for No Visitors.
+            本地优先的文档编辑器：正文修改记录、版本差异与受保护的恢复、空间备份、同步冲突对照。
+
+            升级前请导出空间备份。Hosted 同步需要完整的 revision 协议迁移；旧客户端不能继续写入已升级的云端。
+            文档为明文存储；修改记录只恢复正文，不恢复历史标题、标签或目录。云附件尚未提供。
+            当前 Windows 使用项目自签名证书，系统可能提示未知发行者。
 
             - Linux: `.deb`, `.AppImage`, `.rpm`
             - Windows: `.exe`, `.msi`
-            - Android: `.apk`
+            - Android: `.apk`, `.aab`
           draft: true
           prerelease: ${{ steps.release-type.outputs.prerelease }}
           files: |
