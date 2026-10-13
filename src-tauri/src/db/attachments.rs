@@ -339,6 +339,7 @@ pub fn remove_attachment(
     )?;
     check_scope(&conn, expected_scope)?;
     require_document(&conn, document_id, true)?;
+    ensure_write_budget(&conn)?;
     anyhow::ensure!(
         conn.execute(
             "DELETE FROM attachments WHERE id=?1 AND document_id=?2",

@@ -182,7 +182,8 @@ fn validate_backup(json: &str) -> Result<(SpaceBackup, BackupPreview)> {
     anyhow::ensure!(json.len() <= MAX_BACKUP_BYTES, "备份超过 64 MiB 文件上限");
     let backup: SpaceBackup = serde_json::from_str(json).context("备份文件损坏或字段不受支持")?;
     anyhow::ensure!(
-        backup.format == "vana-space-backup" && matches!(backup.version, 1 | 2)
+        backup.format == "vana-space-backup"
+            && matches!(backup.version, 1 | 2)
             && (backup.version != 1 || backup.attachments.is_empty()),
         "不支持的备份格式或版本"
     );
@@ -190,7 +191,8 @@ fn validate_backup(json: &str) -> Result<(SpaceBackup, BackupPreview)> {
     anyhow::ensure!(
         backup.documents.len() <= 10_000
             && backup.tags.len() <= 10_000
-            && backup.history.len() <= 200_000 && backup.attachments.len() <= 1000,
+            && backup.history.len() <= 200_000
+            && backup.attachments.len() <= 1000,
         "备份记录过多"
     );
     let isolated = Connection::open_in_memory()?;
@@ -271,14 +273,23 @@ fn validate_backup(json: &str) -> Result<(SpaceBackup, BackupPreview)> {
         )?;
     }
     for attachment in &backup.attachments {
-        super::attachments::insert_portable(&isolated, attachment, &attachment.metadata.id, &attachment.metadata.document_id)?;
+        super::attachments::insert_portable(
+            &isolated,
+            attachment,
+            &attachment.metadata.id,
+            &attachment.metadata.document_id,
+        )?;
     }
     prune_history(&isolated)?;
     let retained: usize =
         isolated.query_row("SELECT COUNT(*) FROM document_history", [], |r| r.get(0))?;
     let preview = BackupPreview {
         attachments: backup.attachments.len(),
-        attachment_bytes: backup.attachments.iter().map(|a| a.metadata.size_bytes).sum(),
+        attachment_bytes: backup
+            .attachments
+            .iter()
+            .map(|a| a.metadata.size_bytes)
+            .sum(),
         created_at: backup.created_at.clone(),
         documents: backup
             .documents
@@ -366,8 +377,16 @@ pub fn import_space_backup(
         )?;
     }
     for attachment in &backup.attachments {
-        let destination = mapping.get(attachment.metadata.document_id.as_str()).context("备份附件引用的文档不存在")?;
-        super::attachments::insert_portable(&conn, attachment, &Uuid::new_v4().to_string(), destination)?;
+        let destination = mapping
+            .get(attachment.metadata.document_id.as_str())
+            .context("备份附件引用的文档不存在")?;
+        ensure_write_budget(&conn)?;
+        super::attachments::insert_portable(
+            &conn,
+            attachment,
+            &Uuid::new_v4().to_string(),
+            destination,
+        )?;
     }
     prune_history(&conn)?;
     validate_tree(&conn)?;
