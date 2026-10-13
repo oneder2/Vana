@@ -14,7 +14,7 @@
 
 版本差异、带并发保护的正文恢复、空间备份与冲突对照入口已实现；React Bits 参考、许可和 UI 方向见 [UI 方向](UI_DIRECTION.md)。Rust Auth、系统凭据适配与渲染边界已接入；离线回归和 Linux 系统凭据探针已通过。
 
-这些是本地实现与验证准备的进度，不代表下面五个工作包全部验收完成。真实 Supabase、三平台设备/凭据验证与正式签名仍需补齐，附件仍按顺序推进。功能契约和完整证据见 [开发记录](DEVELOPMENT_2026-10-13.md)、[备份格式](BACKUP_FORMAT.md)、[会话安全](SESSION_SECURITY.md)、[真实同步验收](SYNC_ACCEPTANCE.md)。
+这些是本地实现与验证准备的进度，不代表下面五个工作包全部验收完成。真实 Supabase 备份恢复、迁移和两账号协议验收已通过，Linux/Android 原生双向同步及重启会话已验证。Windows 原生运行、正式签名设备及完整冲突/导出验收仍需补齐，附件仍按顺序推进。功能契约和完整证据见 [开发记录](DEVELOPMENT_2026-10-13.md)、[备份格式](BACKUP_FORMAT.md)、[会话安全](SESSION_SECURITY.md)、[真实同步验收](SYNC_ACCEPTANCE.md)。
 
 ## 工作顺序与验收
 
