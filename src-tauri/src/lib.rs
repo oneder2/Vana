@@ -63,6 +63,7 @@ pub fn run() {
             commands::abort_sync_command,
             commands::resolve_conflict_command,
             commands::save_export_file,
+            commands::share_export_file,
             commands::export_pdf_with_typst,
         ])
         .run(tauri::generate_context!())

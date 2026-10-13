@@ -43,7 +43,7 @@ import {
   type DocumentSummary,
   type TagRecord,
 } from '@/lib/api';
-import { exportToDOCX, exportToMarkdown, exportToPDF, saveMarkdownExport } from '@/lib/export';
+import { exportToDOCX, exportToMarkdown, exportToPDF, saveMarkdownExport, shareExportFile } from '@/lib/export';
 import { runSupabaseSync } from '@/lib/supabaseSync';
 import {
   getThemeAccentBgColor,
@@ -302,6 +302,12 @@ export default function HomePage() {
   const [mobilePropertyOpen, setMobilePropertyOpen] = useState(false);
   const [mobileTagEditorOpen, setMobileTagEditorOpen] = useState(false);
   const [mobileTagDeleteTarget, setMobileTagDeleteTarget] = useState<string | null>(null);
+  const [mobileExportOpen, setMobileExportOpen] = useState(false);
+  const [mobileExportStatus, setMobileExportStatus] = useState<{
+    format: 'pdf' | 'docx' | 'md';
+    stage: 'generating' | 'sharing' | 'failed';
+    message: string;
+  } | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<'idle' | 'success' | 'error'>('idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileMenuCloseSignal, setMobileMenuCloseSignal] = useState(0);
@@ -614,18 +620,83 @@ export default function HomePage() {
   }, [appState, refresh, toast, triggerAutoSync]);
 
   const handleExport = useCallback(
-    async (format: 'pdf' | 'docx' | 'md') => {
-      if (!currentDocument) return;
+    async (format: 'pdf' | 'docx' | 'md', options?: { share?: boolean }): Promise<boolean> => {
+      if (!currentDocument) return false;
       const filename = documentLeafTitle(currentDocument).trim() || 'vana-document';
-      if (format === 'pdf') {
-        await exportToPDF(content, theme, filename);
-      } else if (format === 'docx') {
-        await exportToDOCX(content, theme, filename);
-      } else {
-        const markdown = exportToMarkdown(content);
-        await saveMarkdownExport(filename, markdown);
+      try {
+        if (options?.share) {
+          toast.info(`正在生成 ${format.toUpperCase()} 分享文件...`, 1800);
+        }
+        let savedPath: string | null = null;
+        if (format === 'pdf') {
+          savedPath = await exportToPDF(content, theme, filename);
+        } else if (format === 'docx') {
+          savedPath = await exportToDOCX(content, theme, filename);
+        } else {
+          const markdown = exportToMarkdown(content);
+          savedPath = await saveMarkdownExport(filename, markdown);
+        }
+        if (options?.share && savedPath) {
+          toast.info('正在打开系统分享面板...', 1800);
+          await shareExportFile(savedPath, format, filename);
+          toast.success(`已打开系统分享：${format.toUpperCase()}`);
+          return true;
+        }
+        toast.success(savedPath ? `已导出 ${format.toUpperCase()}：${savedPath}` : `已导出 ${format.toUpperCase()}`);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        toast.error(`${options?.share ? '分享' : '导出'}失败：${message}`, 6000);
+        console.error(`[export] ${options?.share ? 'share' : 'export'} ${format} failed`, error);
+        return false;
       }
-      toast.success(`已导出 ${format.toUpperCase()}`);
+    },
+    [content, currentDocument, theme, toast]
+  );
+
+  const handleMobileShare = useCallback(
+    async (format: 'pdf' | 'docx' | 'md') => {
+      setMobileExportStatus({
+        format,
+        stage: 'generating',
+        message: `正在生成 ${format.toUpperCase()} 分享文件...`,
+      });
+
+      try {
+        const filename = currentDocument ? documentLeafTitle(currentDocument).trim() || 'vana-document' : 'vana-document';
+        let savedPath: string | null = null;
+        if (format === 'pdf') {
+          savedPath = await exportToPDF(content, theme, filename);
+        } else if (format === 'docx') {
+          savedPath = await exportToDOCX(content, theme, filename);
+        } else {
+          const markdown = exportToMarkdown(content);
+          savedPath = await saveMarkdownExport(filename, markdown);
+        }
+
+        if (!savedPath) {
+          throw new Error('没有生成可分享的文件路径');
+        }
+
+        setMobileExportStatus({
+          format,
+          stage: 'sharing',
+          message: '正在打开 Android 系统分享面板...',
+        });
+        await shareExportFile(savedPath, format, filename);
+        toast.success(`已打开系统分享：${format.toUpperCase()}`);
+        setMobileExportOpen(false);
+        setMobileExportStatus(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setMobileExportStatus({
+          format,
+          stage: 'failed',
+          message: `分享失败：${message}`,
+        });
+        toast.error(`分享失败：${message}`, 6000);
+        console.error(`[export] mobile share ${format} failed`, error);
+      }
     },
     [content, currentDocument, theme, toast]
   );
@@ -865,6 +936,10 @@ export default function HomePage() {
       setMobileTagDeleteTarget(null);
       return true;
     }
+    if (mobileExportOpen) {
+      setMobileExportOpen(false);
+      return true;
+    }
     if (mobileTagEditorOpen) {
       setMobileTagEditorOpen(false);
       return true;
@@ -895,6 +970,7 @@ export default function HomePage() {
     mobileMenuOpen,
     mobileTagDeleteTarget,
     mobileTagEditorOpen,
+    mobileExportOpen,
     moveModeSource,
     replaceDialogOpen,
     showSearchModal,
@@ -1285,6 +1361,15 @@ export default function HomePage() {
       onOpenSidebar={() => setSidebarOpen(true)}
       onCloseSidebar={() => setSidebarOpen(false)}
       onOpenProperties={() => setMobilePropertyOpen(true)}
+      onOpenExportMenu={() => {
+        setMobileMenuCloseSignal((value) => value + 1);
+        setMobileMenuOpen(false);
+        setMobilePropertyOpen(false);
+        setMobileTagEditorOpen(false);
+        setMobileTagDeleteTarget(null);
+        setMobileExportStatus(null);
+        setMobileExportOpen(true);
+      }}
       onManualSync={() => void triggerAutoSync('mobile-manual', true)}
       onMenuAction={handleMenuAction}
       onHelp={() => navigate('/help')}
@@ -1437,6 +1522,78 @@ export default function HomePage() {
               )}
             </div>
           </section>
+        </div>
+      )}
+
+      {isMobileLayout && mobileExportOpen && currentDocument && (
+        <div
+          className="fixed inset-0 z-[10060] flex items-end bg-black/55"
+          onClick={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (mobileExportStatus?.stage === 'generating' || mobileExportStatus?.stage === 'sharing') return;
+            setMobileExportOpen(false);
+            setMobileExportStatus(null);
+          }}
+        >
+          <div
+            className="shell-panel w-full border-t px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4"
+            style={{ backgroundColor: surface, borderColor: border }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="shell-label">Share</div>
+                <h2 className="mt-1 truncate text-lg font-semibold">分享文档</h2>
+                <p className="mt-1 truncate text-xs" style={{ color: muted }}>{documentLeafTitle(currentDocument)}</p>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded border px-3 py-2 text-xs"
+                style={{ borderColor: border, color: accent }}
+                disabled={mobileExportStatus?.stage === 'generating' || mobileExportStatus?.stage === 'sharing'}
+                onClick={() => {
+                  setMobileExportOpen(false);
+                  setMobileExportStatus(null);
+                }}
+              >
+                关闭
+              </button>
+            </div>
+            <p className="mb-3 text-sm leading-6" style={{ color: muted }}>
+              选择格式后，Vana 会先生成文件，再打开 Android 系统分享面板。微信、QQ、邮箱等应用会在支持该格式时显示。
+            </p>
+            {mobileExportStatus && (
+              <div
+                className="mb-3 rounded border px-3 py-2 text-sm"
+                style={{
+                  borderColor: mobileExportStatus.stage === 'failed' ? '#ef4444' : border,
+                  backgroundColor: mobileExportStatus.stage === 'failed' ? 'rgba(239, 68, 68, 0.12)' : `${accentBg}35`,
+                  color: mobileExportStatus.stage === 'failed' ? '#fca5a5' : text,
+                }}
+              >
+                {mobileExportStatus.message}
+              </div>
+            )}
+            <div className="grid gap-2">
+              {([
+                ['md', '分享 Markdown', '生成 .md 文件，适合发送给编辑器、代码工具或继续二次编辑。'],
+                ['docx', '分享 DOCX', '生成 .docx 文件，适合通过微信/QQ发送给 Word、WPS 用户。'],
+                ['pdf', '分享 PDF', '生成 .pdf 文件，适合通过微信/QQ发送固定版式内容。'],
+              ] as const).map(([format, label, description]) => (
+                <button
+                  key={format}
+                  type="button"
+                  className="rounded border px-4 py-3 text-left"
+                  style={{ borderColor: border, backgroundColor: 'transparent', color: text }}
+                  disabled={mobileExportStatus?.stage === 'generating' || mobileExportStatus?.stage === 'sharing'}
+                  onClick={() => void handleMobileShare(format)}
+                >
+                  <div className="text-sm font-medium">{label}</div>
+                  <div className="mt-1 text-xs" style={{ color: muted }}>{description}</div>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

@@ -579,13 +579,13 @@ export async function exportToPDF(
   content: JSONContent,
   theme: Theme,
   filename: string
-): Promise<void> {
+): Promise<string | null> {
   let renderRoot: HTMLDivElement | null = null;
 
   try {
     if (isTauriEnvironment()) {
       const typstSource = convertJSONToTypst(content, theme, filename);
-      await invoke<string>('export_pdf_with_typst', {
+      return await invoke<string>('export_pdf_with_typst', {
         filename,
         typstSource,
       });
@@ -601,6 +601,7 @@ export async function exportToPDF(
       anchor.download = `${filename}.pdf`;
       anchor.click();
       URL.revokeObjectURL(downloadUrl);
+      return null;
     }
   } catch (error) {
     throw new Error(`生成 PDF 失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -659,7 +660,7 @@ export async function exportToDOCX(
   content: JSONContent,
   theme: Theme,
   filename: string
-): Promise<void> {
+): Promise<string> {
   const paragraphs: Paragraph[] = [];
   const tokens = getDocumentStyleTokens(theme);
   const docxSizes = getDocumentDocxSizes(theme);
@@ -808,6 +809,7 @@ export async function exportToDOCX(
       fileType: 'docx',
     });
     console.log('DOCX 已保存到:', savedPath);
+    return savedPath;
   } catch (error) {
     console.error('保存 DOCX 失败:', error);
     throw new Error(`保存 DOCX 失败: ${error}`);
@@ -874,5 +876,13 @@ export async function saveMarkdownExport(filename: string, markdown: string): Pr
     filename,
     content: bytes,
     fileType: 'md',
+  });
+}
+
+export async function shareExportFile(path: string, fileType: 'pdf' | 'docx' | 'md', title: string): Promise<void> {
+  return invoke<void>('share_export_file', {
+    path,
+    fileType,
+    title,
   });
 }

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Info, Menu, RefreshCw, Settings, XCircle } from 'lucide-react';
+import { Check, Info, Menu, RefreshCw, Settings, Share2, XCircle } from 'lucide-react';
 import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
 import { AppLink } from '@/lib/router';
 
@@ -21,6 +21,7 @@ export function MobileHomeShell({
   onOpenSidebar,
   onCloseSidebar,
   onOpenProperties,
+  onOpenExportMenu,
   onManualSync,
   onMenuAction,
   onHelp,
@@ -42,6 +43,7 @@ export function MobileHomeShell({
   onOpenSidebar: () => void;
   onCloseSidebar: () => void;
   onOpenProperties: () => void;
+  onOpenExportMenu: () => void;
   onManualSync: () => void;
   onMenuAction: (action: MenuAction) => void;
   onHelp: () => void;
@@ -49,6 +51,12 @@ export function MobileHomeShell({
   onMenuOpenChange?: (open: boolean) => void;
   menuCloseSignal?: number;
 }) {
+  const openExportMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onOpenExportMenu();
+  };
+
   const sidebarLayer =
     sidebarOpen && typeof document !== 'undefined'
       ? createPortal(
@@ -68,6 +76,7 @@ export function MobileHomeShell({
       >
         <button
           type="button"
+          data-tauri-drag-region="false"
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border"
           style={{ borderColor: border, color: accent }}
           onClick={onOpenSidebar}
@@ -82,6 +91,7 @@ export function MobileHomeShell({
             {hasDocument && (
               <button
                 type="button"
+                data-tauri-drag-region="false"
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border"
                 style={{ borderColor: border, color: accent }}
                 onClick={onOpenProperties}
@@ -93,8 +103,21 @@ export function MobileHomeShell({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {hasDocument && (
+            <button
+              type="button"
+              data-tauri-drag-region="false"
+              className="flex h-10 w-10 items-center justify-center rounded-lg border"
+              style={{ borderColor: border, color: accent }}
+              onClick={openExportMenu}
+              aria-label="分享文档"
+            >
+              <Share2 size={17} />
+            </button>
+          )}
           <button
             type="button"
+            data-tauri-drag-region="false"
             className="flex h-10 w-10 items-center justify-center rounded-lg border"
             style={{ borderColor: border, color: accent }}
             onClick={onManualSync}
@@ -110,6 +133,7 @@ export function MobileHomeShell({
           </button>
           <AppLink
             href="/settings"
+            data-tauri-drag-region="false"
             className="flex h-10 w-10 items-center justify-center rounded-lg border"
             style={{ borderColor: border, color: accent }}
             aria-label="设置"
