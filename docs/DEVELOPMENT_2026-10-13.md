@@ -54,3 +54,11 @@ Windows `b862b15` 的签名 EXE/MSI 与原生程序校验通过，完整三平�
 Android 另加独立同证书 Instrumentation 工具，限定已创建测试账号的 ID 与邮箱，读取实际无 token 的 SQLite 摘要与 Keystore 密文。它仅让该 fixture 的 OS 会话过期，再由原生应用执行真实 refresh；验证凭据轮换、旧秘密删除及退出清理。该工具不合入生产 APK，只在手动验收构建中生成，设备结果仍待运行。
 
 Linux 备份导入原生验收复现 WebKit 的“文件对象不可用”：文件选择后立即清空 input，再异步读取 File 导致失败。本轮已将清空延后至读取/预览结束，等待新的原生包验证，未把失败场景记为通过。编辑器同时添加明确的 textbox、多行与只读语义及“文档正文”标签，改善辅助技术识别，并用于 Windows 正文操作验收。
+
+## 原生验收续测
+
+`7642041` 的正式 Linux CI 包已验证备份读取修复：通过真实 GTK 文件选择器读取备份，预览显示 2 份正文、7 条历史且数据库未写入；确认复制后生成 2 个新 ID、保留对应正文与 7 条历史并产生待同步任务。正常关闭并重启后，四份文档和 14 条历史完整回读，界面能打开导入正文。
+
+正式 Android 的 Markdown、DOCX、PDF 均实际打开前台系统 Chooser，并取消，未选择外部接收者。独立同证书工具确认 SQLite 无 token、系统密文只含 version/iv/ciphertext，再让隔离测试会话到期；这发现前端把 `expires_at=0` 视为未设置而跳过刷新，已改为非空判断，并新增覆盖不同到期状态的认证请求回归。新签名包设备续测仍待完成。
+
+Windows 原生应用已通过真实登录、编辑与保存。导出等待超时源于测试脚本错误假定 app-data/exports；生产代码使用 Windows Documents/vana。脚本已按 Documents known folder 修正并重新启动 Windows 专项验收，结果仍待确认。
