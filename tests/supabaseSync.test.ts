@@ -4,7 +4,7 @@ import { executeSupabaseSync, remoteDocumentToLocal, localDocumentToRemote, veri
 import type { AppState, SupabaseSession, SyncDocumentRecord, SyncExport, SyncSnapshot } from '../src/lib/api';
 
 const config = { url: 'https://example.supabase.co', anon_key: 'test-key' };
-const session: SupabaseSession = {access_token:'test-token',user_id:'00000000-0000-0000-0000-000000000001',refresh_token:null,expires_at:null,token_type:'bearer',email:null};
+const session: SupabaseSession = {access_token:'test-token',user_id:'00000000-0000-0000-0000-000000000001',expires_at:null,token_type:'bearer',email:null};
 const state = {account_scope:'account-A', account_user_id:session.user_id, supabase:config} as AppState;
 function remote(index = 0) {
   return {id:`00000000-0000-0000-0000-${String(index).padStart(12,'0')}`, revision:index+1,
@@ -91,22 +91,21 @@ test('JSONB contract accepts objects and legacy strings and rejects malformed co
     assert.throws(()=>remoteDocumentToLocal({...record,content_json:content}));
   }
 });
-test('logged-out connection check reports reachable, and invalid imported session is never persisted', async()=>{
-  let saves=0;const originalFetch=globalThis.fetch;
+test('logged-out connection check reports reachable and session import delegates validation to native Auth', async()=>{
+  const originalFetch=globalThis.fetch;
   const native=(globalThis as unknown as {window:unknown});
+  let imports=0;
   native.window={__TAURI_INTERNALS__:{invoke:async(command:string)=>{
     if(command==='get_supabase_config_command')return config;
+    if(command==='get_app_state_command')return state;
     if(command==='get_supabase_session_command')return null;
-    if(command==='save_supabase_session_command'){saves++;return session;}
+    if(command==='import_supabase_session_command'){imports++;throw new Error('认证请求失败（HTTP 401）');}
     throw new Error(`unexpected native command ${command}`);
   }}};
   try {
-    globalThis.fetch=async(input)=>String(input).endsWith('/settings')?response({}):new Response('invalid token',{status:401});
+    globalThis.fetch=async()=>response({});
     assert.deepEqual(await verifySupabaseConnection(),{reachable:true,authenticated:false,message:'连接成功，当前未登录。'});
-    await assert.rejects(importSupabaseSession(JSON.stringify(session)),/会话验证失败/);
-    assert.equal(saves,0);
-    globalThis.fetch=async()=>response({id:'not-a-valid-id'});
-    await assert.rejects(importSupabaseSession(JSON.stringify(session)),/用户 ID 无效/);
-    assert.equal(saves,0);
+    await assert.rejects(importSupabaseSession('opaque native payload'),/认证请求失败/);
+    assert.equal(imports,1);
   } finally {globalThis.fetch=originalFetch;delete (native as {window?:unknown}).window;}
 });

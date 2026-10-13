@@ -4,6 +4,9 @@
     public static void shareExportFile(java.lang.String, java.lang.String, java.lang.String);
     public static java.lang.String lastShareError;
 }
+-keep class com.vana.no_visitors.AndroidSessionSecrets {
+    public static java.lang.String access(android.content.Context, java.lang.String, java.lang.String, java.lang.String);
+}
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
 #

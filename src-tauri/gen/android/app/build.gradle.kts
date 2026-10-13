@@ -31,6 +31,10 @@ android {
     compileSdk = 36
     namespace = "com.vana.no_visitors"
     defaultConfig {
+        manifestPlaceholders["appLabel"] = if (env["VANA_ANDROID_PREVIEW"] == "1") "Vana Preview" else "Vana"
+        if (env["VANA_ANDROID_PREVIEW"] == "1") {
+            applicationIdSuffix = ".preview"
+        }
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.vana.no_visitors"
         minSdk = 24

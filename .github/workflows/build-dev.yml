@@ -256,6 +256,7 @@ jobs:
 
       - name: Build Android Release preview APK
         env:
+          VANA_ANDROID_PREVIEW: "1"
           VANA_ANDROID_KEYSTORE_PASSWORD: android
           VANA_ANDROID_KEY_ALIAS: vana-preview
           VANA_ANDROID_KEY_PASSWORD: android

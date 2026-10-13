@@ -71,9 +71,14 @@ export default function SettingsPage() {
   const [showAdvancedConfig, setShowAdvancedConfig] = useState(false);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [sessionSummary, setSessionSummary] = useState<string | null>(null);
+  const [credentialError, setCredentialError] = useState('');
 
   const refresh = async () => {
-    const [state, config, session] = await Promise.all([getAppState(), getSupabaseConfig(), getSupabaseSession()]);
+    setCredentialError('');
+    const [state, config, session] = await Promise.all([getAppState(), getSupabaseConfig(), getSupabaseSession().catch(error => {
+      setCredentialError(error instanceof Error ? error.message : String(error));
+      return null;
+    })]);
     setAppState(state);
     setSupabaseUrl(config.url ?? '');
     setSupabaseAnonKey(config.anon_key ?? '');
@@ -88,7 +93,7 @@ export default function SettingsPage() {
     void (async () => {
       await ensureWorkspaceInitialized();
       await refresh();
-    })();
+    })().catch(error => toast.error(error instanceof Error ? error.message : String(error)));
   }, []);
 
   const handleImport = async () => {
@@ -275,6 +280,7 @@ export default function SettingsPage() {
               <div>服务来源：{appState?.service_profile ?? 'hosted'}</div>
               <div>账户邮箱：{appState?.account_email ?? '访客模式 / 未登录'}</div>
               <div>当前会话：{sessionSummary ?? '无活动会话'}</div>
+              {credentialError && <p role="alert" className="leading-6">会话存储不可用：{credentialError}。本地文档仍可使用，请解锁系统凭据库或重新登录。</p>}
               <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
               <div>首启引导：{appState?.onboarding_completed ? '已完成' : '未完成'}</div>
             </div>

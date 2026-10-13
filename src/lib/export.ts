@@ -1,3 +1,4 @@
+import { exportAlignment, exportHeadingLevel } from './exportBoundary';
 /**
  * Vana - 文档导出功能
  * 支持导出为 PDF 和 DOCX 格式
@@ -179,12 +180,12 @@ function convertJSONToHTML(content: JSONContent): string {
   }
 
   const blocks = content.content.map((block) => {
-    const align = block.attrs?.textAlign || 'left';
+    const align = exportAlignment(block.attrs?.textAlign);
     const alignAttr = ` style="text-align:${align};"`;
 
     switch (block.type) {
       case 'heading': {
-        const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
+        const level = exportHeadingLevel(block.attrs?.level);
         return `<h${level}${alignAttr}>${convertInlineContentToHTML(block) || '标题'}</h${level}>`;
       }
       case 'blockquote':
@@ -499,7 +500,7 @@ function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string
   const headingFonts = theme.id === 'terminal' ? monoFonts : serifFonts;
 
   const blocks = (content.content || []).map((block) => {
-    const align = block.attrs?.textAlign;
+    const align = exportAlignment(block.attrs?.textAlign);
     const alignPrefix = align === 'center'
       ? '#align(center)['
       : align === 'right'
@@ -509,7 +510,7 @@ function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string
 
     switch (block.type) {
       case 'heading': {
-        const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
+        const level = exportHeadingLevel(block.attrs?.level);
         const size = level === 1
           ? `${tokens.h1SizeRem}em`
           : level === 2
@@ -679,7 +680,7 @@ export async function exportToDOCX(
         continue;
       }
 
-      const align = block.attrs?.textAlign || 'left';
+      const align = exportAlignment(block.attrs?.textAlign);
       const alignment = align === 'center' 
         ? AlignmentType.CENTER 
         : align === 'right' 
@@ -687,7 +688,7 @@ export async function exportToDOCX(
         : AlignmentType.LEFT;
 
       if (block.type === 'heading') {
-        const level = block.attrs?.level || 1;
+        const level = exportHeadingLevel(block.attrs?.level);
         const textRuns = convertToTextRuns(block, accentColorHex);
         const headingRuns = textRuns.map((run) => new TextRun({
           text: run.text,
@@ -846,7 +847,7 @@ export function exportToMarkdown(content: JSONContent): string {
 
     switch (block.type) {
       case 'heading': {
-        const level = Math.min(Math.max(Number(block.attrs?.level || 1), 1), 3);
+        const level = exportHeadingLevel(block.attrs?.level);
         return `${'#'.repeat(level)} ${inline || plainText}`;
       }
       case 'blockquote':

@@ -87,7 +87,6 @@ export interface SupabaseConfig {
 
 export interface SupabaseSession {
   access_token: string;
-  refresh_token: string | null;
   expires_at: number | null;
   token_type: string | null;
   user_id: string | null;
@@ -396,12 +395,41 @@ export async function getSupabaseSession(): Promise<SupabaseSession | null> {
   return invoke<SupabaseSession | null>('get_supabase_session_command');
 }
 
-export async function saveSupabaseSession(session: SupabaseSession, context?: { url: string; scope?: string }): Promise<SupabaseSession> {
+export async function authenticateSupabase(email: string, password: string, register: boolean): Promise<{ session: SupabaseSession | null; needsEmailConfirmation: boolean }> {
+  const origin = await getAppState();
+  if (!origin.supabase.url || !origin.supabase.anon_key) throw new Error('Supabase 连接信息未配置。');
   await flushBeforeAccountChange();
-  const result = await invoke<SupabaseSession>('save_supabase_session_command', { session, expectedProject: context?.url ?? (await getSupabaseConfig()).url, expectedScope: context?.scope ?? null });
+  const result = await invoke<{ session: SupabaseSession | null; needsEmailConfirmation: boolean }>('authenticate_supabase_command', {
+    email, password, register, expectedProject: origin.supabase.url, expectedScope: origin.account_scope,
+  });
   accountScope = undefined;
   await getAppState();
   return result;
+}
+
+export async function importSessionNative(raw: string): Promise<SupabaseSession> {
+  const origin = await getAppState();
+  if (!origin.supabase.url || !origin.supabase.anon_key) throw new Error('Supabase 连接信息未配置。');
+  await flushBeforeAccountChange();
+  const result = await invoke<SupabaseSession>('import_supabase_session_command', {
+    raw, expectedProject: origin.supabase.url, expectedScope: origin.account_scope,
+  });
+  accountScope = undefined;
+  await getAppState();
+  return result;
+}
+
+export async function refreshSessionNative(project: string, scope: string): Promise<SupabaseSession> {
+  return invoke<SupabaseSession>('refresh_supabase_session_command', { expectedProject: project, expectedScope: scope });
+}
+
+export async function logoutNative(): Promise<void> {
+  const origin = await getAppState();
+  await flushBeforeAccountChange();
+  if (origin.account_mode === 'guest') return;
+  await invoke<void>('logout_supabase_command', { expectedProject: origin.supabase.url, expectedScope: origin.account_scope });
+  accountScope = undefined;
+  await getAppState();
 }
 
 export async function clearSupabaseSession(scope?: string): Promise<void> {

@@ -4,7 +4,10 @@
 mod android_share;
 mod commands;
 mod crypto;
+mod credentials;
+mod auth;
 mod db;
+mod document_content;
 mod export_file;
 mod keychain;
 mod storage;
@@ -42,7 +45,10 @@ pub fn run() {
             commands::get_supabase_config_command,
             commands::save_supabase_config_command,
             commands::get_supabase_session_command,
-            commands::save_supabase_session_command,
+            commands::authenticate_supabase_command,
+            commands::refresh_supabase_session_command,
+            commands::import_supabase_session_command,
+            commands::logout_supabase_command,
             commands::clear_supabase_session_command,
             commands::complete_onboarding_command,
             commands::mark_sync_attempt_command,

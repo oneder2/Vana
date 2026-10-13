@@ -1,12 +1,14 @@
 import {
   applyRemoteDocuments,
-  clearSupabaseSession,
+  authenticateSupabase,
+  importSessionNative,
+  refreshSessionNative,
+  logoutNative,
   exportSyncDocuments,
   finalizeSyncJobs,
   getSupabaseConfig,
   getAppState,
   getSupabaseSession,
-  saveSupabaseSession,
   type SupabaseSession,
   type SyncDocumentRecord,
   type SyncSnapshot,
@@ -24,209 +26,29 @@ function authHeaders(accessToken: string, anonKey: string): HeadersInit {
   };
 }
 
-export function parseSupabaseCallbackPayload(input: string): SupabaseSession | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  try {
-    const parsed = JSON.parse(trimmed) as Partial<SupabaseSession>;
-    if (typeof parsed.access_token === 'string' && parsed.access_token.trim()) {
-      return {
-        access_token: parsed.access_token.trim(),
-        refresh_token: parsed.refresh_token?.trim() ?? null,
-        expires_at: typeof parsed.expires_at === 'number' ? parsed.expires_at : null,
-        token_type: parsed.token_type?.trim() ?? 'bearer',
-        user_id: parsed.user_id?.trim() ?? null,
-        email: parsed.email?.trim() ?? null,
-      };
-    }
-  } catch {
-    // fall through
-  }
-
-  const fromHash = trimmed.includes('#') ? trimmed.split('#')[1] : trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
-  const params = new URLSearchParams(fromHash.startsWith('?') ? fromHash.slice(1) : fromHash);
-  const accessToken = params.get('access_token');
-  if (!accessToken) return null;
-
-  return {
-    access_token: accessToken,
-    refresh_token: params.get('refresh_token'),
-    expires_at: params.get('expires_at') ? Number(params.get('expires_at')) : null,
-    token_type: params.get('token_type'),
-    user_id: params.get('user_id') ?? params.get('sub'),
-    email: params.get('email'),
-  };
-}
-
-async function fetchUserProfile(url: string, anonKey: string, session: SupabaseSession): Promise<Partial<SupabaseSession>> {
-  const response = await fetch(`${normalizeUrl(url)}/auth/v1/user`, {
-    headers: authHeaders(session.access_token, anonKey),
-  });
-
-  if (!response.ok) {
-    throw new Error(`登录会话验证失败：${response.status}`);
-  }
-
-  const data = (await response.json()) as { id?: string; email?: string };
-  if (typeof data.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id)) {
-    throw new Error('服务器返回的用户 ID 无效。');
-  }
-  return {
-    user_id: data.id,
-    email: data.email ?? session.email ?? null,
-  };
-}
-
-async function persistSessionWithProfile(url: string, anonKey: string, session: SupabaseSession, scope?: string): Promise<SupabaseSession> {
-  const enriched = {
-    ...session,
-    ...(await fetchUserProfile(url, anonKey, session)),
-  };
-  return saveSupabaseSession(enriched, { url, scope });
-}
-
-async function refreshSupabaseSession(url: string, anonKey: string, session: SupabaseSession): Promise<SupabaseSession> {
-  const origin = await getAppState();
-  if (origin.account_user_id !== session.user_id || normalizeUrl(origin.supabase.url ?? '') !== normalizeUrl(url)) throw new Error('刷新期间账号或项目已切换。');
-  if (!session.refresh_token) {
-    throw new Error('登录态已过期，请重新登录。');
-  }
-
-  const response = await fetch(`${normalizeUrl(url)}/auth/v1/token?grant_type=refresh_token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-    },
-    body: JSON.stringify({ refresh_token: session.refresh_token }),
-  });
-
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || !body.access_token) {
-    await clearSupabaseSession(origin.account_scope);
-    throw new Error(String(body?.msg ?? body?.error_description ?? body?.error ?? '登录态已过期，请重新登录。'));
-  }
-
-  return persistSessionWithProfile(url, anonKey, {
-    access_token: String(body.access_token),
-    refresh_token: body.refresh_token ? String(body.refresh_token) : session.refresh_token,
-    expires_at: typeof body.expires_at === 'number' ? body.expires_at : null,
-    token_type: body.token_type ? String(body.token_type) : 'bearer',
-    user_id: body.user?.id ? String(body.user.id) : session.user_id,
-    email: body.user?.email ? String(body.user.email) : session.email,
-  }, origin.account_scope);
-}
-
-async function ensureValidSupabaseSession(url: string, anonKey: string): Promise<SupabaseSession> {
+async function ensureValidSupabaseSession(url: string, _anonKey: string): Promise<SupabaseSession> {
   const session = await getSupabaseSession();
-  if (!session?.access_token) {
-    throw new Error('尚未登录。请先登录 Supabase。');
+  if (!session?.access_token) throw new Error('尚未登录。请先登录 Supabase。');
+  if (session.expires_at && Date.now() >= session.expires_at * 1000 - 60_000) {
+    const origin = await getAppState();
+    if (origin.account_user_id !== session.user_id || normalizeUrl(origin.supabase.url ?? '') !== normalizeUrl(url)) throw new Error('刷新期间账号或项目已切换。');
+    return refreshSessionNative(url, origin.account_scope);
   }
-
-  const expiresAt = session.expires_at ?? null;
-  if (expiresAt && Date.now() >= expiresAt * 1000 - 60_000) {
-    return refreshSupabaseSession(url, anonKey, session);
-  }
-
   return session;
 }
 
 export async function importSupabaseSession(raw: string): Promise<SupabaseSession> {
-  const parsed = parseSupabaseCallbackPayload(raw);
-  if (!parsed) {
-    throw new Error('无法解析会话。请粘贴登录回调 URL、hash 片段，或 access_token JSON。');
-  }
-
-  const config = await getSupabaseConfig();
-  if (!config.url || !config.anon_key) {
-    throw new Error('请先保存 Supabase URL 和 Anon Key。');
-  }
-
-  const enriched = {
-    ...parsed,
-    ...(await fetchUserProfile(config.url, config.anon_key, parsed)),
-  };
-
-  return saveSupabaseSession(enriched, { url: config.url });
+  return importSessionNative(raw);
 }
 
 export async function signInWithPassword(email: string, password: string): Promise<SupabaseSession> {
-  const config = await getSupabaseConfig();
-  if (!config.url || !config.anon_key) {
-    throw new Error('Supabase 连接信息未配置。');
-  }
-
-  const response = await fetch(`${normalizeUrl(config.url)}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: config.anon_key,
-      Authorization: `Bearer ${config.anon_key}`,
-    },
-    body: JSON.stringify({ email, password }),
-  });
-
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(String(body?.msg ?? body?.error_description ?? body?.error ?? `登录失败: ${response.status}`));
-  }
-
-  return persistSessionWithProfile(config.url, config.anon_key, {
-    access_token: String(body.access_token ?? ''),
-    refresh_token: body.refresh_token ? String(body.refresh_token) : null,
-    expires_at: typeof body.expires_at === 'number' ? body.expires_at : null,
-    token_type: body.token_type ? String(body.token_type) : 'bearer',
-    user_id: body.user?.id ? String(body.user.id) : null,
-    email: body.user?.email ? String(body.user.email) : email,
-  });
+  const result = await authenticateSupabase(email, password, false);
+  if (!result.session) throw new Error('登录响应缺少会话');
+  return result.session;
 }
 
-export async function signUpWithPassword(email: string, password: string): Promise<{
-  session: SupabaseSession | null;
-  needsEmailConfirmation: boolean;
-}> {
-  const config = await getSupabaseConfig();
-  if (!config.url || !config.anon_key) {
-    throw new Error('Supabase 连接信息未配置。');
-  }
-
-  const response = await fetch(`${normalizeUrl(config.url)}/auth/v1/signup`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: config.anon_key,
-      Authorization: `Bearer ${config.anon_key}`,
-    },
-    body: JSON.stringify({ email, password }),
-  });
-
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(String(body?.msg ?? body?.error_description ?? body?.error ?? `注册失败: ${response.status}`));
-  }
-
-  if (!body.access_token) {
-    return {
-      session: null,
-      needsEmailConfirmation: true,
-    };
-  }
-
-  const session = await persistSessionWithProfile(config.url, config.anon_key, {
-    access_token: String(body.access_token),
-    refresh_token: body.refresh_token ? String(body.refresh_token) : null,
-    expires_at: typeof body.expires_at === 'number' ? body.expires_at : null,
-    token_type: body.token_type ? String(body.token_type) : 'bearer',
-    user_id: body.user?.id ? String(body.user.id) : null,
-    email: body.user?.email ? String(body.user.email) : email,
-  });
-
-  return {
-    session,
-    needsEmailConfirmation: false,
-  };
+export async function signUpWithPassword(email: string, password: string): Promise<{ session: SupabaseSession | null; needsEmailConfirmation: boolean }> {
+  return authenticateSupabase(email, password, true);
 }
 
 export async function verifySupabaseConnection(
@@ -297,22 +119,7 @@ export async function verifySupabaseConnection(
 }
 
 export async function signOutSupabase(): Promise<void> {
-  const origin = await getAppState();
-  const config = await getSupabaseConfig();
-  const session = await getSupabaseSession();
-
-  if (config.url && config.anon_key && session?.access_token) {
-    try {
-      await fetch(`${normalizeUrl(config.url)}/auth/v1/logout`, {
-        method: 'POST',
-        headers: authHeaders(session.access_token, config.anon_key),
-      });
-    } catch {
-      // ignore remote logout failures
-    }
-  }
-
-  await clearSupabaseSession(origin.account_scope);
+  await logoutNative();
 }
 
 export function localDocumentToRemote(document: SyncDocumentRecord) {

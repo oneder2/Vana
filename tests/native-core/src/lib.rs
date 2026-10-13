@@ -20,6 +20,22 @@ impl PathResolver {
 mod db;
 #[path = "../../../src-tauri/src/export_file.rs"]
 mod export_file;
+#[path = "../../../src-tauri/src/document_content.rs"]
+mod document_content;
+#[path = "../../../src-tauri/src/auth.rs"]
+mod auth;
+
+// Test-only OS-store substitute; the production binary has no plaintext fallback.
+mod credentials {
+    use super::AppHandle;
+    use std::{collections::{HashMap, HashSet}, sync::{Mutex, OnceLock}};
+    type Memory = (HashMap<String, String>, HashSet<std::path::PathBuf>);
+    fn memory() -> &'static Mutex<Memory> { static MEMORY: OnceLock<Mutex<Memory>> = OnceLock::new(); MEMORY.get_or_init(|| Mutex::new((HashMap::new(), HashSet::new()))) }
+    pub fn available(app: &AppHandle, value: bool) { let mut data = memory().lock().unwrap(); if value { data.1.remove(&app.0); } else { data.1.insert(app.0.clone()); } }
+    pub fn put(app: &AppHandle, key: &str, value: &str) -> anyhow::Result<()> { let mut data = memory().lock().unwrap(); anyhow::ensure!(!data.1.contains(&app.0), "系统凭据库不可用"); data.0.insert(key.into(), value.into()); Ok(()) }
+    pub fn get(app: &AppHandle, key: &str) -> anyhow::Result<Option<String>> { let data = memory().lock().unwrap(); anyhow::ensure!(!data.1.contains(&app.0), "系统凭据库不可用"); Ok(data.0.get(key).cloned()) }
+    pub fn remove(app: &AppHandle, key: &str) -> anyhow::Result<()> { let mut data = memory().lock().unwrap(); anyhow::ensure!(!data.1.contains(&app.0), "系统凭据库不可用"); data.0.remove(key); Ok(()) }
+}
 
 #[cfg(test)]
 mod regressions {
@@ -209,6 +225,135 @@ mod regressions {
         assert!(list_document_conflicts(&app, "guest").unwrap().is_empty());
         assert_eq!(get_document(&app, &d.id).unwrap().unwrap().content_json, d.content_json);
         assert_eq!(open_db(&app).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 4);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn credentials_fail_closed_and_legacy_sqlite_tokens_migrate_only_after_verified_write() {
+        let app = app(); configure(&app);
+        let directory = local_data_dir(&app).unwrap();
+        let control = rusqlite::Connection::open(directory.join("control.db")).unwrap();
+        let mut old = session("00000000-0000-0000-0000-000000000001");
+        old.access_token = "legacy-access-secret".into(); old.refresh_token = Some("legacy-refresh-secret".into());
+        control.execute("INSERT OR REPLACE INTO app_config(key,value) VALUES ('supabase.session',?1)", rusqlite::params![serde_json::to_string(&old).unwrap()]).unwrap();
+        let legacy = rusqlite::Connection::open(directory.join("legacy-unassigned.db")).unwrap();
+        legacy.execute_batch("CREATE TABLE app_config(key TEXT PRIMARY KEY,value TEXT);").unwrap();
+        legacy.execute("INSERT INTO app_config VALUES ('supabase.session',?1)", rusqlite::params![serde_json::to_string(&old).unwrap()]).unwrap();
+        credentials::available(&app, false);
+        assert!(get_supabase_session(&app).is_err());
+        let unmigrated: String = control.query_row("SELECT value FROM app_config WHERE key='supabase.session'", [], |r|r.get(0)).unwrap();
+        assert!(unmigrated.contains("legacy-refresh-secret"));
+        credentials::available(&app, true);
+        let migrated = get_supabase_session(&app).unwrap().unwrap();
+        assert_eq!(migrated.refresh_token, old.refresh_token);
+        let metadata: String = control.query_row("SELECT value FROM app_config WHERE key='supabase.session'", [], |r|r.get(0)).unwrap();
+        assert!(!metadata.contains("legacy-refresh-secret") && !metadata.contains("legacy-access-secret"));
+        assert_eq!(legacy.query_row("SELECT COUNT(*) FROM app_config WHERE key='supabase.session'", [], |r|r.get::<_,i64>(0)).unwrap(), 0);
+        let public = serde_json::to_string(&auth::PublicSession::from(migrated)).unwrap();
+        assert!(!public.contains("refresh_token") && !public.contains("legacy-refresh-secret"));
+        let scope = get_app_state(&app).unwrap().account_scope;
+        credentials::available(&app, false);
+        assert!(save_supabase_session(&app, session("00000000-0000-0000-0000-000000000002")).is_err());
+        assert_eq!(get_app_state(&app).unwrap().account_scope, scope);
+        credentials::available(&app, true);
+        clear_supabase_session(&app, &scope).unwrap();
+        assert!(get_supabase_session(&app).unwrap().is_none());
+        drop(legacy); drop(control);
+        for name in ["control.db", "legacy-unassigned.db"] {
+            let bytes = std::fs::read(directory.join(name)).unwrap();
+            assert!(!bytes.windows("legacy-refresh-secret".len()).any(|s|s==b"legacy-refresh-secret"));
+        }
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn unsafe_rich_text_is_rejected_without_changing_body_history_or_queue() {
+        let app = app(); let d = create(&app, "guest", "document", None);
+        let queued = export_sync_documents(&app, "guest").unwrap().pending_job_ids;
+        for content in [
+            serde_json::json!({"type":"doc","content":[{"type":"paragraph","attrs":{"textAlign":"left; background:url(https://attacker.test)"}}]}),
+            serde_json::json!({"type":"doc","content":[{"type":"image","attrs":{"src":"https://attacker.test"}}]}),
+            serde_json::json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"click","marks":[{"type":"link","attrs":{"href":"javascript:alert(1)"}}]}]}]}),
+            serde_json::json!({"type":"doc","content":[{"type":"paragraph","attrs":{"onload":"alert(1)"}}]}),
+        ] {
+            let mut unsafe_input = input(&d,"unsafe"); unsafe_input.content_json=content.to_string();
+            assert!(save_document(&app, unsafe_input).is_err());
+            assert_eq!(get_document(&app,&d.id).unwrap().unwrap().content_json,d.content_json);
+            assert_eq!(export_sync_documents(&app,"guest").unwrap().pending_job_ids,queued);
+        }
+        let valid = serde_json::json!({"type":"doc","content":[{"type":"heading","attrs":{"level":2,"textAlign":"center","uuid":null,"createdAt":123},"content":[{"type":"text","text":"安全正文","marks":[{"type":"bold"},{"type":"link","attrs":{"href":"https://example.test","target":"_blank","rel":"noopener noreferrer nofollow","class":null}}]}]}]});
+        document_content::validate(&valid.to_string()).unwrap();
+        let mut deep = serde_json::json!({"type":"paragraph","content":[]});
+        for _ in 0..34 { deep=serde_json::json!({"type":"blockquote","content":[deep]}); }
+        assert!(document_content::validate(&serde_json::json!({"type":"doc","content":[deep]}).to_string()).is_err());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    fn auth_server(responses: Vec<(u16, serde_json::Value)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                let mut request = Vec::new(); let mut buffer = [0u8; 2048];
+                loop {
+                    let bytes = socket.read(&mut buffer).unwrap();
+                    if bytes == 0 { break; } request.extend_from_slice(&buffer[..bytes]);
+                    if let Some(end) = request.windows(4).position(|s|s==b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let length = headers.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length:").map(|n|n.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                        if request.len() >= end+4+length { break; }
+                    }
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                let body = body.to_string();
+                write!(socket,"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+            requests
+        });
+        (url,handle)
+    }
+
+    #[tokio::test]
+    async fn native_auth_verifies_identity_rotates_private_refresh_and_logs_out() {
+        let app = app();
+        let user = serde_json::json!({"id":"00000000-0000-0000-0000-000000000001","email":"test@example.test"});
+        let (url, server) = auth_server(vec![
+            (200,serde_json::json!({"access_token":"access-one","refresh_token":"refresh-one","expires_in":3600})), (200,user.clone()),
+            (200,serde_json::json!({"access_token":"access-two","refresh_token":"refresh-two","expires_in":3600})), (200,user),
+            (200,serde_json::json!({})),
+        ]);
+        save_supabase_config(&app,SupabaseConfig{url:Some(url.clone()),anon_key:Some("test-key".into())}).unwrap();
+        let login = auth::password_auth(app.clone(),url.clone(),"guest".into(),"test@example.test".into(),"test-password".into(),false).await.unwrap();
+        let login = login.session.unwrap();
+        assert_eq!(login.access_token,"access-one");
+        assert!(!serde_json::to_string(&login).unwrap().contains("refresh"));
+        let scope = get_app_state(&app).unwrap().account_scope;
+        let refreshed = auth::refresh(app.clone(),url.clone(),scope.clone()).await.unwrap();
+        assert_eq!(refreshed.access_token,"access-two");
+        assert_eq!(get_supabase_session(&app).unwrap().unwrap().refresh_token.as_deref(),Some("refresh-two"));
+        auth::logout(app.clone(),url,scope).await.unwrap();
+        assert!(get_supabase_session(&app).unwrap().is_none());
+        let requests=server.join().unwrap();
+        assert!(requests[0].starts_with("POST /auth/v1/token?grant_type=password"));
+        assert!(requests[2].contains("refresh-one"));
+        assert!(requests[4].to_ascii_lowercase().contains("bearer access-two"));
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_auth_rejects_unverified_identity_and_insecure_remote_service() {
+        let app = app();
+        let (url,server)=auth_server(vec![(200,serde_json::json!({"id":"invalid-user"}))]);
+        save_supabase_config(&app,SupabaseConfig{url:Some(url.clone()),anon_key:Some("test-key".into())}).unwrap();
+        assert!(auth::import(app.clone(),url,"guest".into(),serde_json::json!({"access_token":"untrusted","refresh_token":"private"}).to_string()).await.is_err());
+        server.join().unwrap();
+        assert!(get_supabase_session(&app).unwrap().is_none());
+        save_supabase_config(&app,SupabaseConfig{url:Some("http://remote.example.test".into()),anon_key:Some("key".into())}).unwrap();
+        assert!(auth::password_auth(app.clone(),"http://remote.example.test".into(),"guest".into(),"a@b.test".into(),"password".into(),false).await.unwrap_err().to_string().contains("HTTPS"));
         std::fs::remove_dir_all(app.0).unwrap();
     }
 

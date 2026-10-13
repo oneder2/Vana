@@ -1,6 +1,6 @@
 use crate::db::{
     self, AppState, ApplyRemoteResult, DocumentRecord, DocumentSummary, LegacyImportResult,
-    SaveDocumentInput, SupabaseConfig, SupabaseSession, SyncDocumentRecord, SyncDocumentStructure,
+    SaveDocumentInput, SupabaseConfig, SyncDocumentRecord, SyncDocumentStructure,
     SyncExport, SyncSnapshot, TagRecord,
 };
 use crate::keychain::{export_master_key, import_master_key};
@@ -276,19 +276,29 @@ pub fn save_supabase_config_command(
 }
 
 #[tauri::command]
-pub fn get_supabase_session_command(app: AppHandle) -> Result<Option<SupabaseSession>, String> {
-    db::get_supabase_session(&app).map_err(|error| error.to_string())
+pub async fn get_supabase_session_command(app: AppHandle) -> Result<Option<crate::auth::PublicSession>, String> {
+    tauri::async_runtime::spawn_blocking(move || db::get_supabase_session(&app).map(|session| session.map(Into::into)).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn save_supabase_session_command(
-    app: AppHandle,
-    session: SupabaseSession,
-    expected_project: String,
-    expected_scope: Option<String>,
-) -> Result<SupabaseSession, String> {
-    db::save_supabase_session(&app, session, &expected_project, expected_scope.as_deref())
-        .map_err(|error| error.to_string())
+pub async fn authenticate_supabase_command(app: AppHandle, expected_project: String, expected_scope: String, email: String, password: String, register: bool) -> Result<crate::auth::Registration, String> {
+    crate::auth::password_auth(app, expected_project, expected_scope, email, password, register).await.map_err(|e|e.to_string())
+}
+
+#[tauri::command]
+pub async fn refresh_supabase_session_command(app: AppHandle, expected_project: String, expected_scope: String) -> Result<crate::auth::PublicSession, String> {
+    crate::auth::refresh(app, expected_project, expected_scope).await.map_err(|e|e.to_string())
+}
+
+#[tauri::command]
+pub async fn import_supabase_session_command(app: AppHandle, expected_project: String, expected_scope: String, raw: String) -> Result<crate::auth::PublicSession, String> {
+    crate::auth::import(app, expected_project, expected_scope, raw).await.map_err(|e|e.to_string())
+}
+
+#[tauri::command]
+pub async fn logout_supabase_command(app: AppHandle, expected_project: String, expected_scope: String) -> Result<(), String> {
+    crate::auth::logout(app, expected_project, expected_scope).await.map_err(|e|e.to_string())
 }
 
 #[tauri::command]

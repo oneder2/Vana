@@ -635,11 +635,16 @@ pub fn upsert_tag(
 
 pub fn save_supabase_config(app: &AppHandle, config: SupabaseConfig) -> Result<SupabaseConfig> {
     let control = open_control(app)?;
+    control.pragma_update(None, "secure_delete", "ON")?;
     let conn = control.unchecked_transaction()?;
     let old = effective_supabase_config(&conn)?;
     if old.url.as_deref().map(canonical_project).transpose()?
         != config.url.as_deref().map(canonical_project).transpose()?
     {
+        if let Some(key) = get_config_value(&conn, "supabase.credential_id")? {
+            crate::credentials::remove(app, &key)?;
+        }
+        set_config_value(&conn, "supabase.credential_id", None)?;
         set_config_value(&conn, "supabase.session", None)?;
         set_config_value(&conn, "supabase.user_id", None)?;
         set_config_value(&conn, "supabase.email", None)?;
@@ -653,57 +658,6 @@ pub fn save_supabase_config(app: &AppHandle, config: SupabaseConfig) -> Result<S
 pub fn get_supabase_config(app: &AppHandle) -> Result<SupabaseConfig> {
     let conn = open_control(app)?;
     effective_supabase_config(&conn)
-}
-
-pub fn save_supabase_session(
-    app: &AppHandle,
-    session: SupabaseSession,
-    expected_project: &str,
-    expected_scope: Option<&str>,
-) -> Result<SupabaseSession> {
-    let control = open_control(app)?;
-    let conn = control.unchecked_transaction()?;
-    let current = effective_supabase_config(&conn)?;
-    anyhow::ensure!(
-        canonical_project(current.url.as_deref().unwrap_or_default())?
-            == canonical_project(expected_project)?,
-        "登录期间项目已切换"
-    );
-    if let Some(scope) = expected_scope {
-        anyhow::ensure!(active_scope(&conn)? == scope, "刷新期间账号已切换");
-    }
-    Uuid::parse_str(session.user_id.as_deref().unwrap_or_default())
-        .context("会话缺少有效用户 ID")?;
-    anyhow::ensure!(!session.access_token.trim().is_empty(), "会话缺少访问令牌");
-    set_config_value(
-        &conn,
-        "supabase.session",
-        Some(&serde_json::to_string(&session)?),
-    )?;
-    set_config_value(&conn, "supabase.user_id", session.user_id.as_deref())?;
-    set_config_value(&conn, "supabase.email", session.email.as_deref())?;
-    set_config_value(&conn, "onboarding.completed", Some("1"))?;
-    conn.commit()?;
-    Ok(session)
-}
-
-pub fn get_supabase_session(app: &AppHandle) -> Result<Option<SupabaseSession>> {
-    let conn = open_control(app)?;
-    let value = get_config_value(&conn, "supabase.session")?;
-    value
-        .map(|raw| serde_json::from_str::<SupabaseSession>(&raw).map_err(Into::into))
-        .transpose()
-}
-
-pub fn clear_supabase_session(app: &AppHandle, expected_scope: &str) -> Result<()> {
-    let control = open_control(app)?;
-    let conn = control.unchecked_transaction()?;
-    anyhow::ensure!(active_scope(&conn)? == expected_scope, "退出期间账号已切换");
-    set_config_value(&conn, "supabase.session", None)?;
-    set_config_value(&conn, "supabase.user_id", None)?;
-    set_config_value(&conn, "supabase.email", None)?;
-    conn.commit()?;
-    Ok(())
 }
 
 pub fn complete_onboarding(app: &AppHandle) -> Result<()> {
@@ -1109,12 +1063,7 @@ fn queue_job(
 }
 
 fn validate_content(content: &str) -> Result<()> {
-    let value: serde_json::Value = serde_json::from_str(content).context("正文不是有效 JSON")?;
-    anyhow::ensure!(
-        value.is_object() && value["type"] == "doc" && value["content"].is_array(),
-        "正文必须是 Tiptap doc 对象"
-    );
-    Ok(())
+    crate::document_content::validate(content)
 }
 
 fn estimate_document_storage_bytes(title: &str, content_json: &str, plain_text: &str) -> usize {
@@ -1474,3 +1423,7 @@ pub use sync::{
     ApplyRemoteResult,
 };
 use sync::{sync_record, validate_tree, write_remote};
+
+#[path = "db/session.rs"]
+mod session;
+pub use session::{save_supabase_session, get_supabase_session, clear_supabase_session};

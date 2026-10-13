@@ -33,3 +33,24 @@ for path in mappings:
             found=True
             print(f'PASS: {dex}: JNI class, public static method signature and error field retained')
     if not found: raise SystemExit(f'{dex_root}: JNI class missing from actual minified DEX')
+
+# Refresh tokens now use a second JNI entry, also invisible to R8's reachability analysis.
+secret_name='com.vana.no_visitors.AndroidSessionSecrets'
+secret_signature='(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'
+for path in mappings:
+    text=path.read_text()
+    section=re.search(r'^'+re.escape(secret_name)+r' -> ([^\n:]+):\n((?:[ \t#].*\n)*)',text,re.MULTILINE)
+    if not section or section.group(1)!=secret_name: raise SystemExit(f'{path}: Keystore JNI class was removed or renamed')
+    variant=path.parent.name
+    dex_root=path.parents[3]/'intermediates/dex'/variant
+    found=False
+    for dex in dex_root.glob('**/classes*.dex'):
+        dump=subprocess.check_output([dexdump,str(dex)],text=True,errors='replace')
+        for block in re.split(r'(?m)^Class #\d+.*\n',dump):
+            if f"Class descriptor  : 'L{secret_name.replace('.', '/')};'" not in block: continue
+            match=re.search(r"name\s*:\s*'access'\s+type\s*:\s*'"+re.escape(secret_signature)+r"'\s+access\s*:\s*0x([0-9a-fA-F]+)",block)
+            if not match or int(match.group(1),16)&0x9!=0x9:
+                raise SystemExit(f'{dex}: public static Keystore JNI signature is absent or incorrect')
+            found=True
+            print(f'PASS: {dex}: Keystore JNI public static method retained')
+    if not found: raise SystemExit(f'{dex_root}: Keystore JNI class missing from minified DEX')
