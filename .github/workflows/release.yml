@@ -3,6 +3,11 @@ name: Build and Release
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: Platforms to build for a manual acceptance run
+        type: choice
+        options: [all, linux, windows, android]
+        default: all
       windows_native_acceptance:
         description: Run Windows native UI and live Auth with a disposable account
         type: boolean
@@ -95,6 +100,7 @@ jobs:
     name: Build Linux
     runs-on: ubuntu-22.04
     needs: check
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'linux'
 
     steps:
       - name: Checkout code
@@ -171,6 +177,7 @@ jobs:
     name: Build Windows (Signed)
     runs-on: windows-latest
     needs: check
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows'
 
     steps:
       - name: Checkout code
@@ -331,6 +338,7 @@ jobs:
     name: Build Android (APK)
     runs-on: ubuntu-22.04
     needs: check
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'android'
 
     steps:
       - name: Checkout code
