@@ -39,7 +39,7 @@ public final class NativeAcceptance extends Instrumentation {
       require(context.getPackageName().equals("com.vana.no_visitors"));
       String expected = arguments.getString("fixture_id", "");
       require(expected.matches("[0-9a-f-]{36}"));
-      File control = findControl(context.getFilesDir(), 0); require(control != null);
+      File control = findControl(context.getDataDir(), 0); require(control != null);
       Method access = context.getClassLoader().loadClass("com.vana.no_visitors.AndroidSessionSecrets")
         .getMethod("access", Context.class, String.class, String.class, String.class);
       File stateFile = new File(context.getFilesDir(), "vana-native-acceptance.json");
