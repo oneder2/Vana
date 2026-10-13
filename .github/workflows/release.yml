@@ -303,9 +303,12 @@ jobs:
           [System.IO.File]::WriteAllText($path, $env:ACCEPTANCE_CONFIG)
           $env:VANA_NATIVE_ACCEPTANCE_CONFIG = $path
           try {
-            ./scripts/test-windows-native.ps1 -InstallerRoot src-tauri/target/release/bundle
+            $uiError = $null
+            try { ./scripts/test-windows-native.ps1 -InstallerRoot src-tauri/target/release/bundle }
+            catch { $uiError = $_ }
             cargo run -j 2 --locked --manifest-path tests/native-core/Cargo.toml --example live_auth_probe
             if ($LASTEXITCODE -ne 0) { throw 'Native Auth acceptance failed' }
+            if ($uiError) { throw $uiError }
           } finally {
             Remove-Item $path -ErrorAction SilentlyContinue
           }
