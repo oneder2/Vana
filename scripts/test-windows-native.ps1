@@ -100,8 +100,9 @@ try {
   Start-Vana
   Wait-For { Find-Name '新建文档' } 'reopened authenticated app' | Out-Null
   Wait-For { Find-Name $synthetic } 'reopened saved body' | Out-Null
+  Write-Host 'PASS: Windows normal close/relaunch reads the saved document body'
   Click-Name '设置'
-  Wait-For { Find-Name '身份模式：authenticated' } 'reopened native session' | Out-Null
+  Wait-For { Find-Name '当前身份：已登录' } 'reopened native session' | Out-Null
   Write-Host 'PASS: Windows normal close/relaunch restores authenticated session'
   Click-Name '导出空间备份'
   $backup = Wait-For { Get-ChildItem $exports -Filter '*.vana-backup.json' -ErrorAction SilentlyContinue | Select-Object -First 1 } 'native space backup'
@@ -110,7 +111,7 @@ try {
   if ($parsed.format -ne 'vana-space-backup' -or $json -notmatch $synthetic -or $json -match 'refresh_token|access_token') { throw 'Invalid space backup' }
   Write-Host 'PASS: Windows native space backup includes saved body and excludes session tokens'
   Click-Name '切换为访客'
-  Wait-For { Find-Name '身份模式：guest' } 'native logout' | Out-Null
+  Wait-For { Find-Name '当前身份：访客' } 'native logout' | Out-Null
   Write-Host 'PASS: installed Windows app logs out and switches to guest space'
 } finally {
   [System.Windows.Forms.Clipboard]::Clear()

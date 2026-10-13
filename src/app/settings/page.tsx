@@ -231,6 +231,8 @@ export default function SettingsPage() {
     }
   };
 
+  const identityLabel = `当前身份：${appState?.account_mode === 'authenticated' ? '已登录' : '访客'}`;
+
   return (
     <div
       className="shell-page min-h-screen"
@@ -276,7 +278,7 @@ export default function SettingsPage() {
               当前身份
             </div>
             <div className="space-y-2 text-sm opacity-85">
-              <div>身份模式：{appState?.account_mode ?? 'guest'}</div>
+              <div role="status" aria-label={identityLabel}>{identityLabel}</div>
               <div>服务来源：{appState?.service_profile ?? 'hosted'}</div>
               <div>账户邮箱：{appState?.account_email ?? '访客模式 / 未登录'}</div>
               <div>当前会话：{sessionSummary ?? '无活动会话'}</div>
