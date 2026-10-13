@@ -273,6 +273,13 @@ pub fn apply_remote_documents(
         if *purged && pending.contains(id) {
             if let Some(remote_doc) = remote.get(id) {
                 if remote_doc.revision > *revision {
+                    if remote_doc.is_purged {
+                        // Another device already completed the same permanent deletion.
+                        conn.execute(
+                            "DELETE FROM sync_queue WHERE entity_type='document' AND entity_id=?1",
+                            params![id],
+                        )?;
+                    }
                     if !remote_doc.is_purged {
                         let mut copy = (*remote_doc).clone();
                         copy.id = Uuid::new_v4().to_string();

@@ -477,4 +477,34 @@ mod regressions {
         );
         std::fs::remove_dir_all(app.0).unwrap();
     }
+    #[test]
+    fn another_device_already_purging_the_same_document_clears_the_pending_delete() {
+        let app = app();
+        let d = create(&app, "guest", "document", None);
+        let first = export_sync_documents(&app, "guest").unwrap();
+        finalize_sync_jobs(
+            &app,
+            "guest",
+            &first.pending_job_ids,
+            &[remote(&d, 1, "base")],
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        set_document_status(&app, "guest", &d.id, "trashed").unwrap();
+        permanently_delete_document(&app, "guest", &d.id).unwrap();
+        let mut cloud = remote(&d, 2, "");
+        cloud.is_purged = true;
+        cloud.status = "trashed".into();
+        cloud.content_json = "{\"type\":\"doc\",\"content\":[]}".into();
+        let result = apply_remote_documents(&app, "guest", vec![cloud]).unwrap();
+        assert_eq!(result.conflict_copies, 0);
+        assert!(export_sync_documents(&app, "guest")
+            .unwrap()
+            .pending_job_ids
+            .is_empty());
+        assert!(get_document(&app, &d.id).unwrap().is_none());
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
 }

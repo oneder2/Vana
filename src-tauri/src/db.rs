@@ -383,6 +383,10 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
         |row| row.get(0),
     )?;
 
+    anyhow::ensure!(
+        active_scope(&conn)? == get_config_value(&conn, "space.id")?.unwrap_or_default(),
+        "账号在读取状态期间已切换，请重试"
+    );
     let last_synced_at = get_config_value(&conn, "sync.last_synced_at")?;
     let last_pulled_at = get_config_value(&conn, "sync.last_pulled_at")?;
     let last_error = get_config_value(&conn, "sync.last_error")?;
@@ -613,11 +617,12 @@ pub fn upsert_tag(
         params![resolved_id, name.trim(), color],
     )?;
 
+    let record=conn.query_row("SELECT tags.id,tags.name,tags.color,COUNT(document_tags.document_id)
+        FROM tags LEFT JOIN document_tags ON document_tags.tag_id=tags.id WHERE tags.name=?1 GROUP BY tags.id",params![name.trim()],|row|Ok(TagRecord {
+            id:row.get(0)?,name:row.get(1)?,color:row.get(2)?,document_count:row.get::<_,i64>(3)? as usize,
+        }))?;
     conn.commit()?;
-    list_tags(app)?
-        .into_iter()
-        .find(|tag| tag.name == name.trim())
-        .ok_or_else(|| anyhow::anyhow!("标签写入后读取失败"))
+    Ok(record)
 }
 
 pub fn save_supabase_config(app: &AppHandle, config: SupabaseConfig) -> Result<SupabaseConfig> {

@@ -4,15 +4,17 @@ import pathlib, subprocess, time, uuid, concurrent.futures, json
 root = pathlib.Path(__file__).resolve().parent.parent
 name = 'vana-protocol-' + uuid.uuid4().hex[:12]
 def sql(content):
-    result = subprocess.run(['docker', 'exec', '-i', name, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At'],
+    result = subprocess.run(['docker', 'exec', '-i', name, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At'],
                           input=content, text=True, capture_output=True)
     if result.returncode: raise RuntimeError(result.stderr)
     return result.stdout.strip()
 try:
     subprocess.run(['docker','run','--rm','-d','--name',name,'-e','POSTGRES_PASSWORD=local-test','postgres:16'],check=True,capture_output=True)
     for attempt in range(60):
-        if subprocess.run(['docker','exec',name,'pg_isready','-U','postgres'],capture_output=True).returncode == 0: break
+        if subprocess.run(['docker','exec',name,'pg_isready','-h','127.0.0.1','-U','postgres'],capture_output=True).returncode == 0: break
         time.sleep(0.5)
+    else:
+        raise RuntimeError('Temporary PostgreSQL did not become ready on TCP within 30 seconds')
     sql((root/'tests/supabase/protocol.sql').read_text())
     for filename in ['202604180001_init_documents.sql','202604210001_align_documents_hierarchy.sql','202610120001_revision_sync.sql']:
         sql((root/'supabase/migrations'/filename).read_text())
