@@ -121,16 +121,6 @@ function formatTimestamp(value?: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function formatBytes(value: number): string {
-  if (value >= 1024 * 1024) {
-    return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  }
-  if (value >= 1024) {
-    return `${Math.round(value / 1024)} KB`;
-  }
-  return `${value} B`;
-}
-
 function collectFolderTargets(
   documents: DocumentSummary[],
   target: DocumentSummary | null
@@ -425,7 +415,7 @@ export default function HomePage() {
         setSyncFeedback('idle');
         const snapshot = await runSupabaseSync();
         await refresh(preferredId ?? selectedId);
-        if (snapshot.conflict_copies) toast.info(`检测到同步冲突，已保留 ${snapshot.conflict_copies} 个目录树副本。`);
+        if (snapshot.conflict_copies) toast.info(`发现不同设备的修改，已保留 ${snapshot.conflict_copies} 份副本，可在“更多文档操作”中查看。`);
         setAppState((current) => (current ? { ...current, sync: snapshot } : current));
         setSyncFeedback('success');
         window.setTimeout(() => setSyncFeedback('idle'), 1800);
@@ -1389,11 +1379,10 @@ export default function HomePage() {
       <div className="flex min-h-full w-full items-center justify-center">
         <div className="w-full max-w-[760px]">
           <div className="mx-auto max-w-[560px] text-center">
-            <div className="shell-label mb-3">Threshold</div>
             <h1 className={`shell-title font-semibold ${mobile ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>书页尚未翻开。</h1>
             {!mobile && (
               <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
-                左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
+                从文档库打开一篇文档，或开始新的写作。
               </p>
             )}
           </div>
@@ -1401,9 +1390,6 @@ export default function HomePage() {
           <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
             <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument()}>
               新建文档
-            </button>
-            <button className="border px-4 py-2 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()}>
-              导入旧工作区
             </button>
             <AppLink href="/settings" className="border px-4 py-2 text-sm" style={{ borderColor: border }}>
               进入设置
@@ -1444,8 +1430,6 @@ export default function HomePage() {
         content={content}
         documentTags={documentTags}
         tagDraft={tagDraft}
-        isSyncing={isSyncing}
-        appState={appState}
         surface={surface}
         border={border}
         accent={accent}
@@ -1459,8 +1443,6 @@ export default function HomePage() {
         onPersisted={() => {
           void triggerAutoSync('editor-save');
         }}
-        formatTimestamp={formatTimestamp}
-        formatBytes={formatBytes}
       />
     );
   };
@@ -1608,8 +1590,6 @@ export default function HomePage() {
 
             <div className="grid gap-2 text-sm opacity-80">
               <div>最近更新：{formatTimestamp(currentDocument.updated_at)}</div>
-              <div>同步状态：{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</div>
-              <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
             </div>
 
             <div className="mt-5">

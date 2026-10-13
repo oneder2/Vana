@@ -227,9 +227,7 @@ export function Editor({
         ...getDocumentStyleCssVars(theme),
       }}
     >
-      {readOnly ? <div className="border-b px-4 py-2 text-xs opacity-65" style={{ borderColor: border }}>
-        阅读模式 · 正文与标签已锁定，选中文字仍可复制
-      </div> : <div
+      {!readOnly && <div
         className={`border-b px-3 py-2 ${mobile ? 'flex items-center gap-1 overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center gap-1'}`}
         style={{ borderColor: border }}
       >

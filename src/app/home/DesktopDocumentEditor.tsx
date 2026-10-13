@@ -5,15 +5,13 @@ import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import { Plus, Tag, X } from 'lucide-react';
 import { Editor } from '@/components/Editor';
-import type { AppState, DocumentRecord } from '@/lib/api';
+import type { DocumentRecord } from '@/lib/api';
 
 export function DesktopDocumentEditor({
   currentDocument,
   content,
   documentTags,
   tagDraft,
-  isSyncing,
-  appState,
   surface,
   border,
   accent,
@@ -25,8 +23,6 @@ export function DesktopDocumentEditor({
   onContentChange,
   onPersistError,
   onPersisted,
-  formatTimestamp,
-  formatBytes,
   navigation,
   readOnly,
 }: {
@@ -34,8 +30,6 @@ export function DesktopDocumentEditor({
   content: JSONContent;
   documentTags: string[];
   tagDraft: string;
-  isSyncing: boolean;
-  appState: AppState | null;
   surface: string;
   border: string;
   accent: string;
@@ -47,27 +41,14 @@ export function DesktopDocumentEditor({
   onContentChange: (content: JSONContent) => void;
   onPersistError: (message: string) => void;
   onPersisted: () => void;
-  formatTimestamp: (value?: string | null) => string;
-  formatBytes: (value: number) => string;
   navigation: React.ReactNode;
   readOnly: boolean;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
       {navigation}
-      <div className="shell-panel border-b px-4 py-3 sm:px-5" style={{ backgroundColor: surface, borderColor: border }}>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] opacity-72">
-          <span>最近更新 {formatTimestamp(currentDocument?.updated_at)}</span>
-          <span>{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</span>
-          <span>同步 {appState?.sync.mode ?? 'local-only'}</span>
-          {appState && (
-            <span>
-              存储 {formatBytes(appState.limits.current_total_storage_bytes)}{appState.limits.max_total_storage_bytes > 0 ? ` / ${formatBytes(appState.limits.max_total_storage_bytes)}` : ''}
-            </span>
-          )}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+      {(!readOnly || documentTags.length > 0) && <div className="shell-panel border-b px-4 py-2 sm:px-5" style={{ backgroundColor: surface, borderColor: border }}>
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex min-w-[280px] flex-1 items-center gap-2 border px-3 py-2" style={{ borderColor: border }}>
             <Tag size={14} className="mt-0.5 shrink-0 opacity-60" />
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -80,6 +61,7 @@ export function DesktopDocumentEditor({
                   <span>{tag}</span>
                   {!readOnly && <button
                     type="button"
+                    aria-label={`移除标签 ${tag}`}
                     className="opacity-70 transition-opacity hover:opacity-100"
                     onClick={() => onRemoveTag(tag)}
                   >
@@ -98,6 +80,7 @@ export function DesktopDocumentEditor({
                     }
                   }}
                   placeholder="输入标签后回车"
+                  aria-label="文档标签"
                   className="w-full min-w-0 bg-transparent text-sm outline-none"
                 />
                 <button
@@ -105,15 +88,15 @@ export function DesktopDocumentEditor({
                   className="opacity-70 transition-opacity hover:opacity-100"
                   onClick={() => onAddTag(tagDraft)}
                   disabled={!tagDraft.trim()}
+                  aria-label="添加标签"
                 >
                   <Plus size={14} />
                 </button>
               </div>}
-              {readOnly && !documentTags.length && <span className="text-xs opacity-60">无标签</span>}
             </div>
           </div>
         </div>
-      </div>
+      </div>}
 
       <div className="min-h-0 flex-1 overflow-hidden p-0 md:p-3">
         {currentDocument && (

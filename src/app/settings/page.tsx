@@ -6,10 +6,8 @@ import {
   CheckCircle2,
   Database,
   ExternalLink,
-  KeyRound,
   Link2,
   RefreshCw,
-  Shield,
   UserRound,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
@@ -68,7 +66,6 @@ export default function SettingsPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [showAdvancedConfig, setShowAdvancedConfig] = useState(false);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [sessionSummary, setSessionSummary] = useState<string | null>(null);
   const [credentialError, setCredentialError] = useState('');
@@ -197,7 +194,7 @@ export default function SettingsPage() {
   };
 
   const handleRecover = async (source: 'guest' | 'legacy') => {
-    if (!window.confirm('将来源文档复制到当前账号空间？登录后这些副本会进入同步队列。原数据会保留。')) return;
+    if (!window.confirm('将来源文档复制到当前账号空间？原文档会保留，复制的文档可随账号同步。')) return;
     setBusy(true);
     try { const count = await recoverLocalDocuments(source); toast.success(`已导入 ${count} 个节点`); await refresh(); }
     catch (error) { toast.error(String(error)); } finally { setBusy(false); }
@@ -208,8 +205,8 @@ export default function SettingsPage() {
     try {
       const snapshot = await runSupabaseSync();
       await refresh();
-      toast.success(`同步完成，剩余待同步 ${snapshot.pending_jobs}`);
-      if (snapshot.conflict_copies) toast.info(`已保留 ${snapshot.conflict_copies} 个同步冲突目录树副本。`);
+      toast.success(snapshot.pending_jobs ? '还有更改等待同步' : '同步完成');
+      if (snapshot.conflict_copies) toast.info(`已保留 ${snapshot.conflict_copies} 份修改副本，可回到文档查看。`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       await refresh();
@@ -233,261 +230,94 @@ export default function SettingsPage() {
 
   const identityLabel = `当前身份：${appState?.account_mode === 'authenticated' ? '已登录' : '访客'}`;
 
+  const signedIn = appState?.account_mode === 'authenticated';
+  const syncConfigured = Boolean(appState?.supabase.url && appState.supabase.anon_key);
+
   return (
-    <div
-      className="shell-page min-h-screen"
-      style={{
-        backgroundColor: background,
-        color: accent,
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-      }}
-    >
+    <div className="shell-page min-h-screen" style={{ backgroundColor: background, color: accent, paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <TitleBar />
-      <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6 sm:py-6">
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <AppLink href="/" className="border px-3 py-2 text-sm" style={{ borderColor: border }}>
-            <ArrowLeft size={14} className="mr-1 inline" />
-            返回
-          </AppLink>
-          <a
-            href="https://github.com/oneder2/Vana"
-            target="_blank"
-            rel="noreferrer"
-            className="border px-3 py-2 text-sm"
-            style={{ borderColor: border }}
-          >
-            <ExternalLink size={14} className="mr-1 inline" />
-            GitHub 仓库
-          </a>
-        </div>
-
+      <main className="mx-auto max-w-3xl px-4 py-5 sm:px-6 sm:py-8">
+        <AppLink href="/" className="inline-flex min-h-11 items-center gap-2 text-sm hover:underline"><ArrowLeft size={14} />返回文档</AppLink>
+        <h1 className="shell-title mb-6 mt-4 text-3xl font-semibold">设置</h1>
         <div className="space-y-5">
-          <section className="shell-panel border px-5 py-6 sm:px-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-2">Account</div>
-            <h1 className="shell-title text-3xl font-semibold">账号与同步</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 opacity-75">
-              普通用户默认直接连接应用内置的公共服务。你可以先以访客身份使用，再通过邮箱和密码注册或登录，开启跨设备同步。
-            </p>
-          </section>
-
-          <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Mode</div>
-            <div className="shell-title mb-3 flex items-center gap-2 text-lg font-medium">
-              <UserRound size={16} />
-              当前身份
-            </div>
-            <div className="space-y-2 text-sm opacity-85">
-              <div role="status" aria-label={identityLabel}>{identityLabel}</div>
-              <div>服务来源：{appState?.service_profile ?? 'hosted'}</div>
-              <div>账户邮箱：{appState?.account_email ?? '访客模式 / 未登录'}</div>
-              <div>当前会话：{sessionSummary ?? '无活动会话'}</div>
-              {credentialError && <p role="alert" className="leading-6">会话存储不可用：{credentialError}。本地文档仍可使用，请解锁系统凭据库或重新登录。</p>}
-              <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
-              <div>首启引导：{appState?.onboarding_completed ? '已完成' : '未完成'}</div>
-            </div>
-          </section>
-
-          <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Sign In</div>
-            <div className="shell-title mb-3 flex items-center gap-2 text-lg font-medium">
-              <KeyRound size={16} />
-              邮箱与密码
-            </div>
-            <p className="mb-4 text-sm leading-7 opacity-75">
-              如果你还没有账号，可以直接注册。注册后若实例开启了邮箱确认，需要先完成确认，再用密码登录。
-            </p>
-            <div className="space-y-4">
-              <label className="block">
-                <div className="mb-2 text-sm font-medium">邮箱</div>
-                <input
-                  type="email"
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full border bg-transparent px-4 py-3 text-sm outline-none"
-                  style={{ borderColor: border }}
-                />
-              </label>
-              <label className="block">
-                <div className="mb-2 text-sm font-medium">密码</div>
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="输入你的密码"
-                  className="w-full border bg-transparent px-4 py-3 text-sm outline-none"
-                  style={{ borderColor: border }}
-                />
-              </label>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={handleLogin}
-                  disabled={busy}
-                  className="border px-4 py-3 text-sm font-medium"
-                  style={{ backgroundColor: accentBg, borderColor: border }}
-                >
-                  登录
-                </button>
-                <button
-                  onClick={handleRegister}
-                  disabled={busy}
-                  className="border px-4 py-3 text-sm"
-                  style={{ borderColor: border }}
-                >
-                  注册
-                </button>
-                <button
-                  onClick={handleSignOut}
-                  disabled={busy}
-                  className="border px-4 py-3 text-sm"
-                  style={{ borderColor: border }}
-                >
-                  切换为访客
-                </button>
+          <section className="shell-panel rounded border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
+            <h2 className="shell-title mb-4 flex items-center gap-2 text-lg font-medium"><UserRound size={17} />账号</h2>
+            <div role="status" aria-label={identityLabel} className="text-sm">{identityLabel}</div>
+            {signedIn ? <>
+              <p className="mt-2 break-all text-sm opacity-70">{appState.account_email}</p>
+              <button onClick={handleSignOut} disabled={busy} className="mt-4 min-h-11 rounded border px-4 py-2 text-sm" style={{ borderColor: border }}>切换为访客</button>
+            </> : <>
+              <p className="mt-2 text-sm leading-7 opacity-70">登录后可在其他设备上继续使用文档。本机文档会保留。</p>
+              <div className="mt-5 space-y-4">
+                <label className="block"><span className="mb-2 block text-sm">邮箱</span><input type="email" autoComplete="username" autoCapitalize="none" spellCheck={false} value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" className="w-full rounded border bg-transparent px-4 py-3 text-sm outline-none" style={{ borderColor: border }} /></label>
+                <label className="block"><span className="mb-2 block text-sm">密码</span><input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="输入密码" className="w-full rounded border bg-transparent px-4 py-3 text-sm outline-none" style={{ borderColor: border }} /></label>
+                <div className="flex flex-wrap gap-3">
+                  <button onClick={handleLogin} disabled={busy || !syncConfigured} className="min-h-11 rounded border px-4 py-2 text-sm font-medium disabled:opacity-50" style={{ backgroundColor: accentBg, borderColor: border }}>登录</button>
+                  <button onClick={handleRegister} disabled={busy || !syncConfigured} className="min-h-11 rounded border px-4 py-2 text-sm disabled:opacity-50" style={{ borderColor: border }}>注册</button>
+                </div>
+                {!syncConfigured && appState && <p className="text-xs leading-6 opacity-65">同步服务尚未连接。如需同步，可在下方高级设置中连接服务。</p>}
               </div>
-            </div>
+            </>}
+            {credentialError && <p role="alert" className="mt-4 text-sm leading-7">登录信息无法读取：{credentialError}。请解锁系统凭据库或重新登录，本机文档仍可使用。</p>}
           </section>
 
-          <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Sync</div>
-            <div className="shell-title mb-3 flex items-center gap-2 text-lg font-medium">
-              <RefreshCw size={16} />
-              同步状态
-            </div>
-            <div className="space-y-2 text-sm opacity-80">
-              <div>待同步队列：{appState?.sync.pending_jobs ?? 0}</div>
-              <div>自动同步：{appState?.sync.auto_sync_enabled ? '已开启' : '已关闭'}</div>
-              <div>上次同步：{appState?.sync.last_synced_at ?? '尚未同步'}</div>
-              <div>上次拉取：{appState?.sync.last_pulled_at ?? '尚未拉取'}</div>
-              <div>最近错误：{appState?.sync.last_error ?? '无'}</div>
-            </div>
+          {signedIn && <section className="shell-panel rounded border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
+            <h2 className="shell-title mb-3 flex items-center gap-2 text-lg font-medium"><RefreshCw size={17} />文档同步</h2>
+            <p className="text-sm opacity-75">{appState.sync.pending_jobs ? '还有更改等待同步。' : appState.sync.last_synced_at ? `上次同步：${new Date(appState.sync.last_synced_at).toLocaleString()}` : '尚未同步。'}</p>
+            {appState.sync.last_error && <p role="alert" className="mt-3 break-words text-sm leading-7">同步未完成：{appState.sync.last_error}</p>}
             <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                onClick={handleSyncNow}
-                disabled={busy}
-                className="border px-4 py-3 text-sm font-medium"
-                style={{ backgroundColor: accentBg, borderColor: border }}
-              >
-                立即同步
-              </button>
-              <button
-                onClick={handleImport}
-                disabled={busy}
-                className="border px-4 py-3 text-sm"
-                style={{ borderColor: border }}
-              >
-                <Database size={14} className="mr-1 inline" />
-                导入旧工作区
-              </button>
-              {appState?.account_mode !== 'guest' && <button disabled={busy} onClick={() => void handleRecover('guest')}
-                className="border px-4 py-3 text-sm" style={{ borderColor: border }}>复制访客文档到当前账号</button>}
-              {appState?.recovery_available && <button disabled={busy} onClick={() => void handleRecover('legacy')}
-                className="border px-4 py-3 text-sm" style={{ borderColor: border }}>恢复归属不明的旧数据库</button>}
+              <button onClick={handleSyncNow} disabled={busy} className="min-h-11 rounded border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }}>立即同步</button>
+              <button disabled={busy} onClick={() => void handleRecover('guest')} className="min-h-11 rounded border px-4 py-2 text-sm" style={{ borderColor: border }}>复制本机文档到账号</button>
             </div>
-          </section>
+          </section>}
 
           {appState && <SpaceBackupPanel scope={appState.account_scope} disabled={busy} onBusyChange={setBusy} onImported={refresh} />}
 
-          <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Hosted Limits</div>
-            <div className="shell-title mb-3 flex items-center gap-2 text-lg font-medium">
-              <Shield size={16} />
-              公共服务上限
-            </div>
-            <div className="space-y-2 text-sm opacity-80">
-              <div>单文档大小：{appState ? formatBytes(appState.limits.max_document_content_bytes) : '512 KB'}</div>
-              <div>总存储上限：{appState ? (appState.limits.max_total_storage_bytes ? formatBytes(appState.limits.max_total_storage_bytes) : '当前模式不设总量上限') : '25 MB'}</div>
-              <div>文档数量上限：{appState?.limits.max_document_count || '当前模式不设数量上限'}</div>
-              <div>5 分钟写入上限：{appState?.limits.max_write_ops_per_5_minutes || '当前模式不设频率上限'}</div>
-              <div>当前文档数：{appState?.limits.current_document_count ?? 0}</div>
-              <div>
-                当前存储：{appState ? formatBytes(appState.limits.current_total_storage_bytes) : '0 B'}
-              </div>
-              <div>最近 5 分钟写入：{appState?.limits.current_write_ops_last_5_minutes ?? 0}</div>
-              <div>附件上传：{appState?.limits.attachments_enabled ? '已开启' : '暂未实现'}</div>
-            </div>
-          </section>
-
-          <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Advanced</div>
-            <div className="shell-title mb-4 flex items-center gap-2 text-lg font-medium">
-              <Shield size={16} />
-              自托管与高级操作
-            </div>
-            <p className="mb-4 text-sm leading-7 opacity-75">
-              只有在你要切换到自己的 Supabase 实例时，才需要展开这里。留空则继续使用应用内置的公共服务。
-            </p>
-
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setShowAdvancedConfig((current) => !current)}
-                className="border px-4 py-3 text-sm"
-                style={{ borderColor: border }}
-              >
-                {showAdvancedConfig ? '收起高级配置' : '展开高级配置'}
-              </button>
-            </div>
-
-            {showAdvancedConfig && (
-              <div className="mt-4 space-y-4 border px-4 py-4" style={{ borderColor: border }}>
-                <label className="block">
-                  <div className="mb-2 text-sm font-medium">Supabase URL</div>
-                  <input
-                    value={supabaseUrl}
-                    onChange={(event) => setSupabaseUrl(event.target.value)}
-                    placeholder="https://your-project.supabase.co"
-                    className="w-full border bg-transparent px-4 py-3 text-sm outline-none"
-                    style={{ borderColor: border }}
-                  />
-                </label>
-
-                <label className="block">
-                  <div className="mb-2 text-sm font-medium">Anon Key</div>
-                  <textarea
-                    value={supabaseAnonKey}
-                    onChange={(event) => setSupabaseAnonKey(event.target.value)}
-                    placeholder="粘贴 Supabase anon key"
-                    className="min-h-[120px] w-full border bg-transparent px-4 py-3 text-sm outline-none"
-                    style={{ borderColor: border }}
-                  />
-                </label>
-
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    onClick={handleSaveAdvanced}
-                    disabled={busy}
-                    className="border px-4 py-3 text-sm font-medium"
-                    style={{ backgroundColor: accentBg, borderColor: border }}
-                  >
-                    <Link2 size={14} className="mr-1 inline" />
-                    保存高级配置
-                  </button>
-                  <button
-                    onClick={handleVerify}
-                    disabled={busy}
-                    className="border px-4 py-3 text-sm"
-                    style={{ borderColor: border }}
-                  >
-                    <CheckCircle2 size={14} className="mr-1 inline" />
-                    连接自检
-                  </button>
-                </div>
-
-                {validationMessage && (
-                  <div className="border px-4 py-3 text-sm" style={{ borderColor: border }}>
-                    {validationMessage}
+          <details className="shell-panel rounded border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
+            <summary className="cursor-pointer text-sm font-medium">高级设置</summary>
+            <div className="mt-5 space-y-6">
+              <section>
+                <h2 className="mb-2 text-sm font-medium">自定义同步服务</h2>
+                <p className="mb-4 text-xs leading-6 opacity-65">连接自己的 Supabase 项目；留空使用内置服务。</p>
+                <div className="space-y-4">
+                  <label className="block"><span className="mb-2 block text-sm">Supabase URL</span><input value={supabaseUrl} onChange={event => setSupabaseUrl(event.target.value)} placeholder="https://your-project.supabase.co" className="w-full rounded border bg-transparent px-4 py-3 text-sm outline-none" style={{ borderColor: border }} /></label>
+                  <label className="block"><span className="mb-2 block text-sm">Anon Key</span><textarea value={supabaseAnonKey} onChange={event => setSupabaseAnonKey(event.target.value)} placeholder="粘贴 Supabase anon key" className="min-h-[100px] w-full rounded border bg-transparent px-4 py-3 text-sm outline-none" style={{ borderColor: border }} /></label>
+                  <div className="flex flex-wrap gap-3">
+                    <button onClick={handleSaveAdvanced} disabled={busy} className="min-h-11 rounded border px-4 py-2 text-sm" style={{ backgroundColor: accentBg, borderColor: border }}><Link2 size={14} className="mr-1 inline" />保存高级配置</button>
+                    <button onClick={handleVerify} disabled={busy} className="min-h-11 rounded border px-4 py-2 text-sm" style={{ borderColor: border }}><CheckCircle2 size={14} className="mr-1 inline" />连接自检</button>
                   </div>
-                )}
-              </div>
-            )}
-          </section>
+                  {validationMessage && <p role="status" className="break-words text-sm leading-7">{validationMessage}</p>}
+                </div>
+              </section>
+              <section className="border-t pt-5" style={{ borderColor: border }}>
+                <h2 className="mb-3 text-sm font-medium">旧数据导入</h2>
+                <div className="flex flex-wrap gap-3">
+                  <button onClick={handleImport} disabled={busy} className="min-h-11 rounded border px-4 py-2 text-sm" style={{ borderColor: border }}><Database size={14} className="mr-1 inline" />导入旧工作区</button>
+                  {appState?.recovery_available && <button disabled={busy} onClick={() => void handleRecover('legacy')} className="min-h-11 rounded border px-4 py-2 text-sm" style={{ borderColor: border }}>恢复旧数据库</button>}
+                </div>
+              </section>
+              <details className="border-t pt-4 text-xs leading-6 opacity-70" style={{ borderColor: border }}>
+                <summary className="cursor-pointer">诊断信息</summary>
+                <div className="mt-3 space-y-1 break-words">
+                  <div>服务来源：{appState?.service_profile ?? '未连接'}</div>
+                  <div>当前会话：{sessionSummary ?? '无活动会话'}</div>
+                  <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
+                  <div>自动同步：{appState?.sync.auto_sync_enabled ? '已开启' : '已关闭'}</div>
+                  <div>待同步队列：{appState?.sync.pending_jobs ?? 0}</div>
+                  <div>上次拉取：{appState?.sync.last_pulled_at ?? '尚未拉取'}</div>
+                  <div>单文档上限：{appState ? formatBytes(appState.limits.max_document_content_bytes) : '—'}</div>
+                  <div>总存储上限：{appState?.limits.max_total_storage_bytes ? formatBytes(appState.limits.max_total_storage_bytes) : '未设置'}</div>
+                  <div>文档数量上限：{appState?.limits.max_document_count || '未设置'}</div>
+                  <div>5 分钟写入上限：{appState?.limits.max_write_ops_per_5_minutes || '未设置'}</div>
+                  <div>当前存储：{appState ? formatBytes(appState.limits.current_total_storage_bytes) : '—'}</div>
+                  <div>最近 5 分钟写入：{appState?.limits.current_write_ops_last_5_minutes ?? 0}</div>
+                </div>
+              </details>
+              <a href="https://github.com/oneder2/Vana" target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-1 text-xs hover:underline"><ExternalLink size={14} />GitHub 仓库</a>
+            </div>
+          </details>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

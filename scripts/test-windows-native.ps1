@@ -52,6 +52,7 @@ function Set-PrivateValue($element, [string]$value) {
 }
 try {
   Start-Vana
+  Click-Name '登录或注册'
   $edits = Wait-For {
     $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
     $items = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)

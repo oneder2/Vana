@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, Database, History, Link2, UserRound } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
 import { useTheme } from '@/components/ThemeProvider';
 import { useToast } from '@/components/ToastProvider';
@@ -30,6 +30,7 @@ export default function WelcomePage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const syncConfigured = Boolean(appState?.supabase.url && appState.supabase.anon_key);
 
   useEffect(() => {
@@ -94,140 +95,30 @@ export default function WelcomePage() {
   };
 
   return (
-    <div
-      className="shell-page flex min-h-screen flex-col"
-      style={{
-        backgroundColor: background,
-        color: accent,
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-      }}
-    >
+    <div className="shell-page flex min-h-screen flex-col" style={{ backgroundColor: background, color: accent, paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <TitleBar />
-
-      <main className="mx-auto flex w-full max-w-6xl flex-1 items-stretch px-4 py-4 sm:px-6 sm:py-8">
-        <div className="grid w-full gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="shell-panel border px-5 py-6 sm:px-8 sm:py-7" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Welcome</div>
-            <h1 className="shell-title max-w-2xl text-2xl font-semibold sm:text-4xl">本地优先，可同步的个人文档空间。</h1>
-            <p className="mt-4 hidden max-w-2xl text-sm leading-7 opacity-78 sm:block">
-              先离线写作和阅读，通过修改记录理解变化、恢复误改。配置同步服务后，可登录账号在多台设备间同步。
-            </p>
-
-            <div className="mt-6 grid gap-3 sm:mt-8 sm:grid-cols-3">
-              <div className="rounded border px-4 py-4" style={{ borderColor: border, backgroundColor: `${accentBg}18` }}>
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  <UserRound size={15} />
-                  访客可用
-                </div>
-                <div className="text-sm opacity-75">不登录也能创建、编辑和整理文档，数据默认保存在本地。</div>
-              </div>
-
-              <div className="rounded border px-4 py-4" style={{ borderColor: border, backgroundColor: `${accentBg}12` }}>
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  <Link2 size={15} />
-                  可选同步
-                </div>
-                <div className="text-sm opacity-75">{syncConfigured ? '已配置同步服务。登录后进入独立账号空间，可同步文档。' : '尚未配置同步服务。可先离线使用，稍后在设置中连接服务。'}</div>
-              </div>
-
-              <div className="hidden rounded border px-4 py-4 sm:block" style={{ borderColor: border, backgroundColor: `${accentBg}10` }}>
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  <History size={15} />
-                  修改可见
-                </div>
-                <div className="text-sm opacity-75">
-                  查看保留的正文版本、对照增删差异，确认后恢复正文。
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-8 hidden rounded border px-4 py-4 text-sm sm:block" style={{ borderColor: border }}>
-              <div className="mb-2 flex items-center gap-2 font-medium">
-                <Database size={15} />
-                本地备份
-              </div>
-              <div className="space-y-1 opacity-78">
-                <p className="leading-7">在设置中导出空间备份，保留文档、目录、标签和正文记录。备份文件可预览后复制导入，访客空间也可使用。</p>
-              </div>
-            </div>
-          </section>
-
-          <section className="shell-panel border px-5 py-6 sm:px-6" style={{ backgroundColor: surface, borderColor: border }}>
-            <div className="shell-label mb-3">Access</div>
-            <h2 className="shell-title text-xl font-semibold">登录或继续使用</h2>
-            <p className="mt-3 text-sm leading-7 opacity-76">
-              {syncConfigured ? '可登录已配置的同步服务，或先以访客身份离线使用。访客与账号文档分别保存。' : '当前可离线使用。登录和注册需要先在高级配置中连接同步服务。'}
-            </p>
-
-            <button
-              type="button"
-              className="mt-5 w-full border px-4 py-3 text-sm"
-              style={{ borderColor: border, color: accent, backgroundColor: `${accentBg}18` }}
-              onClick={() => void finishAsGuest()}
-              disabled={busy}
-            >
-              继续以访客身份使用
-            </button>
-
-            <div className="mt-6 space-y-3">
-              <div>
-                <div className="mb-2 text-sm opacity-75">邮箱</div>
-                <input
-                  type="email"
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full border px-3 py-2 text-sm outline-none"
-                  style={{ borderColor: border, backgroundColor: 'transparent', color: accent }}
-                />
-              </div>
-              <div>
-                <div className="mb-2 text-sm opacity-75">密码</div>
-                <input
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="至少使用你自己能记住的密码"
-                  className="w-full border px-3 py-2 text-sm outline-none"
-                  style={{ borderColor: border, backgroundColor: 'transparent', color: accent }}
-                />
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-2">
-              <button
-                type="button"
-                className="border px-4 py-2 text-sm font-medium"
-                style={{ borderColor: border, backgroundColor: accentBg, color: accent }}
-                onClick={() => void handleLogin()}
-                disabled={busy || !syncConfigured}
-              >
-                登录并开始同步
-              </button>
-              <button
-                type="button"
-                className="border px-4 py-2 text-sm"
-                style={{ borderColor: border, color: accent }}
-                onClick={() => void handleRegister()}
-                disabled={busy || !syncConfigured}
-              >
-                注册账号
-              </button>
-            </div>
-
-            <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
-              <AppLink href="/settings" className="inline-flex items-center gap-1 opacity-78 transition-opacity hover:opacity-100">
-                高级配置
-                <ArrowRight size={14} />
-              </AppLink>
-            </div>
-          </section>
-        </div>
+      <main className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center px-6 py-12 sm:py-16">
+        <p className="mb-5 text-sm tracking-widest opacity-55">Vana</p>
+        <h1 className="shell-title text-3xl font-semibold leading-tight sm:text-4xl">写作，从这里开始。</h1>
+        <p className="mt-5 text-sm leading-7 opacity-70">用文档整理思考，随时阅读与回看修改。</p>
+        <button type="button" className="mt-8 flex min-h-12 w-full items-center justify-center gap-2 rounded border px-5 py-3 text-sm font-medium disabled:opacity-50" style={{ borderColor: border, backgroundColor: accentBg }} onClick={() => void finishAsGuest()} disabled={busy}>
+          开始写作<ArrowRight size={16} />
+        </button>
+        <p className="mt-3 text-center text-xs opacity-55">无需账号，文档保存在此设备。</p>
+        <button type="button" className="mx-auto mt-6 min-h-11 px-4 text-sm hover:underline" aria-expanded={showLogin} aria-controls="welcome-login" onClick={() => setShowLogin(value => !value)}>登录或注册</button>
+        {showLogin && <section id="welcome-login" className="mt-4 rounded border px-5 py-6" style={{ borderColor: border, backgroundColor: surface }}>
+          <h2 className="shell-title text-lg font-medium">登录以同步文档</h2>
+          <p className="mt-2 text-xs leading-6 opacity-65">{syncConfigured ? '登录后使用账号文档，已有的本机文档会保留。' : '同步服务尚未连接，可先开始写作，或在设置中连接服务。'}</p>
+          <div className="mt-5 space-y-4">
+            <label className="block"><span className="mb-2 block text-sm">邮箱</span><input type="email" autoComplete="username" autoCapitalize="none" spellCheck={false} value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" className="w-full rounded border bg-transparent px-3 py-3 text-sm outline-none" style={{ borderColor: border }} /></label>
+            <label className="block"><span className="mb-2 block text-sm">密码</span><input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="输入密码" className="w-full rounded border bg-transparent px-3 py-3 text-sm outline-none" style={{ borderColor: border }} /></label>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button type="button" className="min-h-11 flex-1 rounded border px-4 py-2 text-sm font-medium disabled:opacity-50" style={{ borderColor: border, backgroundColor: accentBg }} onClick={() => void handleLogin()} disabled={busy || !syncConfigured}>登录并开始同步</button>
+            <button type="button" className="min-h-11 rounded border px-4 py-2 text-sm disabled:opacity-50" style={{ borderColor: border }} onClick={() => void handleRegister()} disabled={busy || !syncConfigured}>注册账号</button>
+          </div>
+          {!syncConfigured && <AppLink href="/settings" className="mt-4 inline-block text-xs hover:underline">连接同步服务</AppLink>}
+        </section>}
       </main>
     </div>
   );

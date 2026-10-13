@@ -53,7 +53,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChan
         if (!busyRef.current) { if (confirming) { setConfirming(false); restoreButton.current?.focus(); } else onClose(); }
       }
       if (event.key !== 'Tab') return;
-      const buttons = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]') ?? [])];
+      const buttons = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), summary, [tabindex="0"]') ?? [])];
       const first = buttons[0], last = buttons.at(-1);
       if (!first) { event.preventDefault(); dialog.current?.focus(); }
       else if (event.shiftKey && window.document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -147,10 +147,10 @@ export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChan
         {error && <p role="alert" className="border-t px-4 py-3 text-sm" style={{ borderColor: border }}>操作失败：{error}</p>}
         <footer className="shrink-0 border-t px-4 py-3 sm:px-6" style={{ borderColor: border }}>
           {confirming ? <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="max-w-xl text-xs leading-6">将正文恢复到 {entry ? new Date(entry.created_at).toLocaleString() : ''}。当前正文会保留在修改记录中，仍受保留期限和空间上限约束。标题、标签和目录保持当前值。</p>
+            <p className="max-w-xl text-xs leading-6">恢复到 {entry ? new Date(entry.created_at).toLocaleString() : ''} 的正文？当前正文会保存为一条记录，标题、标签和目录不变。</p>
             <div className="flex gap-2"><button ref={cancelButton} disabled={busy} className="history-control rounded-md border px-3 py-2 text-xs" style={{ borderColor: border }} onClick={() => { setConfirming(false); restoreButton.current?.focus(); }}>取消</button><button disabled={busy} className="history-restore" onClick={() => void restore()}>{busy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}{busy ? '正在恢复…' : '确认恢复正文'}</button></div>
           </div> : <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="max-w-xl text-[11px] leading-5 opacity-65">本机正文记录 · 每篇最多 20 个 / 30 天 · 所有历史共用 5 MiB。<br />只保存正文，无法识别修改者，不是不可篡改的审计日志。</p>
+            <details className="max-w-xl text-xs leading-6 opacity-65"><summary className="cursor-pointer">记录说明</summary><p className="mt-2">修改记录保存在此设备，仅包含正文。最近 30 天内每篇最多保留 20 条，较早记录可能被清理；长期留存可在设置中导出备份。</p></details>
             <button ref={restoreButton} disabled={!comparison || comparison.identical || document.status !== 'active' || busy} className="history-restore" onClick={() => setConfirming(true)}><RotateCcw size={14} />恢复所选正文</button>
           </div>}
         </footer>

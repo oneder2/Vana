@@ -36,9 +36,8 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
   }
 
   return <section className="shell-panel border p-5 sm:p-6" aria-labelledby="space-backup-title" style={{ backgroundColor: getThemeSurfaceColor(theme), borderColor: border }}>
-    <div className="shell-label mb-3">Space backup</div>
     <h2 id="space-backup-title" className="shell-title mb-3 flex items-center gap-2 text-lg font-medium"><FolderInput size={18} />备份与恢复</h2>
-    <p className="max-w-2xl text-sm leading-7 opacity-75">备份当前空间的文档、目录、标签和保留的正文记录。导入时创建独立副本，保留目录层级。备份文件包含明文正文，不含登录会话。</p>
+    <p className="max-w-2xl text-sm leading-7 opacity-75">保存一份文档备份，或从备份导入副本。备份包含文档内容，请妥善保管。</p>
     <div className="mt-5 flex flex-wrap gap-3">
       <button disabled={disabled || busy} className="flex items-center gap-2 rounded-md border px-4 py-3 text-sm" style={{ borderColor: border, backgroundColor: getThemeAccentBgColor(theme) }} onClick={() => void perform(async captured => {
         await documentDrafts.flushAll();
@@ -72,7 +71,7 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
       ].map(([label, count]) => <div key={label}><dt className="text-xs opacity-60">{label}</dt><dd className="mt-1 text-xl tabular-nums">{count}</dd></div>)}</dl>
       <p className="mt-4 break-words text-xs leading-6 opacity-70">{pending.preview.titles.join(' · ') || '此备份为空'}</p>
       {pending.preview.discarded_history > 0 && <p className="mt-2 text-xs opacity-70">{pending.preview.discarded_history} 条历史超过保留期限或上限，导入时将略过。</p>}
-      <p className="mt-3 text-xs leading-6 opacity-70">确认后将复制到当前空间，生成新文档 ID，并进入待同步队列。已有同名标签沿用当前颜色；历史仍受 20 个 / 30 天 / 共用 5 MiB 上限约束。</p>
+      <p className="mt-3 text-xs leading-6 opacity-70">导入会添加副本，不会替换已有文档。</p>
       <button disabled={busy || disabled || pending.preview.documents + pending.preview.folders === 0} className="mt-4 rounded-md border px-4 py-3 text-sm" style={{ borderColor: border, backgroundColor: getThemeAccentBgColor(theme) }} onClick={() => void perform(async captured => {
         const backup = pending;
         if (!backup || backup.scope !== captured) throw new Error('空间已切换，请重新选择备份');
