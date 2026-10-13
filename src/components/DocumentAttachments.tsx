@@ -20,6 +20,7 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
 }) {
   const { theme } = useTheme();
   const [files, setFiles] = useState<AttachmentSummary[]>([]);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -33,8 +34,13 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
 
   const reload = useCallback(async () => {
     const version = ++request.current;
-    const items = await listAttachments(scope, documentId);
-    if (active.current && version === request.current) setFiles(items);
+    setLoading(true);
+    try {
+      const items = await listAttachments(scope, documentId);
+      if (active.current && version === request.current) setFiles(items);
+    } finally {
+      if (active.current && version === request.current) setLoading(false);
+    }
   }, [scope, documentId]);
 
   useEffect(() => { active.current = true; void reload().catch(e => { if (active.current) setError(String(e)); });
@@ -52,7 +58,7 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
 
   return <details className="group shrink-0 border-b text-sm" style={{ borderColor: border, backgroundColor: getThemeSurfaceColor(theme) }}>
     <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 focus-visible:outline focus-visible:outline-2">
-      <Paperclip size={15} aria-hidden="true" /><span>附件</span><span className="tabular-nums opacity-65">{error ? '读取失败' : files.length}</span>
+      <Paperclip size={15} aria-hidden="true" /><span>附件</span><span className="tabular-nums opacity-65">{error ? '读取失败' : loading ? '…' : files.length}</span>
       <span className="ml-auto text-xs opacity-60">仅此设备</span>
       {busy && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" aria-label="正在处理附件" />}
       <ChevronDown size={14} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
@@ -76,7 +82,8 @@ export function DocumentAttachments({ scope, documentId, generation, readOnly }:
           </div>}
         </li>)}
       </ul>}
-      {!files.length && !error && <p className="mb-3 text-xs opacity-60">此文档还没有附件。</p>}
+      {loading && !error && <p role="status" className="mb-3 flex items-center gap-2 text-xs opacity-60"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" />正在读取附件…</p>}
+      {!loading && !files.length && !error && <p className="mb-3 text-xs opacity-60">此文档还没有附件。</p>}
       {readOnly ? <p className="text-xs opacity-60">进入编辑模式后可添加或移除附件。</p> : <button disabled={busy || files.length >= 20} className="flex items-center gap-2 rounded border px-3 py-2 text-xs" style={{ borderColor: border }} onClick={() => input.current?.click()}><Plus size={14} />添加附件</button>}
       <input ref={input} type="file" className="hidden" aria-label="选择文档附件" accept=".txt,.md,.csv,.pdf,.png,.jpg,.jpeg,.gif,.webp,.docx,.zip" disabled={readOnly || busy} onChange={event => {
         const picker = event.currentTarget; const file = picker.files?.[0]; if (!file || readOnly) return;
