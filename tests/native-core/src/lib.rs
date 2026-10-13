@@ -200,6 +200,19 @@ mod regressions {
     }
 
     #[test]
+    fn existing_v3_space_gains_conflict_schema_without_changing_documents() {
+        let app = app();
+        let d = create(&app, "guest", "document", None);
+        let conn = open_db(&app).unwrap();
+        conn.execute_batch("DROP TABLE document_conflicts; PRAGMA user_version=3;").unwrap();
+        drop(conn);
+        assert!(list_document_conflicts(&app, "guest").unwrap().is_empty());
+        assert_eq!(get_document(&app, &d.id).unwrap().unwrap().content_json, d.content_json);
+        assert_eq!(open_db(&app).unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 4);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
     fn restore_preserves_metadata_and_current_body_survives_reopen_and_sync() {
         let app = app();
         let folder = create(&app, "guest", "folder", None);
