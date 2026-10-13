@@ -113,6 +113,10 @@ export function Editor({
       },
       attributes: {
         class: `tiptap-editor focus:outline-none ${mobile ? 'min-h-[calc(100dvh-210px)] px-4 py-5' : 'min-h-[360px] px-5 py-6 sm:px-8'}`,
+        role: 'textbox',
+        'aria-label': '文档正文',
+        'aria-multiline': 'true',
+        'aria-readonly': readOnly ? 'true' : 'false',
       },
     },
   });

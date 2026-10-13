@@ -67,12 +67,7 @@ try {
   Write-Host 'PASS: installed Windows app launches and logs in through native IPC'
   Click-Name '新建文档'
   Wait-For { Find-Name '保存并进入阅读模式' } 'new document editor' | Out-Null
-  $body = Wait-For {
-    $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
-    $items = $script:window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
-    $matches = @($items | Where-Object { -not $_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt 450 -and $_.Current.BoundingRectangle.Height -gt 150 })
-    if ($matches.Count -eq 1) { return $matches[0] }
-  } 'document body'
+  $body = Wait-For { Find-Name '文档正文' } 'document body'
   $synthetic = 'vana-windows-native-export-12345'
   Set-PrivateValue $body $synthetic
   Click-Name '保存并进入阅读模式'
