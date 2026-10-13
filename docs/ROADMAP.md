@@ -1,6 +1,6 @@
 # 下一阶段开发路线
 
-决策基线：0.7.0 `dev`，审查修复和本地验证完成，`6e89166` 的三平台预览 CI 全部成功。此路线描述待开发工作，不代表已交付功能；不提前修改版本号或创建发布标签。
+决策基线：0.7.0，审查修复、真实 Supabase 和三平台原生验收完成。工作包 1–4 已验收，第 5 包附件待实施；本轮发布不代表整条路线完成。
 
 ## 开发方向
 
@@ -14,7 +14,7 @@
 
 版本差异、带并发保护的正文恢复、空间备份与冲突对照入口已实现；React Bits 参考、许可和 UI 方向见 [UI 方向](UI_DIRECTION.md)。Rust Auth、系统凭据适配与渲染边界已接入；离线回归和 Linux 系统凭据探针已通过。
 
-这些是本地实现与验证准备的进度，不代表下面五个工作包全部验收完成。真实 Supabase 备份恢复、迁移和两账号协议验收已通过，Linux/Android 原生双向同步及重启会话已验证。Windows 原生运行、正式签名设备及完整冲突/导出验收仍需补齐，附件仍按顺序推进。功能契约和完整证据见 [开发记录](DEVELOPMENT_2026-10-13.md)、[备份格式](BACKUP_FORMAT.md)、[会话安全](SESSION_SECURITY.md)、[真实同步验收](SYNC_ACCEPTANCE.md)。
+真实 Supabase 备份恢复、迁移和两账号协议验收已通过；Linux/Android 双向同步、冲突对照、恢复与重启回读已验证。Linux 原生备份复制、三种导出及 Secret Service 退出清理通过；正式签名 Android 的安装升级、三种实际分享面板、真实 Keystore 会话刷新和退出清理通过。Windows 完整 UI 的登录、编辑保存、三种导出、重启正文与会话、空间备份和退出均通过，Credential Manager 的真实刷新轮换与删除通过。验收仅覆盖注册确认协议，未验证 SMTP 收件；Android 分享止于系统 Chooser，未选择接收者。附件仍按顺序推进，具体契约见 [附件计划](ATTACHMENT_STORAGE_PLAN.md)。功能契约和完整证据见 [开发记录](DEVELOPMENT_2026-10-13.md)、[备份格式](BACKUP_FORMAT.md)、[会话安全](SESSION_SECURITY.md)、[真实同步验收](SYNC_ACCEPTANCE.md)。
 
 ## 工作顺序与验收
 
