@@ -48,7 +48,8 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
       })}><Download size={16} />导出空间备份</button>
       <button disabled={disabled || busy} className="flex items-center gap-2 rounded-md border px-4 py-3 text-sm" style={{ borderColor: border }} onClick={() => file.current?.click()}><FileCheck2 size={16} />选择备份并预览</button>
       <input ref={file} className="hidden" type="file" accept=".json,.vana-backup.json,application/json" aria-label="选择 Vana 备份文件" onChange={event => {
-        const selected = event.target.files?.[0]; event.target.value = '';
+        const picker = event.currentTarget;
+        const selected = picker.files?.[0];
         if (!selected) return;
         setPending(null);
         void perform(async captured => {
@@ -56,7 +57,7 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
           const json = await selected.text();
           const preview = await previewSpaceBackup(captured, json);
           if (activeScope.current === captured) setPending({ scope: captured, json, name: selected.name, preview });
-        });
+        }).finally(() => { picker.value = ''; });
       }} />
     </div>
     {busy && <p role="status" className="mt-4 flex items-center gap-2 text-sm"><Loader2 size={14} className="animate-spin" />正在处理备份…</p>}
