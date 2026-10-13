@@ -409,7 +409,8 @@ export default function SettingsPage() {
                 当前存储：{appState ? formatBytes(appState.limits.current_total_storage_bytes) : '0 B'}
               </div>
               <div>最近 5 分钟写入：{appState?.limits.current_write_ops_last_5_minutes ?? 0}</div>
-              <div>附件上传：{appState?.limits.attachments_enabled ? '已开启' : '暂未实现'}</div>
+              <div>本地附件：已开启（仅此设备）</div>
+              <div>云端附件上传：{appState?.limits.attachments_enabled ? '已开启' : '暂未实现'}</div>
             </div>
           </section>
 
