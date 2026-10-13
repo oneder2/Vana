@@ -47,3 +47,5 @@ python3 scripts/test-supabase-live.py cleanup --config PRIVATE_CONFIG --fixtures
 Linux 原生应用与 Android Preview 已通过同一账号双向编辑同步及保存后重启会话/正文回读。Linux 系统凭据原生探针已通过真实 refresh 和 logout。完整运行证据和仍待验收的签名/平台边界见 [开发记录](DEVELOPMENT_2026-10-13.md)。
 
 原生 Auth 探针读取 `VANA_NATIVE_ACCEPTANCE_CONFIG` 所指私有 JSON，字段为 `url`、`anon`、`expected_project_ref`、测试账号 `email`/`password`/`id`，不含 admin key。仅允许自建 `vana-acceptance-…@example.com` fixture；使用全新临时空间和实际 OS 凭据库。Linux 在隔离 D-Bus/keyring 运行；Windows 使用临时 runner。手动签名构建可开启 `windows_native_acceptance`，并临时配置 `VANA_NATIVE_ACCEPTANCE_ACCOUNT` Secret；运行后移除此测试 Secret。探针的重新打开存储与完整应用进程重启是两项独立证据。
+
+Android `NativeAcceptance` 是独立 Instrumentation APK，必须与被验收正式包使用同一签名。在手动工作流开启 `android_native_acceptance_tools` 后从私有验收 artifact 取出，不能作为面向用户的 Release 资产发布。按 `expire_fixture` → 启动应用并同步 → `verify_refresh` → 在 UI 切换访客 → `verify_logout` 执行；每次传入本轮 fixture ID。工具拒绝其他账号，不输出秘密；`expire_fixture` 仅修改该测试账号加密会话中的 expires_at，不改设备时钟、不导出 token。完成后卸载测试工具。

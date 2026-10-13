@@ -23,7 +23,7 @@
 
 最新状态栏修复后的本地 Android Release/R8 产物：`dist/android/vana-0.7.0-android-release.apk`（SHA-256 `418081f6b84ccb40c06924244474cbfd1ff3ff2752fded44f71ae5862835fac7`），AAB（SHA-256 `6d71ab741a2e5da0108fefe97766c43c8ee2078be2b060000d1410f2d9418599`）。包名 `com.vana.no_visitors.preview`，标签 Vana Preview，使用 Android Debug 测试证书，不是正式签名。最新包通过 universalRelease JNI 检查，APK/AAB 签名指纹一致，校验脚本拒绝错误的预期签名。此前 `7a46210` 包已在解锁设备上验证访客首次进入、创建/保存/阅读保护、历史差异、确认恢复（数字正文 `111222` → `111`）。最新版原位更新、force-stop/relaunch 后默认打开 Welcome；从文档库选回标题 `111222` 的测试文档，UI 正文确认为 `111`，恢复的持久化回读通过。真机截图发现 Android edge-to-edge 时 CSS safe-area 为零，系统状态栏覆盖顶部工具栏；已在 Activity 内容根视图处理系统栏/屏幕切口的原生 Insets，并向 WebView 继续转发 IME Insets。修复后的 Release/R8 包构建、JNI、APK/AAB 测试签名和原位安装通过，截图及 WebView bounds `[0,128,1440,3037]` 确认顶部工具栏与底部内容均避开系统栏。编辑模式下点击正文，IME 正常出现（`mInputShown=true`），返回关闭键盘，再切回阅读模式成功。设置页导出空间备份成功，系统分享 `android/com.android.internal.app.ChooserActivity` 打开后取消，未选择外部分享目标。随后已完成备份复制导入和重启回读：非法孤儿目录整次拒绝，合法三层目录、标签及正文记录先预览后导入；重启后可逐层找到正文，历史仍可预览。Markdown、DOCX、PDF 均生成文件并打开系统 Chooser 后取消，没有向外部目标发送。真实账号登录和进程重启后会话读取通过，未出现 Keystore 错误；当前仍是 Preview 测试证书包，不能替代正式签名设备验收。
 
-Linux 隔离 XDG 空间的真实应用中已验证编辑、保存、历史差异和确认恢复，SQLite 保留恢复前正文的历史。当前 X11 已恢复可用：使用包含 Hosted 配置的 `7c342f7` 原生包真实登录自建测试账号，经应用同步拉取正文；正常关闭并重启后会话与正文回读通过。SQLite 会话摘要中的 access/refresh token 均为空。随后 Linux 修改上行、Android 下行，以及 Android 修改上行、重启后的 Linux 下行均通过，两端待同步为 0。Linux Markdown 与 DOCX 导出成功，PDF 内容核对仍在进行。
+Linux 隔离 XDG 空间的真实应用中已验证编辑、保存、历史差异和确认恢复，SQLite 保留恢复前正文的历史。当前 X11 已恢复可用：使用包含 Hosted 配置的 `7c342f7` 原生包真实登录自建测试账号，经应用同步拉取正文；正常关闭并重启后会话与正文回读通过。SQLite 会话摘要中的 access/refresh token 均为空。随后 Linux 修改上行、Android 下行，以及 Android 修改上行、重启后的 Linux 下行均通过，两端待同步为 0。Linux Markdown、DOCX 和 PDF 原生导出均成功；Markdown 文本、DOCX OOXML 正文和 PDF 经 pdftotext 提取的正文均与测试文本一致。原生空间备份包含两份并发正文与 7 条保留历史，且不含会话字段。
 
 新增 `tests/native-core/examples/live_auth_probe.rs` 使用生产 Rust Auth/SQLite 模块与真实系统凭据实现，在独立 Secret Service 和临时目录运行。真实登录、无明文 token 的 SQLite 摘要、重建 AppHandle 后读取、refresh 后凭据 ID 替换与旧凭据删除、logout 清除凭据/摘要并切回访客均通过。此探针不是完整应用进程重启证据；应用重启由上一段的原生 UI 场景另行确认。
 
@@ -42,3 +42,15 @@ Linux 隔离 XDG 空间的真实应用中已验证编辑、保存、历史差异
 真实 Supabase 服务端验收与 Linux/Android 双向同步已通过；Windows 原生运行、正式签名 Android 设备安装、冲突可见性和全部导出验证仍在推进。已部署备份后迁移；尚未合并 main、创建发布标签或 Release。`git diff --check` 通过；全仓 `cargo fmt --check` 仍存在历史及当前文件格式差异，不是本轮 CI 必需项，未做全仓格式重写。
 
 完整路线保持 [ROADMAP](ROADMAP.md) 的五个工作包。当前完成的是本地实现和验证准备；全路线验收仍在进行。附件按路线保留在第 5 包，云附件需要前四包验收及服务端配额/权限/重试/孤儿清理，当前不开启云附件。
+
+## 后续原生验收补充
+
+Linux 暂停的仅是隔离测试账号空间中的自动同步；本机离线修改与 Android 远端修改重连后均保留，产生一份带原文关联的冲突副本，outbox 清空。实际打开同步副本面板，可查看正文差异、原文当前版本与保留副本；标记“已查看”后仅通知移出列表，SQLite 仍保留完整副本正文。
+
+Android 已安装正式签名 `7c342f7` 包并真实登录，再使用 `b862b15` 成功签名构建包原位更新，测试会话与云端正文仍可读。当前正式 APK SHA-256 为 `316e26b6931f9fa79b5b68c261552440bd73d1382f90589882bf9ea6c51501e3`，证书 SHA-256 为 `df2e35d9b993cd0f9f3663e9563623316db271905e7b3bf859a2101010c9d089`。GitHub CI 配置的签名与本地 `secrets/.env` / `release.keystore` 的证书不同；本轮沿用现有 GitHub 发布证书，未轮换密钥。CI 内已从实际 keystore 导出证书并与 APK/AAB 比较，连续构建证书一致；新增公开 artifact manifest 记录证书指纹、源 SHA 和文件哈希，不包含签名密钥。
+
+Windows `b862b15` 的签名 EXE/MSI 与原生程序校验通过，完整三平台签名工作流 [38464671340](https://github.com/oneder2/Vana/actions/runs/38464671340) 全部成功。首轮 Windows UI 验收找到登录输入框，但脚本使用了错误按钮名称“登录”，实际欢迎页为“登录并开始同步”；脚本已修正并增加编辑、导出、备份和重启验证。此自动化脚本错误不作为产品认证失败，也不能将修正前运行宣称通过。
+
+Android 另加独立同证书 Instrumentation 工具，限定已创建测试账号的 ID 与邮箱，读取实际无 token 的 SQLite 摘要与 Keystore 密文。它仅让该 fixture 的 OS 会话过期，再由原生应用执行真实 refresh；验证凭据轮换、旧秘密删除及退出清理。该工具不合入生产 APK，只在手动验收构建中生成，设备结果仍待运行。
+
+Linux 备份导入原生验收复现 WebKit 的“文件对象不可用”：文件选择后立即清空 input，再异步读取 File 导致失败。本轮已将清空延后至读取/预览结束，等待新的原生包验证，未把失败场景记为通过。编辑器同时添加明确的 textbox、多行与只读语义及“文档正文”标签，改善辅助技术识别，并用于 Windows 正文操作验收。

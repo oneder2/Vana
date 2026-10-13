@@ -356,3 +356,9 @@ adb install -r your-app.apk
 
 **最后更新**: 2026-01-23  
 **维护者**: @oneder2
+
+## 真实服务与原生验收
+
+`test-supabase-live.py` 只处理自建隔离账号，按 provision/run/cleanup 执行；凭据放私有 JSON，详细步骤和邮箱投递边界见 [真实同步验收](../docs/SYNC_ACCEPTANCE.md)。原生系统凭据和 Auth 使用 `tests/native-core/examples/live_auth_probe.rs`，不能用模拟凭据库的领域测试替代。
+
+手动 `release.yml` 构建可用 `platform` 选择 Linux、Windows 或 Android；tag 发布始终构建三平台。`windows_native_acceptance` 使用临时测试账号验证实际 Windows 程序；`android_native_acceptance_tools` 生成独立、同证书的测试 Instrumentation，不能作为用户安装包发布。Android 发布 manifest 记录实际 CI 证书指纹和产物哈希；本地同名 keystore 不能自动视为 CI 发布证书。
