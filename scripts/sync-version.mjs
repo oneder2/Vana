@@ -44,10 +44,13 @@ tauriConfig.version = version;
 if (windowsMsiVersion) {
   tauriConfig.bundle ??= {};
   tauriConfig.bundle.windows ??= {};
-  tauriConfig.bundle.windows.version = windowsMsiVersion;
-} else if (tauriConfig.bundle?.windows?.version) {
-  delete tauriConfig.bundle.windows.version;
+  tauriConfig.bundle.windows.wix ??= {};
+  tauriConfig.bundle.windows.wix.version = windowsMsiVersion;
+} else if (tauriConfig.bundle?.windows?.wix) {
+  delete tauriConfig.bundle.windows.wix.version;
 }
+// Remove the legacy field, which Tauri 2 rejects before building on Windows.
+if (tauriConfig.bundle?.windows) delete tauriConfig.bundle.windows.version;
 
 writeJson(tauriConfigPath, tauriConfig);
 
