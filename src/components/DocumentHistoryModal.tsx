@@ -12,8 +12,8 @@ import { useTheme } from './ThemeProvider';
 type View = 'diff' | 'version' | 'current';
 const tabs: { id: View; label: string }[] = [{ id: 'diff', label: '正文差异' }, { id: 'version', label: '所选版本' }, { id: 'current', label: '当前正文' }];
 
-export function DocumentHistoryModal({ document, onClose, onRestored }: {
-  document: DocumentRecord; onClose: () => void; onRestored: (record: DocumentRecord) => void;
+export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChange }: {
+  document: DocumentRecord; onClose: () => void; onRestored: (record: DocumentRecord) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const { theme } = useTheme();
   const [entries, setEntries] = useState<DocumentHistoryEntry[]>([]);
@@ -30,6 +30,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored }: {
   const cancelButton = useRef<HTMLButtonElement>(null);
   const restoreButton = useRef<HTMLButtonElement>(null);
   const border = getThemeBorderColor(theme), accent = getThemeAccentColor(theme);
+  useEffect(() => () => onBusyChange(false), [onBusyChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,7 +79,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored }: {
 
   async function restore() {
     if (!entry || busyRef.current) return;
-    busyRef.current = true; setBusy(true); setError('');
+    busyRef.current = true; setBusy(true); onBusyChange(true); setError('');
     dialog.current?.focus();
     try {
       const record = await documentDrafts.withExclusive(document.id, document.account_scope,
@@ -87,6 +88,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored }: {
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : String(error)); }
     finally {
       busyRef.current = false;
+      onBusyChange(false);
       if (mounted.current) { setBusy(false); setConfirming(false); requestAnimationFrame(() => restoreButton.current?.focus()); }
     }
   }

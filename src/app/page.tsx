@@ -299,6 +299,13 @@ export default function HomePage() {
   const [modeBusy, setModeBusy] = useState(false);
   const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
   const [conflictsScope, setConflictsScope] = useState<string | null>(null);
+  const historyBusy = useRef(false);
+  const setHistoryBusy = useCallback((busy: boolean) => { historyBusy.current = busy; }, []);
+  useEffect(() => {
+    if (!appState) return;
+    setHistoryDocument(current => current?.account_scope === appState.account_scope ? current : null);
+    setConflictsScope(current => current === appState.account_scope ? current : null);
+  }, [appState?.account_scope]);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     favorites: true,
     explorer: true,
@@ -901,7 +908,7 @@ export default function HomePage() {
 
   const currentPath = documentPath(currentDocument, documents);
   const folderPath = documentPath(documents.find(item => item.id === explorerFolderId) ?? null, documents);
-  const closeHistory = useCallback(() => setHistoryDocument(null), []);
+  const closeHistory = useCallback(() => { if (!historyBusy.current) setHistoryDocument(null); }, []);
   const closeConflicts = useCallback(() => setConflictsScope(null), []);
   const openConflicts = useCallback(async () => {
     const scope = getCachedAccountScope();
@@ -1026,7 +1033,7 @@ export default function HomePage() {
       return true;
     }
     if (historyDocument) {
-      setHistoryDocument(null);
+      if (!historyBusy.current) setHistoryDocument(null);
       return true;
     }
     if (sidebarOpen) {
@@ -1550,7 +1557,7 @@ export default function HomePage() {
         else void handleSelectDocument(record.id);
       }} />}
       {historyDocument && historyDocument.account_scope === currentDocument?.account_scope && historyDocument.id === currentDocument.id && (
-        <DocumentHistoryModal document={historyDocument} onClose={closeHistory} onRestored={record => {
+        <DocumentHistoryModal document={historyDocument} onClose={closeHistory} onBusyChange={setHistoryBusy} onRestored={record => {
           if (getCachedAccountScope() !== record.account_scope || selectedIdRef.current !== record.id) return;
           setCurrentDocument(record);
           setContent(parseContent(record.content_json));
@@ -1558,7 +1565,7 @@ export default function HomePage() {
           setReadOnly(true);
           setHistoryDocument(null);
           toast.success('正文已恢复，恢复前的正文已保留在修改记录中');
-          void refresh(record.id).then(() => triggerAutoSync('restore-history', false, record.id));
+          void refresh(record.id).then(() => triggerAutoSync('restore-history', false, record.id)).catch(error => toast.error(String(error)));
         }} />
       )}
 
