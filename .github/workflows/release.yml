@@ -7,6 +7,10 @@ on:
         description: Run Windows native UI and live Auth with a disposable account
         type: boolean
         default: false
+      android_native_acceptance_tools:
+        description: Build separate same-signer Android test instrumentation
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -448,6 +452,9 @@ jobs:
           python3 scripts/check-android-release-signature.py "$expected" "$RUNNER_TEMP/vana-apk-signature.txt"
           python3 scripts/check-android-release-signature.py --aab \
             "$expected" dist/android/vana-*-android-release.aab
+          if [[ "${{ github.event_name == 'workflow_dispatch' && inputs.android_native_acceptance_tools }}" == 'true' ]]; then
+            python3 scripts/build-android-acceptance.py
+          fi
           export VANA_RELEASE_SIGNER_SHA256="$expected"
           python3 - <<'PY'
           import hashlib, json, os, pathlib
@@ -473,6 +480,7 @@ jobs:
             dist/android/*-android-release.apk
             dist/android/*-android-release.aab
             dist/android/android-release-manifest.json
+            dist/android/vana-native-acceptance.apk
           if-no-files-found: error
           retention-days: 30
 
