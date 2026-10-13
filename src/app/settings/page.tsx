@@ -299,6 +299,10 @@ export default function SettingsPage() {
               <label className="block">
                 <div className="mb-2 text-sm font-medium">邮箱</div>
                 <input
+                  type="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder="you@example.com"
@@ -310,6 +314,7 @@ export default function SettingsPage() {
                 <div className="mb-2 text-sm font-medium">密码</div>
                 <input
                   type="password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   placeholder="输入你的密码"

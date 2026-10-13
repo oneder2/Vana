@@ -174,6 +174,10 @@ export default function WelcomePage() {
               <div>
                 <div className="mb-2 text-sm opacity-75">邮箱</div>
                 <input
+                  type="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder="you@example.com"
@@ -187,6 +191,7 @@ export default function WelcomePage() {
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   type="password"
+                  autoComplete="current-password"
                   placeholder="至少使用你自己能记住的密码"
                   className="w-full border px-3 py-2 text-sm outline-none"
                   style={{ borderColor: border, backgroundColor: 'transparent', color: accent }}

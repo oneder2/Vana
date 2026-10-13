@@ -2,6 +2,11 @@ name: Build and Release
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_native_acceptance:
+        description: Run Windows native UI and live Auth with a disposable account
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -285,6 +290,24 @@ jobs:
                 $signature.SignerCertificate.Thumbprint -ne $env:VANA_WINDOWS_SIGNER_THUMBPRINT) {
               throw "Invalid or unexpected signature: $($file.Name) ($($signature.Status))"
             }
+          }
+
+      - name: Windows native application and real Auth acceptance
+        if: github.event_name == 'workflow_dispatch' && inputs.windows_native_acceptance
+        shell: pwsh
+        env:
+          ACCEPTANCE_CONFIG: ${{ secrets.VANA_NATIVE_ACCEPTANCE_ACCOUNT }}
+        run: |
+          if (-not $env:ACCEPTANCE_CONFIG) { throw 'Disposable acceptance account is required' }
+          $path = "$env:RUNNER_TEMP\vana-native-account.json"
+          [System.IO.File]::WriteAllText($path, $env:ACCEPTANCE_CONFIG)
+          $env:VANA_NATIVE_ACCEPTANCE_CONFIG = $path
+          try {
+            ./scripts/test-windows-native.ps1 -InstallerRoot src-tauri/target/release/bundle
+            cargo run -j 2 --locked --manifest-path tests/native-core/Cargo.toml --example live_auth_probe
+            if ($LASTEXITCODE -ne 0) { throw 'Native Auth acceptance failed' }
+          } finally {
+            Remove-Item $path -ErrorAction SilentlyContinue
           }
 
       - name: Upload Windows artifacts
