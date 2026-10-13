@@ -24,6 +24,7 @@ import type { MenuAction } from '@/components/AppMenuBar';
 import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
 import { DocumentNavigation } from '@/components/DocumentNavigation';
 import { DocumentHistoryModal } from '@/components/DocumentHistoryModal';
+import { DocumentConflictsModal } from '@/components/DocumentConflictsModal';
 import { documentPath } from '@/lib/documentNavigation';
 import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
 import { InputModal } from '@/components/InputModal';
@@ -34,6 +35,7 @@ import {
   createDocument,
   ensureWorkspaceInitialized,
   getAppState,
+  getCachedAccountScope,
   getDocument,
   importLegacyWorkspace,
   listDocuments,
@@ -296,6 +298,7 @@ export default function HomePage() {
   const [readOnly, setReadOnly] = useState(true);
   const [modeBusy, setModeBusy] = useState(false);
   const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
+  const [conflictsScope, setConflictsScope] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     favorites: true,
     explorer: true,
@@ -899,6 +902,15 @@ export default function HomePage() {
   const currentPath = documentPath(currentDocument, documents);
   const folderPath = documentPath(documents.find(item => item.id === explorerFolderId) ?? null, documents);
   const closeHistory = useCallback(() => setHistoryDocument(null), []);
+  const closeConflicts = useCallback(() => setConflictsScope(null), []);
+  const openConflicts = useCallback(async () => {
+    const scope = getCachedAccountScope();
+    if (!scope) return;
+    try {
+      await documentDrafts.flushAll();
+      if (getCachedAccountScope() === scope) setConflictsScope(scope);
+    } catch (error) { toast.error(String(error)); }
+  }, [toast]);
   const openFolder = useCallback(async (id: string | null) => {
     try {
       if (currentDocument) await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
@@ -1009,6 +1021,10 @@ export default function HomePage() {
   );
 
   const closeTopMobileLayer = useCallback(() => {
+    if (conflictsScope) {
+      setConflictsScope(null);
+      return true;
+    }
     if (historyDocument) {
       setHistoryDocument(null);
       return true;
@@ -1071,6 +1087,7 @@ export default function HomePage() {
     sidebarMenu,
     sidebarOpen,
     historyDocument,
+    conflictsScope,
     explorerFolderId,
     documents,
   ]);
@@ -1392,13 +1409,13 @@ export default function HomePage() {
 
   const renderDocumentEditor = (mobile: boolean) => {
     const navigation = <DocumentNavigation path={currentPath} readOnly={readOnly} busy={modeBusy}
-      onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} />;
+      onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} />;
     if (mobile) {
       if (!currentDocument) return null;
       return (
         <MobileDocumentEditor
           navigation={navigation}
-          readOnly={readOnly}
+          readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
           currentDocument={currentDocument}
           content={content}
           documentTags={documentTags}
@@ -1415,7 +1432,7 @@ export default function HomePage() {
     return (
       <DesktopDocumentEditor
         navigation={navigation}
-        readOnly={readOnly}
+        readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
         currentDocument={currentDocument}
         content={content}
         documentTags={documentTags}
@@ -1526,8 +1543,23 @@ export default function HomePage() {
         }}
       />
 
+      {conflictsScope && conflictsScope === appState?.account_scope && <DocumentConflictsModal scope={conflictsScope} onClose={closeConflicts} onOpen={record => {
+        if (getCachedAccountScope() !== record.account_scope) return;
+        setConflictsScope(null);
+        if (record.node_kind === 'folder') void openFolder(record.id);
+        else void handleSelectDocument(record.id);
+      }} />}
       {historyDocument && historyDocument.account_scope === currentDocument?.account_scope && historyDocument.id === currentDocument.id && (
-        <DocumentHistoryModal document={historyDocument} onClose={closeHistory} />
+        <DocumentHistoryModal document={historyDocument} onClose={closeHistory} onRestored={record => {
+          if (getCachedAccountScope() !== record.account_scope || selectedIdRef.current !== record.id) return;
+          setCurrentDocument(record);
+          setContent(parseContent(record.content_json));
+          setDocumentTags(record.tags);
+          setReadOnly(true);
+          setHistoryDocument(null);
+          toast.success('正文已恢复，恢复前的正文已保留在修改记录中');
+          void refresh(record.id).then(() => triggerAutoSync('restore-history', false, record.id));
+        }} />
       )}
 
       {sidebarMenu && (

@@ -1,16 +1,17 @@
 import { useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, BookOpen, ChevronRight, History, Pencil } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronRight, GitCompareArrows, History, Pencil } from 'lucide-react';
 import type { DocumentPathItem } from '@/lib/documentNavigation';
 import { useTheme } from './ThemeProvider';
 import { getThemeAccentColor, getThemeBorderColor } from '@/lib/themeStyles';
 
-export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggleReading, onHistory }: {
+export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggleReading, onHistory, onConflicts }: {
   path: DocumentPathItem[];
   readOnly: boolean;
   busy: boolean;
   onOpenFolder: (id: string | null) => void;
   onToggleReading: () => void;
   onHistory: () => void;
+  onConflicts: () => void;
 }) {
   const { theme } = useTheme();
   const navigation = useRef<HTMLElement>(null);
@@ -48,6 +49,8 @@ export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggl
         </button>
         <button type="button" onClick={onHistory} className="flex min-h-9 items-center gap-1.5 rounded border px-2"
           style={{ borderColor: border }} aria-label="查看修改记录"><History size={14} /><span className="hidden sm:inline">修改记录</span></button>
+        <button type="button" onClick={onConflicts} className="flex min-h-9 items-center gap-1.5 rounded border px-2"
+          style={{ borderColor: border }} aria-label="查看同步副本"><GitCompareArrows size={14} /><span className="hidden sm:inline">同步副本</span></button>
       </div>
     </div>
   );

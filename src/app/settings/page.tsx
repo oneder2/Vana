@@ -13,6 +13,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
+import { SpaceBackupPanel } from '@/components/SpaceBackupPanel';
 import { useTheme } from '@/components/ThemeProvider';
 import { useToast } from '@/components/ToastProvider';
 import {
@@ -376,6 +377,8 @@ export default function SettingsPage() {
                 className="border px-4 py-3 text-sm" style={{ borderColor: border }}>恢复归属不明的旧数据库</button>}
             </div>
           </section>
+
+          {appState && <SpaceBackupPanel scope={appState.account_scope} disabled={busy} onBusyChange={setBusy} onImported={refresh} />}
 
           <section className="shell-panel border p-5 sm:p-6" style={{ backgroundColor: surface, borderColor: border }}>
             <div className="shell-label mb-3">Hosted Limits</div>

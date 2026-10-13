@@ -86,3 +86,35 @@ test('identical document IDs in separate account spaces have independent drafts'
   await store.flushAll();
   assert.deepEqual(writes.map(x => [x.account_scope, x.plain_text]), [['account-B', 'B'], ['account-A', 'A']]);
 });
+
+test('recovery drains drafts and serializes flush while rejecting stale editor events', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const actions: string[] = [];
+  const store = new DocumentDraftStore(async value => { actions.push('save'); return record(value); }, 60_000);
+  store.queue(input('a', 'unsaved'));
+  const recovery = store.withExclusive('a', 'guest', async () => { actions.push('restore'); await gate; return record(input('a', 'restored')); });
+  assert.throws(() => store.queue(input('a', 'late stale edit')), /正在恢复/);
+  while (!actions.includes('restore')) await Promise.resolve();
+  let flushed = false;
+  const flush = store.flush('a', 'guest').then(value => { flushed = true; return value; });
+  await Promise.resolve();
+  assert.equal(flushed, false);
+  release();
+  assert.equal((await recovery).plain_text, 'restored');
+  assert.equal((await flush)?.plain_text, 'restored');
+  assert.deepEqual(actions, ['save', 'restore']);
+  store.queue(input('a', 'new edit'));
+  await store.flushAll();
+});
+
+test('failed draft flush prevents recovery and releases the operation lock', async () => {
+  let fails = true, restored = false;
+  const store = new DocumentDraftStore(async value => { if (fails) throw new Error('disk full'); return record(value); }, 60_000);
+  store.queue(input('a'));
+  await assert.rejects(store.withExclusive('a', 'guest', async () => { restored = true; return record(input('a')); }), /disk full/);
+  assert.equal(restored, false);
+  fails = false;
+  store.queue(input('a', 'retry'));
+  await store.flushAll();
+});

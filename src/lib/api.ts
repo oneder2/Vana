@@ -324,6 +324,54 @@ export async function listDocumentHistory(id: string, scope: string): Promise<Do
   return invoke<DocumentHistoryEntry[]>('list_document_history_command', { id, expectedScope: scope });
 }
 
+export async function restoreDocumentHistory(document: DocumentRecord, historyId: string): Promise<DocumentRecord> {
+  return invoke<DocumentRecord>('restore_document_history_command', { input: {
+    account_scope: document.account_scope,
+    document_id: document.id,
+    history_id: historyId,
+    content_generation: document.content_generation,
+    expected_content_json: document.content_json,
+  } });
+}
+
+export interface BackupPreview {
+  created_at: string; documents: number; folders: number; tags: number;
+  retained_history: number; discarded_history: number; titles: string[];
+}
+export interface BackupImportResult {
+  documents: number; folders: number; retained_history: number; first_document_id: string | null;
+}
+export async function exportSpaceBackup(scope: string): Promise<string> {
+  return invoke<string>('export_space_backup_command', { expectedScope: scope });
+}
+export async function previewSpaceBackup(scope: string, json: string): Promise<BackupPreview> {
+  return invoke<BackupPreview>('preview_space_backup_command', { expectedScope: scope, json });
+}
+export async function importSpaceBackup(scope: string, json: string): Promise<BackupImportResult> {
+  return invoke<BackupImportResult>('import_space_backup_command', { expectedScope: scope, json });
+}
+export async function shareSpaceBackup(path: string): Promise<void> {
+  return invoke<void>('share_space_backup_command', { path });
+}
+
+export interface DocumentConflict {
+  copy: DocumentRecord; original: DocumentRecord | null;
+  reason: 'concurrent-tree-change' | 'edit-during-sync' | 'cloud-edit-during-delete' | 'name-marker';
+  created_at: string;
+}
+export interface DocumentConflictSummary {
+  copy_id: string; title: string; reason: DocumentConflict['reason']; created_at: string;
+}
+export async function listDocumentConflicts(scope: string): Promise<DocumentConflictSummary[]> {
+  return invoke<DocumentConflictSummary[]>('list_document_conflicts_command', { expectedScope: scope });
+}
+export async function getDocumentConflict(scope: string, copyId: string): Promise<DocumentConflict> {
+  return invoke<DocumentConflict>('get_document_conflict_command', { expectedScope: scope, copyId });
+}
+export async function acknowledgeDocumentConflict(scope: string, copyId: string): Promise<void> {
+  return invoke<void>('acknowledge_document_conflict_command', { expectedScope: scope, copyId });
+}
+
 export async function upsertTag(name: string, color?: string | null, id?: string): Promise<TagRecord> {
   return invoke<TagRecord>('upsert_tag_command', { expectedScope: await expectedScope(),
     id: id ?? null,

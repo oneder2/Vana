@@ -11,6 +11,7 @@ export class DocumentDraftStore {
   private writers = new Map<string, Promise<DocumentRecord | undefined>>();
   private listeners = new Set<(event: DraftEvent) => void>();
   private version = 0;
+  private exclusive = new Set<string>();
 
   constructor(private persist: (input: SaveDocumentInput) => Promise<DocumentRecord>, private delay = 600) {}
 
@@ -34,6 +35,7 @@ export class DocumentDraftStore {
 
   queue(input: SaveDocumentInput) {
     const key = this.key(input.id, input.account_scope);
+    if (this.exclusive.has(key)) throw new Error('文档正在恢复，请稍后再编辑');
     const previous = this.drafts.get(key);
     if (previous?.timer) clearTimeout(previous.timer);
     const draft: Draft = { input: { ...input, tags: [...input.tags] }, version: ++this.version };
@@ -43,6 +45,21 @@ export class DocumentDraftStore {
 
   async flush(id: string, scope?: string): Promise<DocumentRecord | undefined> {
     return this.flushKey(this.key(id, scope));
+  }
+
+  /** Drain pending saves and hold the same writer slot through the domain operation.
+   * A late editor event must not enqueue a pre-restore snapshot. */
+  async withExclusive(id: string, scope: string, operation: () => Promise<DocumentRecord>): Promise<DocumentRecord> {
+    const key = this.key(id, scope);
+    if (this.exclusive.has(key)) throw new Error('文档操作正在进行');
+    this.exclusive.add(key);
+    try {
+      await this.flushKey(key);
+      const writer = Promise.resolve().then(operation);
+      this.writers.set(key, writer);
+      try { return await writer; }
+      finally { if (this.writers.get(key) === writer) this.writers.delete(key); }
+    } finally { this.exclusive.delete(key); }
   }
 
   private async flushKey(id: string): Promise<DocumentRecord | undefined> {
