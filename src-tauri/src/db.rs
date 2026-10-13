@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -27,6 +28,7 @@ fn effective_supabase_config(conn: &Connection) -> Result<SupabaseConfig> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSummary {
+    pub account_scope: String,
     pub id: String,
     pub title: String,
     pub node_kind: String,
@@ -44,6 +46,8 @@ pub struct DocumentSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentRecord {
+    pub content_generation: i64,
+    pub account_scope: String,
     pub id: String,
     pub title: String,
     pub node_kind: String,
@@ -87,6 +91,8 @@ pub struct SupabaseSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncSnapshot {
+    #[serde(default)]
+    pub conflict_copies: usize,
     pub mode: String,
     pub pending_jobs: usize,
     pub last_synced_at: Option<String>,
@@ -97,6 +103,9 @@ pub struct SyncSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
+    pub account_user_id: Option<String>,
+    pub account_scope: String,
+    pub recovery_available: bool,
     pub account_mode: String,
     pub onboarding_completed: bool,
     pub service_profile: String,
@@ -122,6 +131,8 @@ pub struct UsageLimits {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveDocumentInput {
+    pub content_generation: i64,
+    pub account_scope: String,
     pub id: String,
     pub title: String,
     pub content_json: String,
@@ -138,6 +149,12 @@ pub struct LegacyImportResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncDocumentRecord {
+    #[serde(default)]
+    pub mutation_id: String,
+    #[serde(default)]
+    pub revision: i64,
+    #[serde(default)]
+    pub is_purged: bool,
     pub id: String,
     pub title: String,
     pub node_kind: String,
@@ -165,18 +182,22 @@ pub struct SyncDocumentStructure {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncExport {
+    pub account_scope: String,
     pub pending_job_ids: Vec<i64>,
     pub documents: Vec<SyncDocumentRecord>,
     pub last_pulled_at: Option<String>,
 }
 
 pub fn local_data_dir(app: &AppHandle) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .context("无法获取应用数据目录")?;
+    let base = app.path().app_data_dir().context("无法获取应用数据目录")?;
     let dir = base.join("vana-local");
-    std::fs::create_dir_all(&dir).with_context(|| format!("无法创建数据目录: {}", dir.display()))?;
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("无法创建数据目录: {}", dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
     Ok(dir)
 }
 
@@ -201,20 +222,6 @@ pub fn legacy_workspace_dir(app: &AppHandle) -> Result<PathBuf> {
     std::fs::create_dir_all(&workspace)
         .with_context(|| format!("无法创建旧工作区目录: {}", workspace.display()))?;
     Ok(workspace)
-}
-
-pub fn db_path(app: &AppHandle) -> Result<PathBuf> {
-    Ok(local_data_dir(app)?.join("vana.db"))
-}
-
-pub fn open_db(app: &AppHandle) -> Result<Connection> {
-    let path = db_path(app)?;
-    let conn = Connection::open(&path)
-        .with_context(|| format!("无法打开数据库: {}", path.display()))?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
-    init_schema(&conn)?;
-    seed_if_empty(&conn)?;
-    Ok(conn)
 }
 
 fn init_schema(conn: &Connection) -> Result<()> {
@@ -293,14 +300,50 @@ fn init_schema(conn: &Connection) -> Result<()> {
         );
         ",
     )?;
-    ensure_column(conn, "documents", "node_kind", "TEXT NOT NULL DEFAULT 'document'")?;
+    ensure_column(
+        conn,
+        "documents",
+        "content_generation",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(conn, "documents", "revision", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "documents", "is_purged", "INTEGER NOT NULL DEFAULT 0")?;
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS write_events (created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS queue_pending_entity ON sync_queue(entity_type, entity_id, processed_at);
+        DELETE FROM sync_queue WHERE processed_at IS NOT NULL;
+        DELETE FROM sync_queue WHERE id NOT IN (SELECT MAX(id) FROM sync_queue GROUP BY entity_type, entity_id);
+        ")?;
+    ensure_column(
+        conn,
+        "documents",
+        "node_kind",
+        "TEXT NOT NULL DEFAULT 'document'",
+    )?;
     ensure_column(conn, "documents", "parent_id", "TEXT")?;
     ensure_column(conn, "documents", "depth", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "attachments", "kind", "TEXT NOT NULL DEFAULT 'file'")?;
     ensure_column(conn, "attachments", "storage_bucket", "TEXT")?;
     ensure_column(conn, "attachments", "storage_object_path", "TEXT")?;
     ensure_column(conn, "attachments", "checksum_sha256", "TEXT")?;
-    ensure_column(conn, "attachments", "upload_state", "TEXT NOT NULL DEFAULT 'local-only'")?;
+    ensure_column(
+        conn,
+        "attachments",
+        "upload_state",
+        "TEXT NOT NULL DEFAULT 'local-only'",
+    )?;
+    prune_history(conn)?;
+    let mut stmt = conn.prepare("SELECT id, payload FROM sync_queue")?;
+    let jobs = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for (id, payload) in jobs {
+        if Uuid::parse_str(&payload).is_err() {
+            conn.execute(
+                "UPDATE sync_queue SET payload=?2 WHERE id=?1",
+                params![id, Uuid::new_v4().to_string()],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -312,7 +355,7 @@ fn seed_if_empty(conn: &Connection) -> Result<()> {
 
     let now = now_iso();
     let welcome_id = Uuid::new_v4().to_string();
-    let welcome = r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Welcome to Vana"}]},{"type":"paragraph","content":[{"type":"text","text":"本地优先主线默认连接可选的 Supabase Hosted 同步，同时保留访客模式。"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"首次启动可先以访客身份使用，再决定是否登录"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"文档仍然先写本地，再进入同步队列"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"高级自托管配置继续保留在设置页"}]}]}]}"#;
+    let welcome = r#"{"type":"doc","content":[{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Welcome to Vana"}]},{"type":"paragraph","content":[{"type":"text","text":"文档先保存在当前本地空间。登录后使用独立的账号空间；访客文档可在设置中明确复制到账号。"}]}]}"#;
 
     conn.execute(
         "
@@ -332,7 +375,8 @@ fn seed_if_empty(conn: &Connection) -> Result<()> {
 }
 
 pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
-    let conn = open_db(app)?;
+    let connection = open_db(app)?;
+    let conn = connection.unchecked_transaction()?;
     let pending_jobs: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sync_queue WHERE processed_at IS NULL",
         [],
@@ -343,7 +387,9 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
     let last_pulled_at = get_config_value(&conn, "sync.last_pulled_at")?;
     let last_error = get_config_value(&conn, "sync.last_error")?;
     let supabase = effective_supabase_config(&conn)?;
-    let session = get_supabase_session(app)?;
+    let session = get_config_value(&conn, "supabase.session")?
+        .map(|raw| serde_json::from_str::<SupabaseSession>(&raw))
+        .transpose()?;
     let service_profile = current_service_profile(&conn)?;
     let account_mode = if session.is_some() {
         if service_profile == "self-hosted" {
@@ -358,14 +404,18 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
     let onboarding_completed = is_onboarding_completed(&conn, session.is_some())?;
 
     Ok(AppState {
+        account_user_id: session.as_ref().and_then(|s| s.user_id.clone()),
+        account_scope: get_config_value(&conn, "space.id")?.unwrap_or_default(),
+        recovery_available: local_data_dir(app)?.join("legacy-unassigned.db").exists(),
         account_mode,
         onboarding_completed,
         service_profile: service_profile.clone(),
         account_email,
-        local_db_path: db_path(app)?.to_string_lossy().to_string(),
+        local_db_path: conn.path().unwrap_or_default().to_string(),
         legacy_workspace_path: legacy_workspace_dir(app)?.to_string_lossy().to_string(),
         supabase: supabase.clone(),
         sync: SyncSnapshot {
+            conflict_copies: 0,
             mode: current_sync_mode(&conn)?,
             pending_jobs: pending_jobs as usize,
             last_synced_at,
@@ -378,19 +428,22 @@ pub fn get_app_state(app: &AppHandle) -> Result<AppState> {
 }
 
 pub fn list_documents(app: &AppHandle, status: Option<String>) -> Result<Vec<DocumentSummary>> {
-    let conn = open_db(app)?;
+    let connection = open_db(app)?;
+    let conn = connection.unchecked_transaction()?;
+    let scope = get_config_value(&conn, "space.id")?.unwrap_or_default();
     let docs = if let Some(requested_status) = status {
         let mut stmt = conn.prepare(
             "
             SELECT id, title, node_kind, parent_id, depth, status, is_favorite, is_template, created_at, updated_at, archived_at, deleted_at
             FROM documents
-            WHERE status = ?1
+            WHERE status = ?1 AND is_purged = 0
             ORDER BY is_favorite DESC, updated_at DESC
             ",
         )?;
 
         let rows = stmt.query_map(params![requested_status], |row| {
             Ok(DocumentSummary {
+                account_scope: scope.clone(),
                 id: row.get(0)?,
                 title: row.get(1)?,
                 node_kind: row.get(2)?,
@@ -413,6 +466,7 @@ pub fn list_documents(app: &AppHandle, status: Option<String>) -> Result<Vec<Doc
             "
             SELECT id, title, node_kind, parent_id, depth, status, is_favorite, is_template, created_at, updated_at, archived_at, deleted_at
             FROM documents
+            WHERE is_purged = 0
             ORDER BY
               CASE status WHEN 'active' THEN 0 WHEN 'archived' THEN 1 ELSE 2 END,
               depth ASC,
@@ -424,6 +478,7 @@ pub fn list_documents(app: &AppHandle, status: Option<String>) -> Result<Vec<Doc
 
         let rows = stmt.query_map([], |row| {
             Ok(DocumentSummary {
+                account_scope: scope.clone(),
                 id: row.get(0)?,
                 title: row.get(1)?,
                 node_kind: row.get(2)?,
@@ -443,26 +498,43 @@ pub fn list_documents(app: &AppHandle, status: Option<String>) -> Result<Vec<Doc
         rows.collect::<std::result::Result<Vec<_>, _>>()?
     };
 
-    let mut enriched = Vec::with_capacity(docs.len());
-    for mut doc in docs {
-        doc.tags = document_tags(&conn, &doc.id)?;
-        enriched.push(doc);
+    let mut tags_by_document: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT document_id, name FROM document_tags JOIN tags ON tags.id = tag_id ORDER BY name",
+    )?;
+    for row in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+        let (id, name) = row?;
+        tags_by_document.entry(id).or_default().push(name);
     }
-    Ok(enriched)
+    Ok(docs
+        .into_iter()
+        .map(|mut doc| {
+            doc.tags = tags_by_document.remove(&doc.id).unwrap_or_default();
+            doc
+        })
+        .collect())
 }
 
 pub fn get_document(app: &AppHandle, id: &str) -> Result<Option<DocumentRecord>> {
     let conn = open_db(app)?;
+    get_document_from_conn(&conn, id)
+}
+
+fn get_document_from_conn(conn: &Connection, id: &str) -> Result<Option<DocumentRecord>> {
+    let scope = get_config_value(conn, "space.id")?.unwrap_or_default();
     let record = conn
         .query_row(
             "
-            SELECT id, title, node_kind, parent_id, depth, content_json, plain_text, status, is_favorite, is_template, created_at, updated_at, archived_at, deleted_at
+            SELECT id, title, node_kind, parent_id, depth, content_json, plain_text, status, is_favorite, is_template, created_at, updated_at, archived_at, deleted_at, content_generation
             FROM documents
-            WHERE id = ?1
+            WHERE id = ?1 AND is_purged = 0
             ",
             params![id],
             |row| {
                 Ok(DocumentRecord {
+                    content_generation: row.get(14)?,
+                    account_scope: scope.clone(),
                     id: row.get(0)?,
                     title: row.get(1)?,
                     node_kind: row.get(2)?,
@@ -488,157 +560,6 @@ pub fn get_document(app: &AppHandle, id: &str) -> Result<Option<DocumentRecord>>
     };
     document.tags = document_tags(&conn, id)?;
     Ok(Some(document))
-}
-
-pub fn create_document(
-    app: &AppHandle,
-    title: Option<String>,
-    is_template: bool,
-    node_kind: Option<String>,
-    parent_id: Option<String>,
-) -> Result<DocumentRecord> {
-    let conn = open_db(app)?;
-    let now = now_iso();
-    let id = Uuid::new_v4().to_string();
-    let resolved_title = title.unwrap_or_else(|| "Untitled".to_string());
-    let resolved_kind = node_kind.unwrap_or_else(|| "document".to_string());
-    let content = if resolved_kind == "folder" {
-        r#"{"type":"doc","content":[]}"#
-    } else {
-        DEFAULT_DOCUMENT_CONTENT.trim()
-    };
-    ensure_write_budget(&conn)?;
-    if resolved_kind == "document" {
-        ensure_document_count_capacity(&conn, 1)?;
-        ensure_document_content_size(content)?;
-        ensure_total_storage_capacity(&conn, estimate_document_storage_bytes(&resolved_title, content, "") as isize)?;
-    }
-    let depth = resolve_parent_depth(&conn, parent_id.as_deref(), None)?;
-
-    conn.execute(
-        "
-        INSERT INTO documents (
-            id, title, node_kind, parent_id, depth, content_json, plain_text, status, is_favorite, is_template, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', 'active', 0, ?7, ?8, ?8)
-        ",
-        params![
-            id,
-            resolved_title,
-            resolved_kind,
-            parent_id,
-            depth,
-            content,
-            if is_template { 1 } else { 0 },
-            now
-        ],
-    )?;
-
-    queue_job(&conn, "document", &id, "create", content)?;
-    append_history(&conn, &id, content)?;
-
-    get_document(app, &id)?.ok_or_else(|| anyhow::anyhow!("文档创建后读取失败"))
-}
-
-pub fn save_document(app: &AppHandle, input: SaveDocumentInput) -> Result<DocumentRecord> {
-    let conn = open_db(app)?;
-    let now = now_iso();
-    ensure_write_budget(&conn)?;
-
-    let existing_document: Option<(String, String, String, String)> = conn
-        .query_row(
-            "SELECT node_kind, title, content_json, plain_text FROM documents WHERE id = ?1",
-            params![input.id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .optional()?;
-
-    let is_document = existing_document
-        .as_ref()
-        .map(|(node_kind, _, _, _)| node_kind == "document")
-        .unwrap_or(true);
-    if is_document {
-        ensure_document_content_size(&input.content_json)?;
-        let old_size = existing_document
-            .as_ref()
-            .map(|(_, title, content, plain)| estimate_document_storage_bytes(title, content, plain))
-            .unwrap_or(0);
-        let new_size = estimate_document_storage_bytes(&input.title, &input.content_json, &input.plain_text);
-        ensure_total_storage_capacity(&conn, new_size as isize - old_size as isize)?;
-    }
-
-    conn.execute(
-        "
-        UPDATE documents
-        SET title = ?2, content_json = ?3, plain_text = ?4, updated_at = ?5
-        WHERE id = ?1
-        ",
-        params![input.id, input.title, input.content_json, input.plain_text, now],
-    )?;
-
-    replace_document_tags(&conn, &input.id, &input.tags)?;
-    queue_job(&conn, "document", &input.id, "update", &input.content_json)?;
-
-    if existing_document
-        .as_ref()
-        .map(|(_, _, content, _)| content.as_str())
-        != Some(input.content_json.as_str())
-    {
-        append_history(&conn, &input.id, &input.content_json)?;
-    }
-
-    get_document(app, &input.id)?.ok_or_else(|| anyhow::anyhow!("文档保存后读取失败"))
-}
-
-pub fn move_document(app: &AppHandle, id: &str, parent_id: Option<&str>) -> Result<DocumentRecord> {
-    let conn = open_db(app)?;
-    let now = now_iso();
-    ensure_write_budget(&conn)?;
-    let depth = resolve_parent_depth(&conn, parent_id, Some(id))?;
-
-    conn.execute(
-        "
-        UPDATE documents
-        SET parent_id = ?2, depth = ?3, updated_at = ?4
-        WHERE id = ?1
-        ",
-        params![id, parent_id, depth, now],
-    )?;
-    queue_job(
-        &conn,
-        "document",
-        id,
-        "move",
-        &serde_json::json!({ "parent_id": parent_id, "depth": depth }).to_string(),
-    )?;
-    cascade_child_depths(&conn, id, depth)?;
-    get_document(app, id)?.ok_or_else(|| anyhow::anyhow!("移动节点后读取失败"))
-}
-
-pub fn set_document_status(app: &AppHandle, id: &str, status: &str) -> Result<DocumentRecord> {
-    let conn = open_db(app)?;
-    let now = now_iso();
-    ensure_write_budget(&conn)?;
-    apply_status_to_subtree(&conn, id, status, &now)?;
-    queue_job(&conn, "document", id, "status", status)?;
-    get_document(app, id)?.ok_or_else(|| anyhow::anyhow!("更新文档状态失败"))
-}
-
-pub fn toggle_favorite(app: &AppHandle, id: &str, favorite: bool) -> Result<DocumentRecord> {
-    let conn = open_db(app)?;
-    let now = now_iso();
-    ensure_write_budget(&conn)?;
-    conn.execute(
-        "UPDATE documents SET is_favorite = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, if favorite { 1 } else { 0 }, now],
-    )?;
-    queue_job(
-        &conn,
-        "document",
-        id,
-        if favorite { "favorite" } else { "unfavorite" },
-        if favorite { "true" } else { "false" },
-    )?;
-    get_document(app, id)?.ok_or_else(|| anyhow::anyhow!("更新收藏状态失败"))
 }
 
 pub fn list_tags(app: &AppHandle) -> Result<Vec<TagRecord>> {
@@ -670,8 +591,18 @@ pub fn list_tags(app: &AppHandle) -> Result<Vec<TagRecord>> {
     Ok(tags)
 }
 
-pub fn upsert_tag(app: &AppHandle, id: Option<String>, name: &str, color: Option<String>) -> Result<TagRecord> {
-    let conn = open_db(app)?;
+pub fn upsert_tag(
+    app: &AppHandle,
+    expected_scope: &str,
+    id: Option<String>,
+    name: &str,
+    color: Option<String>,
+) -> Result<TagRecord> {
+    let connection = open_scoped_db(app, expected_scope)?;
+    let conn = rusqlite::Transaction::new_unchecked(
+        &connection,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
     let resolved_id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
     conn.execute(
         "
@@ -682,6 +613,7 @@ pub fn upsert_tag(app: &AppHandle, id: Option<String>, name: &str, color: Option
         params![resolved_id, name.trim(), color],
     )?;
 
+    conn.commit()?;
     list_tags(app)?
         .into_iter()
         .find(|tag| tag.name == name.trim())
@@ -689,56 +621,91 @@ pub fn upsert_tag(app: &AppHandle, id: Option<String>, name: &str, color: Option
 }
 
 pub fn save_supabase_config(app: &AppHandle, config: SupabaseConfig) -> Result<SupabaseConfig> {
-    let conn = open_db(app)?;
+    let control = open_control(app)?;
+    let conn = control.unchecked_transaction()?;
+    let old = effective_supabase_config(&conn)?;
+    if old.url.as_deref().map(canonical_project).transpose()?
+        != config.url.as_deref().map(canonical_project).transpose()?
+    {
+        set_config_value(&conn, "supabase.session", None)?;
+        set_config_value(&conn, "supabase.user_id", None)?;
+        set_config_value(&conn, "supabase.email", None)?;
+    }
     set_config_value(&conn, "supabase.url", config.url.as_deref())?;
     set_config_value(&conn, "supabase.anon_key", config.anon_key.as_deref())?;
-    queue_job(
-        &conn,
-        "config",
-        "supabase",
-        "update",
-        &serde_json::to_string(&config)?,
-    )?;
+    conn.commit()?;
     Ok(config)
 }
 
 pub fn get_supabase_config(app: &AppHandle) -> Result<SupabaseConfig> {
-    let conn = open_db(app)?;
+    let conn = open_control(app)?;
     effective_supabase_config(&conn)
 }
 
-pub fn save_supabase_session(app: &AppHandle, session: SupabaseSession) -> Result<SupabaseSession> {
-    let conn = open_db(app)?;
-    set_config_value(&conn, "supabase.session", Some(&serde_json::to_string(&session)?))?;
+pub fn save_supabase_session(
+    app: &AppHandle,
+    session: SupabaseSession,
+    expected_project: &str,
+    expected_scope: Option<&str>,
+) -> Result<SupabaseSession> {
+    let control = open_control(app)?;
+    let conn = control.unchecked_transaction()?;
+    let current = effective_supabase_config(&conn)?;
+    anyhow::ensure!(
+        canonical_project(current.url.as_deref().unwrap_or_default())?
+            == canonical_project(expected_project)?,
+        "登录期间项目已切换"
+    );
+    if let Some(scope) = expected_scope {
+        anyhow::ensure!(active_scope(&conn)? == scope, "刷新期间账号已切换");
+    }
+    Uuid::parse_str(session.user_id.as_deref().unwrap_or_default())
+        .context("会话缺少有效用户 ID")?;
+    anyhow::ensure!(!session.access_token.trim().is_empty(), "会话缺少访问令牌");
+    set_config_value(
+        &conn,
+        "supabase.session",
+        Some(&serde_json::to_string(&session)?),
+    )?;
     set_config_value(&conn, "supabase.user_id", session.user_id.as_deref())?;
     set_config_value(&conn, "supabase.email", session.email.as_deref())?;
     set_config_value(&conn, "onboarding.completed", Some("1"))?;
+    conn.commit()?;
     Ok(session)
 }
 
 pub fn get_supabase_session(app: &AppHandle) -> Result<Option<SupabaseSession>> {
-    let conn = open_db(app)?;
+    let conn = open_control(app)?;
     let value = get_config_value(&conn, "supabase.session")?;
     value
         .map(|raw| serde_json::from_str::<SupabaseSession>(&raw).map_err(Into::into))
         .transpose()
 }
 
-pub fn clear_supabase_session(app: &AppHandle) -> Result<()> {
-    let conn = open_db(app)?;
+pub fn clear_supabase_session(app: &AppHandle, expected_scope: &str) -> Result<()> {
+    let control = open_control(app)?;
+    let conn = control.unchecked_transaction()?;
+    anyhow::ensure!(active_scope(&conn)? == expected_scope, "退出期间账号已切换");
     set_config_value(&conn, "supabase.session", None)?;
     set_config_value(&conn, "supabase.user_id", None)?;
     set_config_value(&conn, "supabase.email", None)?;
+    conn.commit()?;
     Ok(())
 }
 
 pub fn complete_onboarding(app: &AppHandle) -> Result<()> {
-    let conn = open_db(app)?;
+    let control = open_control(app)?;
+    let conn = control.unchecked_transaction()?;
     set_config_value(&conn, "onboarding.completed", Some("1"))?;
+    conn.commit()?;
     Ok(())
 }
 
-pub fn mark_sync_attempt(app: &AppHandle, success: bool, error: Option<&str>) -> Result<SyncSnapshot> {
+pub fn mark_sync_attempt(
+    app: &AppHandle,
+    success: bool,
+    error: Option<&str>,
+) -> Result<SyncSnapshot> {
     let conn = open_db(app)?;
     let now = now_iso();
     if success {
@@ -755,6 +722,7 @@ pub fn mark_sync_attempt(app: &AppHandle, success: bool, error: Option<&str>) ->
     )?;
 
     Ok(SyncSnapshot {
+        conflict_copies: 0,
         mode: current_sync_mode(&conn)?,
         pending_jobs: pending_jobs as usize,
         last_synced_at: get_config_value(&conn, "sync.last_synced_at")?,
@@ -766,10 +734,15 @@ pub fn mark_sync_attempt(app: &AppHandle, success: bool, error: Option<&str>) ->
 
 pub fn import_legacy_workspace(
     app: &AppHandle,
+    expected_scope: &str,
     mut read_path: impl FnMut(&str) -> Result<String>,
 ) -> Result<LegacyImportResult> {
     let legacy_root = legacy_workspace_dir(app)?;
-    let conn = open_db(app)?;
+    let connection = open_scoped_db(app, expected_scope)?;
+    let conn = rusqlite::Transaction::new_unchecked(
+        &connection,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
 
     let mut imported_documents = 0usize;
     let mut skipped_entries = 0usize;
@@ -784,7 +757,10 @@ pub fn import_legacy_workspace(
             continue;
         }
 
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
         if file_name.starts_with('.') {
             continue;
         }
@@ -797,7 +773,10 @@ pub fn import_legacy_workspace(
                     continue;
                 }
             }
-        } else if file_name.ends_with(".md") || file_name.ends_with(".json") || file_name.ends_with(".txt") {
+        } else if file_name.ends_with(".md")
+            || file_name.ends_with(".json")
+            || file_name.ends_with(".txt")
+        {
             match std::fs::read_to_string(path) {
                 Ok(content) => content,
                 Err(_) => {
@@ -823,6 +802,7 @@ pub fn import_legacy_workspace(
             .replace(".enc", "");
 
         let content_json = if trimmed.starts_with('{') {
+            validate_content(trimmed)?;
             trimmed.to_string()
         } else {
             serde_json::json!({
@@ -866,6 +846,7 @@ pub fn import_legacy_workspace(
         imported_paths.push(path.to_string_lossy().to_string());
     }
 
+    conn.commit()?;
     Ok(LegacyImportResult {
         imported_documents,
         skipped_entries,
@@ -873,275 +854,138 @@ pub fn import_legacy_workspace(
     })
 }
 
-pub fn simple_search(app: &AppHandle, query: &str) -> Result<Vec<DocumentSummary>> {
-    let conn = open_db(app)?;
-    let like = format!("%{}%", query.trim());
-    let mut stmt = conn.prepare(
-        "
-        SELECT id, title, status, is_favorite, is_template, created_at, updated_at, archived_at, deleted_at
-        , node_kind, parent_id, depth
-        FROM documents
-        WHERE title LIKE ?1 OR plain_text LIKE ?1
-        ORDER BY updated_at DESC
-        ",
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchMatch {
+    pub line: usize,
+    pub column: usize,
+    pub context: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub document_id: String,
+    pub title: String,
+    pub matches: Vec<SearchMatch>,
+}
+
+/// Explicit copy only: guest/unknown-owner data never silently joins a signed-in outbox.
+pub fn recover_local_documents(
+    app: &AppHandle,
+    expected_scope: &str,
+    source: &str,
+) -> Result<usize> {
+    anyhow::ensure!(matches!(source, "guest" | "legacy"), "恢复来源无效");
+    anyhow::ensure!(
+        source != "guest" || expected_scope != "guest",
+        "已在访客空间"
+    );
+    let destination = open_scoped_db(app, expected_scope)?;
+    let conn = rusqlite::Transaction::new_unchecked(
+        &destination,
+        rusqlite::TransactionBehavior::Immediate,
     )?;
-    let results = stmt
-        .query_map(params![like], |row| {
-            Ok(DocumentSummary {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                status: row.get(2)?,
-                is_favorite: row.get::<_, i64>(3)? != 0,
-                is_template: row.get::<_, i64>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                archived_at: row.get(7)?,
-                deleted_at: row.get(8)?,
-                node_kind: row.get(9)?,
-                parent_id: row.get(10)?,
-                depth: row.get(11)?,
-                tags: Vec::new(),
-            })
+    let marker = format!("recovery.imported.{source}");
+    anyhow::ensure!(
+        get_config_value(&conn, &marker)?.is_none(),
+        "此来源已导入当前空间"
+    );
+    let path = local_data_dir(app)?.join(if source == "guest" {
+        "space-guest.db"
+    } else {
+        "legacy-unassigned.db"
+    });
+    anyhow::ensure!(path.exists(), "恢复数据库不存在");
+    let original = Connection::open(path)?;
+    init_schema(&original)?;
+    validate_tree(&original)?;
+    let mut stmt =
+        original.prepare("SELECT id FROM documents WHERE is_purged=0 ORDER BY depth,id")?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let remap: std::collections::HashMap<_, _> = ids
+        .iter()
+        .map(|id| (id.clone(), Uuid::new_v4().to_string()))
+        .collect();
+    for id in &ids {
+        let mut d = sync_record(&original, id)?;
+        if validate_content(&d.content_json).is_err() {
+            // Preserve malformed legacy bytes as visible text rather than silently dropping them.
+            d.plain_text = d.content_json.clone();
+            d.content_json=serde_json::json!({"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":d.plain_text}]}]}).to_string();
+            d.title.push_str("（旧正文恢复）");
+        }
+        d.id = remap[id].clone();
+        d.revision = 0;
+        d.created_at = now_iso();
+        d.updated_at = now_iso();
+        d.parent_id = d.parent_id.and_then(|p| remap.get(&p).cloned());
+        ensure_document_count_capacity(&conn, usize::from(d.node_kind == "document"))?;
+        ensure_total_storage_capacity(
+            &conn,
+            estimate_document_storage_bytes(&d.title, &d.content_json, &d.plain_text) as isize,
+        )?;
+        write_remote(&conn, &d)?;
+        queue_job(&conn, "document", &d.id, "recover", "")?;
+    }
+    validate_tree(&conn)?;
+    set_config_value(&conn, &marker, Some("1"))?;
+    conn.commit()?;
+    Ok(ids.len())
+}
+
+pub fn simple_search(app: &AppHandle, query: &str) -> Result<Vec<SearchResult>> {
+    let conn = open_db(app)?;
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut stmt=conn.prepare("SELECT id,title,plain_text FROM documents WHERE is_purged=0 AND status='active'
+        AND node_kind='document' AND (instr(lower(title),lower(?1))>0 OR instr(lower(plain_text),lower(?1))>0)
+        ORDER BY updated_at DESC LIMIT 100")?;
+    let rows = stmt
+        .query_map(params![query.trim()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(results)
-}
-
-pub fn export_sync_documents(app: &AppHandle) -> Result<SyncExport> {
-    let conn = open_db(app)?;
-    let mut stmt = conn.prepare("SELECT id FROM sync_queue WHERE processed_at IS NULL ORDER BY id ASC")?;
-    let pending_job_ids = stmt
-        .query_map([], |row| row.get::<_, i64>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    let mut changed_stmt = conn.prepare(
-        "
-        SELECT DISTINCT entity_id
-        FROM sync_queue
-        WHERE processed_at IS NULL AND entity_type = 'document'
-        ORDER BY entity_id ASC
-        ",
-    )?;
-    let changed_document_ids = changed_stmt
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    let mut documents = Vec::with_capacity(changed_document_ids.len());
-    for document_id in changed_document_ids {
-        if let Some(detail) = get_document(app, &document_id)? {
-            documents.push(SyncDocumentRecord {
-                id: detail.id,
-                title: detail.title,
-                node_kind: detail.node_kind,
-                parent_id: detail.parent_id,
-                depth: detail.depth,
-                content_json: detail.content_json,
-                plain_text: detail.plain_text,
-                status: detail.status,
-                is_favorite: detail.is_favorite,
-                is_template: detail.is_template,
-                created_at: detail.created_at,
-                updated_at: detail.updated_at,
-                archived_at: detail.archived_at,
-                deleted_at: detail.deleted_at,
-                tags: detail.tags,
+    let mut results = vec![];
+    for (id, title, text) in rows {
+        let mut matches = vec![];
+        for (line_index, line) in text.lines().enumerate() {
+            let lowered = line.to_lowercase();
+            if let Some(index) = lowered.find(&needle) {
+                let column = lowered[..index].chars().count();
+                matches.push(SearchMatch {
+                    line: line_index + 1,
+                    column,
+                    context: line
+                        .chars()
+                        .skip(column.saturating_sub(60))
+                        .take(240)
+                        .collect(),
+                });
+                if matches.len() == 3 {
+                    break;
+                }
+            }
+        }
+        if matches.is_empty() {
+            matches.push(SearchMatch {
+                line: 0,
+                column: 0,
+                context: title.clone(),
             });
         }
+        results.push(SearchResult {
+            document_id: id,
+            title,
+            matches,
+        });
     }
-
-    Ok(SyncExport {
-        pending_job_ids,
-        documents,
-        last_pulled_at: get_config_value(&conn, "sync.last_pulled_at")?,
-    })
-}
-
-pub fn export_document_structures(app: &AppHandle) -> Result<Vec<SyncDocumentStructure>> {
-    let conn = open_db(app)?;
-    let mut stmt = conn.prepare(
-        "
-        SELECT id, node_kind, parent_id, depth
-        FROM documents
-        WHERE node_kind = 'folder' OR parent_id IS NOT NULL OR depth > 0
-        ORDER BY depth ASC, id ASC
-        ",
-    )?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok(SyncDocumentStructure {
-            id: row.get(0)?,
-            node_kind: row.get(1)?,
-            parent_id: row.get(2)?,
-            depth: row.get(3)?,
-        })
-    })?;
-
-    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
-}
-
-pub fn apply_remote_documents(app: &AppHandle, documents: Vec<SyncDocumentRecord>) -> Result<usize> {
-    let conn = open_db(app)?;
-    let mut applied = 0usize;
-
-    for document in documents {
-        let existing: Option<(String, Option<String>, i64, String)> = conn
-            .query_row(
-                "SELECT node_kind, parent_id, depth, updated_at FROM documents WHERE id = ?1",
-                params![document.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .optional()?;
-
-        let structure_changed = existing
-            .as_ref()
-            .map(|(node_kind, parent_id, depth, _)| {
-                node_kind != &document.node_kind
-                    || parent_id.as_deref() != document.parent_id.as_deref()
-                    || *depth != document.depth
-            })
-            .unwrap_or(false);
-
-        let should_apply = match existing {
-            Some((_, _, _, ref local_updated_at)) => structure_changed || document.updated_at > *local_updated_at,
-            None => true,
-        };
-
-        if !should_apply {
-            continue;
-        }
-
-        let remote_is_newer = existing
-            .as_ref()
-            .map(|(_, _, _, local_updated_at)| document.updated_at > *local_updated_at)
-            .unwrap_or(true);
-
-        if structure_changed && !remote_is_newer {
-            conn.execute(
-                "
-                UPDATE documents
-                SET node_kind = ?2, parent_id = ?3, depth = ?4
-                WHERE id = ?1
-                ",
-                params![document.id, document.node_kind, document.parent_id, document.depth],
-            )?;
-            applied += 1;
-            continue;
-        }
-
-        if document.node_kind == "document" {
-            ensure_document_content_size(&document.content_json)?;
-            let current_count = current_document_count(&conn)?;
-            if existing.is_none() && current_count + 1 > MAX_DOCUMENT_COUNT {
-                return Err(anyhow::anyhow!("已达到 Hosted 模式文档数量上限（{}）", MAX_DOCUMENT_COUNT));
-            }
-
-            let old_size = conn
-                .query_row(
-                    "SELECT title, content_json, plain_text FROM documents WHERE id = ?1",
-                    params![document.id],
-                    |row| {
-                        Ok(estimate_document_storage_bytes(
-                            &row.get::<_, String>(0)?,
-                            &row.get::<_, String>(1)?,
-                            &row.get::<_, String>(2)?,
-                        ))
-                    },
-                )
-                .optional()?
-                .unwrap_or(0);
-            let new_size =
-                estimate_document_storage_bytes(&document.title, &document.content_json, &document.plain_text);
-            ensure_total_storage_capacity(&conn, new_size as isize - old_size as isize)?;
-        }
-
-        conn.execute(
-            "
-            INSERT INTO documents (
-                id, title, node_kind, parent_id, depth, content_json, plain_text, status, is_favorite, is_template, created_at, updated_at, archived_at, deleted_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-            ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
-                node_kind = excluded.node_kind,
-                parent_id = excluded.parent_id,
-                depth = excluded.depth,
-                content_json = excluded.content_json,
-                plain_text = excluded.plain_text,
-                status = excluded.status,
-                is_favorite = excluded.is_favorite,
-                is_template = excluded.is_template,
-                created_at = excluded.created_at,
-                updated_at = excluded.updated_at,
-                archived_at = excluded.archived_at,
-                deleted_at = excluded.deleted_at
-            ",
-            params![
-                document.id,
-                document.title,
-                document.node_kind,
-                document.parent_id,
-                document.depth,
-                document.content_json,
-                document.plain_text,
-                document.status,
-                if document.is_favorite { 1 } else { 0 },
-                if document.is_template { 1 } else { 0 },
-                document.created_at,
-                document.updated_at,
-                document.archived_at,
-                document.deleted_at,
-            ],
-        )?;
-        replace_document_tags(&conn, &document.id, &document.tags)?;
-        applied += 1;
-    }
-
-    Ok(applied)
-}
-
-pub fn finalize_sync_jobs(
-    app: &AppHandle,
-    processed_job_ids: &[i64],
-    success: bool,
-    error: Option<&str>,
-    pulled_cursor: Option<&str>,
-) -> Result<SyncSnapshot> {
-    let conn = open_db(app)?;
-    let now = now_iso();
-
-    if success {
-        for job_id in processed_job_ids {
-            conn.execute(
-                "UPDATE sync_queue SET processed_at = ?2, error_message = NULL WHERE id = ?1",
-                params![job_id, now],
-            )?;
-        }
-        set_config_value(&conn, "sync.last_synced_at", Some(&now))?;
-        set_config_value(&conn, "sync.last_pulled_at", pulled_cursor.or(Some(&now)))?;
-        set_config_value(&conn, "sync.last_error", None)?;
-    } else {
-        for job_id in processed_job_ids {
-            conn.execute(
-                "UPDATE sync_queue SET error_message = ?2 WHERE id = ?1",
-                params![job_id, error.unwrap_or("同步失败")],
-            )?;
-        }
-        set_config_value(&conn, "sync.last_error", error)?;
-    }
-
-    let pending_jobs: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sync_queue WHERE processed_at IS NULL",
-        [],
-        |row| row.get(0),
-    )?;
-
-    Ok(SyncSnapshot {
-        mode: current_sync_mode(&conn)?,
-        pending_jobs: pending_jobs as usize,
-        last_synced_at: get_config_value(&conn, "sync.last_synced_at")?,
-        last_pulled_at: get_config_value(&conn, "sync.last_pulled_at")?,
-        auto_sync_enabled: get_auto_sync(&conn)?,
-        last_error: get_config_value(&conn, "sync.last_error")?,
-    })
+    Ok(results)
 }
 
 fn append_history(conn: &Connection, document_id: &str, snapshot: &str) -> Result<()> {
@@ -1152,6 +996,22 @@ fn append_history(conn: &Connection, document_id: &str, snapshot: &str) -> Resul
         ",
         params![Uuid::new_v4().to_string(), document_id, snapshot, now_iso()],
     )?;
+    prune_history(conn)?;
+    Ok(())
+}
+
+fn prune_history(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM document_history WHERE rowid IN (SELECT rowid FROM
+        (SELECT rowid, ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY created_at DESC,rowid DESC) AS position FROM document_history)
+        WHERE position>20)", [])?;
+    conn.execute(
+        "DELETE FROM document_history WHERE created_at < ?1",
+        params![(Utc::now() - chrono::Duration::days(30)).to_rfc3339()],
+    )?;
+    // A global byte cap prevents a large collection from multiplying the per-document allowance.
+    conn.execute("DELETE FROM document_history WHERE rowid IN (SELECT rowid FROM
+        (SELECT rowid, SUM(length(CAST(snapshot AS BLOB))) OVER (ORDER BY created_at DESC, rowid DESC) AS bytes
+        FROM document_history) WHERE bytes > 5242880)", [])?;
     Ok(())
 }
 
@@ -1177,22 +1037,29 @@ fn replace_document_tags(conn: &Connection, document_id: &str, tags: &[String]) 
         params![document_id],
     )?;
 
-    for tag_name in tags.iter().map(|tag| tag.trim()).filter(|tag| !tag.is_empty()) {
+    for tag_name in tags
+        .iter()
+        .map(|tag| tag.trim())
+        .filter(|tag| !tag.is_empty())
+    {
         let tag_id = conn
             .query_row(
                 "SELECT id FROM tags WHERE name = ?1",
                 params![tag_name],
                 |row| row.get::<_, String>(0),
             )
-            .optional()?
-            .unwrap_or_else(|| {
+            .optional()?;
+        let tag_id = match tag_id {
+            Some(id) => id,
+            None => {
                 let id = Uuid::new_v4().to_string();
-                let _ = conn.execute(
+                conn.execute(
                     "INSERT INTO tags (id, name) VALUES (?1, ?2)",
                     params![id, tag_name],
-                );
+                )?;
                 id
-            });
+            }
+        };
 
         conn.execute(
             "
@@ -1205,14 +1072,28 @@ fn replace_document_tags(conn: &Connection, document_id: &str, tags: &[String]) 
     Ok(())
 }
 
-fn queue_job(conn: &Connection, entity_type: &str, entity_id: &str, action: &str, payload: &str) -> Result<()> {
+fn queue_job(
+    conn: &Connection,
+    entity_type: &str,
+    entity_id: &str,
+    action: &str,
+    _payload: &str,
+) -> Result<()> {
     conn.execute(
-        "
-        INSERT INTO sync_queue (entity_type, entity_id, action, payload, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5)
-        ",
-        params![entity_type, entity_id, action, payload, now_iso()],
+        "DELETE FROM sync_queue WHERE entity_type = ?1 AND entity_id = ?2",
+        params![entity_type, entity_id],
     )?;
+    conn.execute("INSERT INTO sync_queue (entity_type, entity_id, action, payload, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![entity_type, entity_id, action, Uuid::new_v4().to_string(), now_iso()])?;
+    Ok(())
+}
+
+fn validate_content(content: &str) -> Result<()> {
+    let value: serde_json::Value = serde_json::from_str(content).context("正文不是有效 JSON")?;
+    anyhow::ensure!(
+        value.is_object() && value["type"] == "doc" && value["content"].is_array(),
+        "正文必须是 Tiptap doc 对象"
+    );
     Ok(())
 }
 
@@ -1222,46 +1103,55 @@ fn estimate_document_storage_bytes(title: &str, content_json: &str, plain_text: 
 
 fn current_document_count(conn: &Connection) -> Result<usize> {
     Ok(conn.query_row(
-        "SELECT COUNT(*) FROM documents WHERE node_kind = 'document'",
+        "SELECT COUNT(*) FROM documents WHERE node_kind = 'document' AND is_purged = 0",
         [],
         |row| row.get::<_, i64>(0),
     )? as usize)
 }
 
 fn current_total_storage_bytes(conn: &Connection) -> Result<usize> {
-    Ok(conn.query_row(
-        "
-        SELECT COALESCE(SUM(
-            length(CAST(title AS BLOB)) +
-            length(CAST(content_json AS BLOB)) +
-            length(CAST(plain_text AS BLOB))
-        ), 0)
-        FROM documents
-        WHERE node_kind = 'document'
-        ",
-        [],
-        |row| row.get::<_, i64>(0),
-    )? as usize)
+    Ok(conn.query_row("SELECT
+        (SELECT COALESCE(SUM(length(CAST(title AS BLOB)) + length(CAST(content_json AS BLOB)) + length(CAST(plain_text AS BLOB))),0) FROM documents) +
+        (SELECT COALESCE(SUM(length(CAST(snapshot AS BLOB))),0) FROM document_history) +
+        (SELECT COALESCE(SUM(length(CAST(name AS BLOB))),0) FROM tags) +
+        (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM sync_queue) +
+        (SELECT COALESCE(SUM(size_bytes),0) FROM attachments)", [], |r| r.get::<_, i64>(0))? as usize)
 }
 
 fn current_write_ops_last_5_minutes(conn: &Connection) -> Result<usize> {
     let cutoff = (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
     Ok(conn.query_row(
         "
-        SELECT COUNT(*) FROM sync_queue
-        WHERE created_at >= ?1 AND entity_type = 'document'
+        SELECT COUNT(*) FROM write_events WHERE created_at >= ?1
         ",
         params![cutoff],
         |row| row.get::<_, i64>(0),
     )? as usize)
 }
 
+fn hosted_limits_apply(conn: &Connection) -> Result<bool> {
+    Ok(current_service_profile(conn)? == "hosted"
+        && get_config_value(conn, "supabase.session")?.is_some())
+}
+
 fn current_usage_limits(conn: &Connection) -> Result<UsageLimits> {
     Ok(UsageLimits {
         max_document_content_bytes: MAX_DOCUMENT_CONTENT_BYTES,
-        max_total_storage_bytes: MAX_TOTAL_STORAGE_BYTES,
-        max_document_count: MAX_DOCUMENT_COUNT,
-        max_write_ops_per_5_minutes: MAX_WRITE_OPS_PER_5_MINUTES,
+        max_total_storage_bytes: if hosted_limits_apply(conn)? {
+            MAX_TOTAL_STORAGE_BYTES
+        } else {
+            0
+        },
+        max_document_count: if hosted_limits_apply(conn)? {
+            MAX_DOCUMENT_COUNT
+        } else {
+            0
+        },
+        max_write_ops_per_5_minutes: if hosted_limits_apply(conn)? {
+            MAX_WRITE_OPS_PER_5_MINUTES
+        } else {
+            0
+        },
         attachments_enabled: HOSTED_ATTACHMENTS_ENABLED,
         current_document_count: current_document_count(conn)?,
         current_total_storage_bytes: current_total_storage_bytes(conn)?,
@@ -1282,7 +1172,7 @@ fn ensure_document_content_size(content_json: &str) -> Result<()> {
 
 fn ensure_document_count_capacity(conn: &Connection, additional_documents: usize) -> Result<()> {
     let current = current_document_count(conn)?;
-    if current + additional_documents > MAX_DOCUMENT_COUNT {
+    if hosted_limits_apply(conn)? && current + additional_documents > MAX_DOCUMENT_COUNT {
         return Err(anyhow::anyhow!(
             "已达到 Hosted 模式文档数量上限（{}）",
             MAX_DOCUMENT_COUNT
@@ -1294,7 +1184,7 @@ fn ensure_document_count_capacity(conn: &Connection, additional_documents: usize
 fn ensure_total_storage_capacity(conn: &Connection, delta_bytes: isize) -> Result<()> {
     let current = current_total_storage_bytes(conn)? as isize;
     let projected = (current + delta_bytes).max(0) as usize;
-    if projected > MAX_TOTAL_STORAGE_BYTES {
+    if hosted_limits_apply(conn)? && projected > MAX_TOTAL_STORAGE_BYTES {
         return Err(anyhow::anyhow!(
             "已达到 Hosted 模式总存储上限（{} MB）",
             MAX_TOTAL_STORAGE_BYTES / 1024 / 1024
@@ -1304,21 +1194,24 @@ fn ensure_total_storage_capacity(conn: &Connection, delta_bytes: isize) -> Resul
 }
 
 fn ensure_write_budget(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "DELETE FROM write_events WHERE created_at < ?1",
+        params![(Utc::now() - chrono::Duration::minutes(5)).to_rfc3339()],
+    )?;
     let current = current_write_ops_last_5_minutes(conn)?;
-    if current >= MAX_WRITE_OPS_PER_5_MINUTES {
+    if hosted_limits_apply(conn)? && current >= MAX_WRITE_OPS_PER_5_MINUTES {
         return Err(anyhow::anyhow!(
             "最近 5 分钟写入次数已达到上限（{}）",
             MAX_WRITE_OPS_PER_5_MINUTES
         ));
     }
+    conn.execute("INSERT INTO write_events VALUES (?1)", params![now_iso()])?;
     Ok(())
 }
 
 fn has_supabase_override(conn: &Connection) -> Result<bool> {
-    Ok(
-        get_config_value(conn, "supabase.url")?.is_some()
-            || get_config_value(conn, "supabase.anon_key")?.is_some(),
-    )
+    Ok(get_config_value(conn, "supabase.url")?.is_some()
+        || get_config_value(conn, "supabase.anon_key")?.is_some())
 }
 
 fn current_service_profile(conn: &Connection) -> Result<String> {
@@ -1378,7 +1271,9 @@ fn resolve_parent_depth(
             return Err(anyhow::anyhow!("节点不能包含自身"));
         }
 
+        let mut visited = std::collections::HashSet::new();
         while let Some(ancestor_id) = current_parent {
+            anyhow::ensure!(visited.insert(ancestor_id.clone()), "现有目录包含循环");
             if ancestor_id == moving_id {
                 return Err(anyhow::anyhow!("检测到循环包含，移动已拒绝"));
             }
@@ -1413,9 +1308,10 @@ fn cascade_child_depths(conn: &Connection, parent_id: &str, parent_depth: i64) -
             return Err(anyhow::anyhow!("节点最大深度为 7"));
         }
         conn.execute(
-            "UPDATE documents SET depth = ?2 WHERE id = ?1",
-            params![child_id, child_depth],
+            "UPDATE documents SET depth = ?2, updated_at = ?3 WHERE id = ?1",
+            params![child_id, child_depth, now_iso()],
         )?;
+        queue_job(conn, "document", &child_id, "move", "")?;
         cascade_child_depths(conn, &child_id, child_depth)?;
     }
 
@@ -1423,6 +1319,7 @@ fn cascade_child_depths(conn: &Connection, parent_id: &str, parent_depth: i64) -
 }
 
 fn apply_status_to_subtree(conn: &Connection, id: &str, status: &str, now: &str) -> Result<()> {
+    anyhow::ensure!(get_document_from_conn(conn, id)?.is_some(), "文档不存在");
     let (archived_at, deleted_at) = match status {
         "archived" => (Some(now.to_string()), None),
         "trashed" => (None, Some(now.to_string())),
@@ -1438,6 +1335,7 @@ fn apply_status_to_subtree(conn: &Connection, id: &str, status: &str, now: &str)
         params![id, status, archived_at, deleted_at, now],
     )?;
 
+    queue_job(conn, "document", id, "status", "")?;
     let mut stmt = conn.prepare("SELECT id FROM documents WHERE parent_id = ?1")?;
     let child_ids = stmt
         .query_map(params![id], |row| row.get::<_, String>(0))?
@@ -1474,10 +1372,30 @@ fn get_auto_sync(conn: &Connection) -> Result<bool> {
         .unwrap_or(true))
 }
 
+fn config_table(conn: &Connection, key: &str) -> &'static str {
+    let global = key.starts_with("supabase.") || key.starts_with("onboarding.");
+    let attached = conn
+        .prepare("PRAGMA database_list")
+        .and_then(|mut s| {
+            s.query_map([], |r| r.get::<_, String>(1))
+                .and_then(|rows| rows.collect::<std::result::Result<Vec<_>, _>>())
+        })
+        .map(|names| names.iter().any(|n| n == "control"))
+        .unwrap_or(false);
+    if global && attached {
+        "control.app_config"
+    } else {
+        "app_config"
+    }
+}
+
 fn get_config_value(conn: &Connection, key: &str) -> Result<Option<String>> {
     Ok(conn
         .query_row(
-            "SELECT value FROM app_config WHERE key = ?1",
+            &format!(
+                "SELECT value FROM {} WHERE key = ?1",
+                config_table(conn, key)
+            ),
             params![key],
             |row| row.get(0),
         )
@@ -1487,15 +1405,18 @@ fn get_config_value(conn: &Connection, key: &str) -> Result<Option<String>> {
 fn set_config_value(conn: &Connection, key: &str, value: Option<&str>) -> Result<()> {
     if let Some(value) = value {
         conn.execute(
-            "
-            INSERT INTO app_config (key, value)
-            VALUES (?1, ?2)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            ",
+            &format!(
+                "INSERT INTO {} (key, value) VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                config_table(conn, key)
+            ),
             params![key, value],
         )?;
     } else {
-        conn.execute("DELETE FROM app_config WHERE key = ?1", params![key])?;
+        conn.execute(
+            &format!("DELETE FROM {} WHERE key = ?1", config_table(conn, key)),
+            params![key],
+        )?;
     }
     Ok(())
 }
@@ -1503,3 +1424,23 @@ fn set_config_value(conn: &Connection, key: &str, value: Option<&str>) -> Result
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
+
+#[path = "db/accounts.rs"]
+mod accounts;
+pub use accounts::open_db;
+use accounts::{active_scope, canonical_project, open_control, open_scoped_db};
+
+#[path = "db/documents.rs"]
+mod documents;
+pub use documents::{
+    create_document, move_document, permanently_delete_document, save_document,
+    set_document_status, toggle_favorite,
+};
+
+#[path = "db/sync.rs"]
+mod sync;
+pub use sync::{
+    apply_remote_documents, export_document_structures, export_sync_documents, finalize_sync_jobs,
+    ApplyRemoteResult,
+};
+use sync::{sync_record, validate_tree, write_remote};

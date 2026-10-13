@@ -48,6 +48,15 @@ jobs:
       - name: Run lint
         run: npm run lint
 
+      - name: Frontend behavior tests
+        run: npm test
+
+      - name: Native domain regressions
+        run: cargo test -j 2 --locked --manifest-path tests/native-core/Cargo.toml
+
+      - name: Supabase protocol regressions
+        run: python3 scripts/test-supabase-protocol.py
+
       - name: Check Rust
         run: cargo check --manifest-path src-tauri/Cargo.toml
 

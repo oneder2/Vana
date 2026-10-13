@@ -1,14 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod android_share;
 mod commands;
 mod crypto;
 mod db;
+mod export_file;
 mod keychain;
 mod storage;
 mod typst_export;
-mod export_file;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
-mod android_share;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +26,8 @@ pub fn run() {
             commands::move_document_command,
             commands::set_document_status_command,
             commands::toggle_favorite_command,
+            commands::permanently_delete_document_command,
+            commands::recover_local_documents_command,
             commands::list_tags_command,
             commands::upsert_tag_command,
             commands::get_supabase_config_command,

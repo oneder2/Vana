@@ -16,7 +16,9 @@
     "tauri:build:android": "node scripts/run-tauri.mjs android build --target aarch64",
     "tauri:build:windows": "node scripts/run-tauri.mjs build --target x86_64-pc-windows-msvc",
     "tauri:build:android:full": "node scripts/run-tauri.mjs android build",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:native": "cargo test -j 2 --locked --manifest-path tests/native-core/Cargo.toml",
+    "test:sync": "python3 scripts/test-supabase-protocol.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.1",

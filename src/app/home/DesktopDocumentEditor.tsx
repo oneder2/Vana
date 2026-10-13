@@ -129,8 +129,10 @@ export function DesktopDocumentEditor({
       <div className="min-h-0 flex-1 overflow-hidden p-0 md:p-3">
         {currentDocument && (
           <Editor
-            key={currentDocument.id}
+            key={`${currentDocument.account_scope}:${currentDocument.id}`}
             filePath={currentDocument.id}
+            accountScope={currentDocument.account_scope}
+            contentGeneration={currentDocument.content_generation}
             initialContent={content}
             tags={documentTags}
             mobile={false}

@@ -4,7 +4,7 @@ import { DocumentDraftStore, type DraftEvent } from '../src/lib/documentDrafts';
 import type { DocumentRecord, SaveDocumentInput } from '../src/lib/api';
 
 function input(id: string, text = id, tags = [id]): SaveDocumentInput {
-  return { id, title: text, content_json: JSON.stringify({ type: 'doc', content: [] }), plain_text: text, tags };
+  return { content_generation: 0, account_scope: 'guest', id, title: text, content_json: JSON.stringify({ type: 'doc', content: [] }), plain_text: text, tags };
 }
 function record(value: SaveDocumentInput): DocumentRecord {
   return { ...value, node_kind: 'document', parent_id: null, depth: 0, status: 'active',
@@ -58,7 +58,7 @@ test('failed saves retain drafts and reject navigation flush until a successful 
   await assert.rejects(store.flushAll(), /disk full/);
   assert.equal(store.get('a')?.plain_text, 'keep me');
   assert.equal(store.isDirty('a'), true);
-  assert.deepEqual(errors, [{ type: 'error', id: 'a', message: 'disk full' }]);
+  assert.deepEqual(errors, [{ type: 'error', account_scope: 'guest', id: 'a', message: 'disk full' }]);
   fails = false;
   await store.flushAll();
   assert.equal(store.hasPending(), false);
@@ -72,4 +72,17 @@ test('unsubscribing a mounted editor does not cancel a save', async () => {
   unsubscribe();
   await store.flushAll();
   assert.deepEqual(writes, ['a']);
+});
+
+
+test('identical document IDs in separate account spaces have independent drafts', async () => {
+  const writes: SaveDocumentInput[] = [];
+  const store = new DocumentDraftStore(async value => { writes.push(value); return record(value); }, 60_000);
+  store.queue({ ...input('same', 'A'), account_scope: 'account-A' });
+  store.queue({ ...input('same', 'B'), account_scope: 'account-B' });
+  assert.equal(store.get('same', 'account-A')?.plain_text, 'A');
+  await store.flush('same', 'account-B');
+  assert.equal(store.isDirty('same', 'account-A'), true);
+  await store.flushAll();
+  assert.deepEqual(writes.map(x => [x.account_scope, x.plain_text]), [['account-B', 'B'], ['account-A', 'A']]);
 });

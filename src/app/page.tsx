@@ -36,6 +36,7 @@ import {
   listTags,
   moveDocument,
   saveDocument,
+  permanentlyDeleteDocument,
   setDocumentStatus,
   toggleFavorite,
   type AppState,
@@ -394,6 +395,7 @@ export default function HomePage() {
         setSyncFeedback('idle');
         const snapshot = await runSupabaseSync();
         await refresh(preferredId ?? selectedId);
+        if (snapshot.conflict_copies) toast.info(`检测到同步冲突，已保留 ${snapshot.conflict_copies} 个目录树副本。`);
         setAppState((current) => (current ? { ...current, sync: snapshot } : current));
         setSyncFeedback('success');
         window.setTimeout(() => setSyncFeedback('idle'), 1800);
@@ -573,6 +575,8 @@ export default function HomePage() {
       setDocumentTags(nextTagList);
       documentDrafts.queue({
         id: currentDocument.id,
+        account_scope: currentDocument.account_scope,
+        content_generation: currentDocument.content_generation,
         title,
         content_json: JSON.stringify(nextContent),
         plain_text: extractPlainText(nextContent),
@@ -800,7 +804,7 @@ export default function HomePage() {
         { id: 'rename', label: '重命名', icon: FileText },
         { id: 'move', label: '移动到分组', icon: FolderOpen },
         { id: 'toggleFavorite', label: document.is_favorite ? '取消收藏' : '加入收藏', icon: Heart },
-        ...(document.status !== 'trashed' ? [{ id: 'trash', label: '移至回收站', icon: Trash2 }] : [{ id: 'restore', label: '从回收站恢复', icon: RefreshCw }]),
+        ...(document.status !== 'trashed' ? [{ id: 'trash', label: '移至回收站', icon: Trash2 }] : [{ id: 'restore', label: '从回收站恢复', icon: RefreshCw }, { id: 'purge', label: '永久删除', icon: Trash2 }]),
       ];
 
       setSidebarMenu({
@@ -822,13 +826,19 @@ export default function HomePage() {
             void handleToggleFavorite(document);
           } else if (action === 'trash') {
             void handleMoveDocument(document.id, 'trashed');
+          } else if (action === 'purge') {
+            if (window.confirm(`永久删除“${document.title}”及其子节点？正文和历史将不可恢复。`)) {
+              void permanentlyDeleteDocument(document.id).then(async () => {
+                toast.success('已永久删除'); await refresh(); await triggerAutoSync('purge', false);
+              }).catch(error => toast.error(String(error)));
+            }
           } else if (action === 'restore') {
             void handleMoveDocument(document.id, 'active');
           }
         },
       });
     },
-    [handleCreateDocument, handleCreateFolder, handleMoveDocument, handleToggleFavorite]
+    [handleCreateDocument, handleCreateFolder, handleMoveDocument, handleToggleFavorite, refresh, triggerAutoSync, toast]
   );
 
   const openExplorerMenu = useCallback(
@@ -1655,10 +1665,8 @@ export default function HomePage() {
         onCancel={() => setRenameTarget(null)}
         onConfirm={async (value) => {
           if (!renameTarget) return;
-          const detail =
-            currentDocument?.id === renameTarget.id
-              ? currentDocument
-              : await getDocument(renameTarget.id);
+          await documentDrafts.flush(renameTarget.id, renameTarget.account_scope);
+          const detail = await getDocument(renameTarget.id);
           if (!detail) {
             toast.error('目标节点不存在');
             setRenameTarget(null);
@@ -1666,6 +1674,8 @@ export default function HomePage() {
           }
           const updated = await saveDocument({
             id: detail.id,
+            account_scope: detail.account_scope,
+            content_generation: detail.content_generation,
             title: value,
             content_json: detail.content_json,
             plain_text: detail.plain_text,

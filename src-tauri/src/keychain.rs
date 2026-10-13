@@ -1,6 +1,6 @@
 // Vana - 密钥管理模块
 // 负责生成、存储和检索主加密密钥
-// 密钥存储在系统 Keychain/Keystore 中，确保安全性
+// 旧文件迁移密钥保存在应用 JSON 文件中；tauri-plugin-store 不是系统 Keychain/Keystore。
 
 use anyhow::{Context, Result};
 use rand::RngCore;
@@ -21,7 +21,7 @@ const MASTER_KEY_STORE_KEY: &str = "master_encryption_key";
 /// # 返回
 /// 返回 32 字节的主加密密钥
 pub async fn get_or_create_master_key(app: &AppHandle) -> Result<Vec<u8>> {
-    // 使用 tauri-plugin-store 访问安全存储
+    // 使用 tauri-plugin-store 访问应用文件存储
     use tauri_plugin_store::StoreBuilder;
     use std::path::PathBuf;
     

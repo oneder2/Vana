@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { clearQueue } from '@/lib/syncQueue';
 import { documentDrafts } from '@/lib/documentDrafts';
 import { getCurrentTauriWindow } from '@/lib/tauriWindow';
 import { useToast } from './ToastProvider';
@@ -6,10 +7,12 @@ import { useToast } from './ToastProvider';
 export function DraftLifecycle() {
   const toast = useToast();
   useEffect(() => documentDrafts.subscribe((event) => {
+    if (event.type === 'saved' && event.record.id !== event.id) toast.info('编辑期间发生同步变化，已将草稿保存为同步冲突副本。');
     if (event.type === 'error') toast.error(`保存失败：${event.message}`);
   }), [toast]);
 
   useEffect(() => {
+    clearQueue();
     const flush = () => { void documentDrafts.flushAll().catch(() => {}); };
     const visibility = () => { if (document.visibilityState === 'hidden') flush(); };
     const unload = (event: BeforeUnloadEvent) => {

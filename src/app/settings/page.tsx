@@ -23,6 +23,7 @@ import {
   getSupabaseSession,
   importLegacyWorkspace,
   saveSupabaseConfig,
+  recoverLocalDocuments,
   type AppState,
 } from '@/lib/api';
 import {
@@ -189,12 +190,20 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRecover = async (source: 'guest' | 'legacy') => {
+    if (!window.confirm('将来源文档复制到当前账号空间？登录后这些副本会进入同步队列。原数据会保留。')) return;
+    setBusy(true);
+    try { const count = await recoverLocalDocuments(source); toast.success(`已导入 ${count} 个节点`); await refresh(); }
+    catch (error) { toast.error(String(error)); } finally { setBusy(false); }
+  };
+
   const handleSyncNow = async () => {
     setBusy(true);
     try {
       const snapshot = await runSupabaseSync();
       await refresh();
       toast.success(`同步完成，剩余待同步 ${snapshot.pending_jobs}`);
+      if (snapshot.conflict_copies) toast.info(`已保留 ${snapshot.conflict_copies} 个同步冲突目录树副本。`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       await refresh();
@@ -361,6 +370,10 @@ export default function SettingsPage() {
                 <Database size={14} className="mr-1 inline" />
                 导入旧工作区
               </button>
+              {appState?.account_mode !== 'guest' && <button disabled={busy} onClick={() => void handleRecover('guest')}
+                className="border px-4 py-3 text-sm" style={{ borderColor: border }}>复制访客文档到当前账号</button>}
+              {appState?.recovery_available && <button disabled={busy} onClick={() => void handleRecover('legacy')}
+                className="border px-4 py-3 text-sm" style={{ borderColor: border }}>恢复归属不明的旧数据库</button>}
             </div>
           </section>
 
@@ -372,15 +385,15 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2 text-sm opacity-80">
               <div>单文档大小：{appState ? formatBytes(appState.limits.max_document_content_bytes) : '512 KB'}</div>
-              <div>总存储上限：{appState ? formatBytes(appState.limits.max_total_storage_bytes) : '25 MB'}</div>
-              <div>文档数量上限：{appState?.limits.max_document_count ?? 5000}</div>
-              <div>5 分钟写入上限：{appState?.limits.max_write_ops_per_5_minutes ?? 300}</div>
+              <div>总存储上限：{appState ? (appState.limits.max_total_storage_bytes ? formatBytes(appState.limits.max_total_storage_bytes) : '当前模式不设总量上限') : '25 MB'}</div>
+              <div>文档数量上限：{appState?.limits.max_document_count || '当前模式不设数量上限'}</div>
+              <div>5 分钟写入上限：{appState?.limits.max_write_ops_per_5_minutes || '当前模式不设频率上限'}</div>
               <div>当前文档数：{appState?.limits.current_document_count ?? 0}</div>
               <div>
                 当前存储：{appState ? formatBytes(appState.limits.current_total_storage_bytes) : '0 B'}
               </div>
               <div>最近 5 分钟写入：{appState?.limits.current_write_ops_last_5_minutes ?? 0}</div>
-              <div>附件上传：{appState?.limits.attachments_enabled ? '已开启' : '公共服务暂未开放'}</div>
+              <div>附件上传：{appState?.limits.attachments_enabled ? '已开启' : '暂未实现'}</div>
             </div>
           </section>
 

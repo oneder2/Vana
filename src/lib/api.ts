@@ -51,6 +51,7 @@ export interface LibraryMetadata {
 }
 
 export interface DocumentSummary {
+  account_scope: string;
   id: string;
   title: string;
   node_kind: 'document' | 'folder';
@@ -67,6 +68,7 @@ export interface DocumentSummary {
 }
 
 export interface DocumentRecord extends DocumentSummary {
+  content_generation: number;
   content_json: string;
   plain_text: string;
 }
@@ -93,6 +95,7 @@ export interface SupabaseSession {
 }
 
 export interface SyncSnapshot {
+  conflict_copies?: number;
   mode: string;
   pending_jobs: number;
   last_synced_at: string | null;
@@ -113,6 +116,9 @@ export interface UsageLimits {
 }
 
 export interface AppState {
+  account_user_id: string | null;
+  account_scope: string;
+  recovery_available: boolean;
   account_mode: string;
   onboarding_completed: boolean;
   service_profile: string;
@@ -125,6 +131,8 @@ export interface AppState {
 }
 
 export interface SaveDocumentInput {
+  content_generation: number;
+  account_scope: string;
   id: string;
   title: string;
   content_json: string;
@@ -146,6 +154,9 @@ export interface LegacyImportResult {
 }
 
 export interface SyncDocumentRecord {
+  mutation_id: string;
+  revision: number;
+  is_purged: boolean;
   id: string;
   title: string;
   node_kind: 'document' | 'folder';
@@ -171,6 +182,7 @@ export interface SyncDocumentStructure {
 }
 
 export interface SyncExport {
+  account_scope: string;
   pending_job_ids: number[];
   documents: SyncDocumentRecord[];
   last_pulled_at: string | null;
@@ -212,7 +224,8 @@ export interface SearchMatch {
 }
 
 export interface SearchResult {
-  file_path: string;
+  document_id: string;
+  title: string;
   matches: SearchMatch[];
 }
 
@@ -228,9 +241,21 @@ export async function getWorkspacePath(): Promise<string> {
   return invoke<string>('get_workspace_path');
 }
 
+let accountScope: string | undefined;
+export function getCachedAccountScope() { return accountScope; }
 export async function getAppState(): Promise<AppState> {
-  return invoke<AppState>('get_app_state_command');
+  const state = await invoke<AppState>('get_app_state_command');
+  accountScope = state.account_scope;
+  return state;
 }
+async function expectedScope() {
+  return accountScope ?? (await getAppState()).account_scope;
+}
+async function flushBeforeAccountChange() {
+  const { documentDrafts } = await import('./documentDrafts');
+  await documentDrafts.flushAll();
+}
+
 
 export async function listDocuments(status?: 'active' | 'archived' | 'trashed'): Promise<DocumentSummary[]> {
   return invoke<DocumentSummary[]>('list_documents_command', { status: status ?? null });
@@ -248,7 +273,7 @@ export async function createDocument(
     typeof titleOrOptions === 'string'
       ? { title: titleOrOptions, isTemplate }
       : (titleOrOptions ?? {});
-  return invoke<DocumentRecord>('create_document_command', {
+  return invoke<DocumentRecord>('create_document_command', { expectedScope: await expectedScope(),
     title: options.title ?? null,
     isTemplate: options.isTemplate ?? false,
     nodeKind: options.nodeKind ?? 'document',
@@ -257,7 +282,7 @@ export async function createDocument(
 }
 
 export async function moveDocument(id: string, parentId?: string | null): Promise<DocumentRecord> {
-  return invoke<DocumentRecord>('move_document_command', {
+  return invoke<DocumentRecord>('move_document_command', { expectedScope: await expectedScope(),
     id,
     parentId: parentId ?? null,
   });
@@ -268,11 +293,21 @@ export async function saveDocument(input: SaveDocumentInput): Promise<DocumentRe
 }
 
 export async function setDocumentStatus(id: string, status: 'active' | 'archived' | 'trashed'): Promise<DocumentRecord> {
-  return invoke<DocumentRecord>('set_document_status_command', { id, status });
+  return invoke<DocumentRecord>('set_document_status_command', { expectedScope: await expectedScope(), id, status });
 }
 
 export async function toggleFavorite(id: string, favorite: boolean): Promise<DocumentRecord> {
-  return invoke<DocumentRecord>('toggle_favorite_command', { id, favorite });
+  return invoke<DocumentRecord>('toggle_favorite_command', { expectedScope: await expectedScope(), id, favorite });
+}
+
+export async function recoverLocalDocuments(source: 'guest' | 'legacy'): Promise<number> {
+  await flushBeforeAccountChange();
+  return invoke<number>('recover_local_documents_command', { source, expectedScope: await expectedScope() });
+}
+
+export async function permanentlyDeleteDocument(id: string): Promise<void> {
+  await flushBeforeAccountChange();
+  return invoke<void>('permanently_delete_document_command', { id, expectedScope: await expectedScope() });
 }
 
 export async function listTags(): Promise<TagRecord[]> {
@@ -280,7 +315,7 @@ export async function listTags(): Promise<TagRecord[]> {
 }
 
 export async function upsertTag(name: string, color?: string | null, id?: string): Promise<TagRecord> {
-  return invoke<TagRecord>('upsert_tag_command', {
+  return invoke<TagRecord>('upsert_tag_command', { expectedScope: await expectedScope(),
     id: id ?? null,
     name,
     color: color ?? null,
@@ -292,19 +327,32 @@ export async function getSupabaseConfig(): Promise<SupabaseConfig> {
 }
 
 export async function saveSupabaseConfig(config: SupabaseConfig): Promise<SupabaseConfig> {
-  return invoke<SupabaseConfig>('save_supabase_config_command', { config });
+  await flushBeforeAccountChange();
+  const result = await invoke<SupabaseConfig>('save_supabase_config_command', { config });
+  accountScope = undefined;
+  await getAppState();
+  return result;
 }
 
 export async function getSupabaseSession(): Promise<SupabaseSession | null> {
   return invoke<SupabaseSession | null>('get_supabase_session_command');
 }
 
-export async function saveSupabaseSession(session: SupabaseSession): Promise<SupabaseSession> {
-  return invoke<SupabaseSession>('save_supabase_session_command', { session });
+export async function saveSupabaseSession(session: SupabaseSession, context?: { url: string; scope?: string }): Promise<SupabaseSession> {
+  await flushBeforeAccountChange();
+  const result = await invoke<SupabaseSession>('save_supabase_session_command', { session, expectedProject: context?.url ?? (await getSupabaseConfig()).url, expectedScope: context?.scope ?? null });
+  accountScope = undefined;
+  await getAppState();
+  return result;
 }
 
-export async function clearSupabaseSession(): Promise<void> {
-  return invoke<void>('clear_supabase_session_command');
+export async function clearSupabaseSession(scope?: string): Promise<void> {
+  const targetScope = scope ?? await expectedScope();
+  await flushBeforeAccountChange();
+  const result = await invoke<void>('clear_supabase_session_command', { expectedScope: targetScope });
+  accountScope = undefined;
+  await getAppState();
+  return result;
 }
 
 export async function completeOnboarding(): Promise<void> {
@@ -319,7 +367,7 @@ export async function markSyncAttempt(success: boolean, error?: string | null): 
 }
 
 export async function exportSyncDocuments(): Promise<SyncExport> {
-  return invoke<SyncExport>('export_sync_documents_command');
+  return invoke<SyncExport>('export_sync_documents_command', { expectedScope: await expectedScope() });
 }
 
 export async function exportDocumentStructures(): Promise<SyncDocumentStructure[]> {
@@ -334,18 +382,24 @@ export async function exportDocumentStructures(): Promise<SyncDocumentStructure[
   }
 }
 
-export async function applyRemoteDocuments(documents: SyncDocumentRecord[]): Promise<number> {
-  return invoke<number>('apply_remote_documents_command', { documents });
+export async function applyRemoteDocuments(documents: SyncDocumentRecord[], scope: string): Promise<{ applied: number; conflict_copies: number }> {
+  return invoke<{ applied: number; conflict_copies: number }>('apply_remote_documents_command', { documents, expectedScope: scope });
 }
 
 export async function finalizeSyncJobs(
   processedJobIds: number[],
+  scope: string,
   success: boolean,
   error?: string | null,
-  pulledCursor?: string | null
+  pulledCursor?: string | null,
+  acknowledgements: SyncDocumentRecord[] = [],
+  conflictCopies = 0
 ): Promise<SyncSnapshot> {
   return invoke<SyncSnapshot>('finalize_sync_jobs_command', {
     processedJobIds,
+    acknowledgements,
+    conflictCopies,
+    expectedScope: scope,
     success,
     error: error ?? null,
     pulledCursor: pulledCursor ?? null,
@@ -353,7 +407,7 @@ export async function finalizeSyncJobs(
 }
 
 export async function importLegacyWorkspace(): Promise<LegacyImportResult> {
-  return invoke<LegacyImportResult>('import_legacy_workspace_command');
+  return invoke<LegacyImportResult>('import_legacy_workspace_command', { expectedScope: await expectedScope() });
 }
 
 export async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
@@ -361,7 +415,7 @@ export async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
 }
 
 export async function writeWorkspaceConfig(config: WorkspaceConfig): Promise<void> {
-  return invoke<void>('write_workspace_config', { config });
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function readLibraryMetadata(): Promise<LibraryMetadata> {
@@ -369,7 +423,7 @@ export async function readLibraryMetadata(): Promise<LibraryMetadata> {
 }
 
 export async function writeLibraryMetadata(metadata: LibraryMetadata): Promise<void> {
-  return invoke<void>('write_library_metadata', { metadata });
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function readFile(path: string): Promise<string> {
@@ -436,34 +490,27 @@ export async function searchFiles(workspacePath: string, query: string): Promise
 }
 
 export async function getCommitHistory(_path: string, _limit?: number): Promise<CommitInfo[]> {
-  return [];
+  throw new Error('Git 产品同步已停用；此接口不可用。');
 }
 
 export async function initRepository(_path: string): Promise<void> {
-  return;
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function commitChanges(_path: string, _message: string): Promise<string> {
-  return 'git-mainline-removed';
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function getRepositoryStatus(_path: string): Promise<GitStatus> {
-  return { has_changes: false, is_clean: true };
+  throw new Error('Git 产品同步已停用；此接口不可用。');
 }
 
 export async function gitGc(_path: string): Promise<void> {
-  return;
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function verifyRepository(_path: string): Promise<RepositoryVerification> {
-  return {
-    is_initialized: false,
-    has_commits: false,
-    commit_count: 0,
-    latest_commit_sha: null,
-    latest_commit_message: null,
-    latest_commit_time: null,
-  };
+  throw new Error('Git 产品同步已停用；此接口不可用。');
 }
 
 export async function deleteFileWithGitSync(
@@ -522,7 +569,7 @@ export async function getRemoteUrl(_path: string, _name = 'origin'): Promise<str
 }
 
 export async function removeRemote(_path: string, _name = 'origin'): Promise<void> {
-  return;
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function validateRemoteConnection(_path: string, _remoteName: string, _patToken?: string): Promise<RemoteConnectionStatus> {
@@ -534,11 +581,11 @@ export async function validateRemoteConnection(_path: string, _remoteName: strin
 }
 
 export async function fetchFromRemote(_path: string, _remoteName: string, _patToken?: string): Promise<void> {
-  return;
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function pushToRemote(_path: string, _remoteName: string, _branchName: string, _patToken?: string): Promise<void> {
-  return;
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }
 
 export async function syncWithRemote(_path: string, _remoteName: string, _branchName: string, _patToken?: string): Promise<SyncResult> {
@@ -571,9 +618,9 @@ export async function resolveConflict(path: string, items: ConflictResolutionIte
 }
 
 export async function getCurrentBranch(_path: string): Promise<string> {
-  return 'supabase-mainline';
+  throw new Error('Git 产品同步已停用；此接口不可用。');
 }
 
 export async function switchToBranch(_path: string, _branch: string): Promise<void> {
-  return;
+  throw new Error('此旧版接口已停用，请使用文档及 Supabase 接口。');
 }

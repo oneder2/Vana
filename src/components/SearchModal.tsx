@@ -1,15 +1,16 @@
 /**
  * Vana - 文档搜索组件
- * 提供全文搜索功能，支持在加密文档中搜索关键词
+ * 搜索当前账号空间中的有效文档内容
  */
 
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from './ThemeProvider';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
 import { Search, X, FileText, Loader } from 'lucide-react';
 import { searchFiles, type SearchResult } from '@/lib/api';
+import { splitLiteralMatches } from '@/lib/searchHighlight';
 import { useToast } from './ToastProvider';
 
 interface SearchModalProps {
@@ -28,7 +29,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null);
+  const searchIntent = useRef(0);
   const [selectedIndex, setSelectedIndex] = useState(-1); // 当前选中的结果索引
   const inputRef = React.useRef<HTMLInputElement>(null);
   const resultsRef = React.useRef<HTMLDivElement>(null);
@@ -42,34 +43,20 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
     }
   }, [isOpen]);
 
-  // 防抖搜索
   useEffect(() => {
-    if (!isOpen || !query.trim()) {
-      setResults([]);
-      setSelectedIndex(-1);
-      return;
-    }
-
-    // 清除之前的定时器
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-    }
-
-    // 设置新的定时器
-    const timer = setTimeout(() => {
-      performSearch(query.trim());
-      setSelectedIndex(-1); // 搜索完成后重置选中索引
-    }, 300); // 300ms 防抖
-
-    setDebounceTimer(timer);
-
-    // 清理函数
-    return () => {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-      }
-    };
-  }, [query, isOpen]);
+    const intent = ++searchIntent.current;
+    if (!isOpen || !query.trim()) { setResults([]); setSelectedIndex(-1); setIsSearching(false); return; }
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const hits = await searchFiles(workspacePath, query.trim());
+        if (searchIntent.current === intent) { setResults(hits); setSelectedIndex(-1); }
+      } catch (error) {
+        if (searchIntent.current === intent) { toast.error(`搜索失败: ${String(error)}`); setResults([]); }
+      } finally { if (searchIntent.current === intent) setIsSearching(false); }
+    }, 300);
+    return () => { clearTimeout(timer); ++searchIntent.current; };
+  }, [query, isOpen, workspacePath, toast]);
 
   // 阻止背景滚动
   useEffect(() => {
@@ -84,31 +71,8 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
     };
   }, [isOpen]);
 
-  // 执行搜索
-  const performSearch = useCallback(async (searchQuery: string) => {
-    if (!workspacePath || !searchQuery) {
-      return;
-    }
-
-    setIsSearching(true);
-    try {
-      const searchResults = await searchFiles(workspacePath, searchQuery);
-      setResults(searchResults);
-    } catch (error) {
-      console.error('搜索失败:', error);
-      toast.error(`搜索失败: ${error instanceof Error ? error.message : String(error)}`);
-      setResults([]);
-    } finally {
-      setIsSearching(false);
-    }
-  }, [workspacePath, toast]);
-
-  // 处理文件选择
   const handleFileSelect = (result: SearchResult) => {
-    const derivedId =
-      result.matches[0]?.context.replace(/^匹配文档：/, '').trim() ||
-      result.file_path;
-    onFileSelect?.(derivedId);
+    onFileSelect?.(result.document_id);
     onClose();
   };
 
@@ -150,7 +114,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
 
   // 高亮匹配文本
   const highlightMatch = (text: string, query: string): React.ReactNode => {
-    const parts = text.split(new RegExp(`(${query})`, 'gi'));
+    const parts = splitLiteralMatches(text, query);
     return (
       <>
         {parts.map((part, index) => 
@@ -280,7 +244,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
                   className="text-sm font-medium flex-1"
                   style={{ color: getThemeAccentColor(theme) }}
                 >
-                  {result.file_path.replace(/\.enc$/, '')}
+                  {result.title}
                 </span>
                 <span className="text-xs opacity-60">
                   {result.matches.length} 个匹配

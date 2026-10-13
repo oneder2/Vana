@@ -15,6 +15,8 @@ export type EditorLayout = 'center' | 'left' | 'right';
 
 interface EditorProps {
   filePath?: string;
+  accountScope: string;
+  contentGeneration: number;
   initialContent?: JSONContent;
   onContentChange?: (content: JSONContent) => void;
   workspacePath?: string;
@@ -35,6 +37,8 @@ function extractPlainText(node?: JSONContent): string {
 
 export function Editor({
   filePath,
+  accountScope,
+  contentGeneration,
   initialContent,
   onContentChange,
   onEditorReady,
@@ -46,11 +50,12 @@ export function Editor({
 }: EditorProps) {
   const { theme } = useTheme();
   const latestTags = useRef(tags);
+  const acceptedGeneration = useRef((filePath ? documentDrafts.get(filePath, accountScope)?.content_generation : undefined) ?? contentGeneration);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const extensions = useMemo(() => getTiptapExtensions(theme.id), [theme.id]);
   const restoredContent = useMemo(() => {
-    const draft = filePath ? documentDrafts.get(filePath) : undefined;
+    const draft = filePath ? documentDrafts.get(filePath, accountScope) : undefined;
     return draft ? JSON.parse(draft.content_json) as JSONContent : undefined;
   }, [filePath]);
 
@@ -76,10 +81,12 @@ export function Editor({
       if (!filePath) return;
       documentDrafts.queue({
         id: filePath,
+        account_scope: accountScope,
+        content_generation: acceptedGeneration.current,
         title,
         content_json: JSON.stringify(content),
         plain_text: extractPlainText(content),
-        tags: documentDrafts.get(filePath)?.tags ?? [...latestTags.current],
+        tags: documentDrafts.get(filePath, accountScope)?.tags ?? [...latestTags.current],
       });
     },
     editorProps: {
@@ -96,16 +103,17 @@ export function Editor({
 
   useEffect(() => {
     if (!editor || !initialContent) return;
-    if (filePath && documentDrafts.isDirty(filePath)) return;
+    if (filePath && documentDrafts.isDirty(filePath, accountScope)) return;
+    acceptedGeneration.current = contentGeneration;
     const current = JSON.stringify(editor.getJSON());
     const next = JSON.stringify(initialContent);
     if (current !== next) {
       editor.commands.setContent(initialContent, { emitUpdate: false });
     }
-  }, [editor, initialContent, filePath]);
+  }, [editor, initialContent, filePath, contentGeneration]);
 
   useEffect(() => documentDrafts.subscribe((event) => {
-    if (event.id !== filePath) return;
+    if (event.id !== filePath || event.account_scope !== accountScope) return;
     if (event.type === 'saved' && event.clean) {
       onUnsavedChangesChange?.(false);
       onPersisted?.();

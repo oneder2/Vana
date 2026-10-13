@@ -1,7 +1,7 @@
 use crate::db::{
-    self, AppState, DocumentRecord, DocumentSummary, LegacyImportResult, SaveDocumentInput,
-    SupabaseConfig, SupabaseSession, SyncDocumentRecord, SyncDocumentStructure, SyncExport,
-    SyncSnapshot, TagRecord,
+    self, AppState, ApplyRemoteResult, DocumentRecord, DocumentSummary, LegacyImportResult,
+    SaveDocumentInput, SupabaseConfig, SupabaseSession, SyncDocumentRecord, SyncDocumentStructure,
+    SyncExport, SyncSnapshot, TagRecord,
 };
 use crate::keychain::{export_master_key, import_master_key};
 use crate::storage::{
@@ -40,18 +40,7 @@ pub struct LibraryMetadata {
     pub entries: std::collections::HashMap<String, LibraryEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchMatch {
-    pub line: usize,
-    pub column: usize,
-    pub context: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResult {
-    pub file_path: String,
-    pub matches: Vec<SearchMatch>,
-}
+use crate::db::SearchResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncConflictFile {
@@ -109,7 +98,10 @@ pub fn get_app_state_command(app: AppHandle) -> Result<AppState, String> {
 }
 
 #[tauri::command]
-pub fn list_documents_command(app: AppHandle, status: Option<String>) -> Result<Vec<DocumentSummary>, String> {
+pub fn list_documents_command(
+    app: AppHandle,
+    status: Option<String>,
+) -> Result<Vec<DocumentSummary>, String> {
     db::list_documents(&app, status).map_err(|error| error.to_string())
 }
 
@@ -121,45 +113,78 @@ pub fn get_document_command(app: AppHandle, id: String) -> Result<Option<Documen
 #[tauri::command]
 pub fn create_document_command(
     app: AppHandle,
+    expected_scope: String,
     title: Option<String>,
     is_template: Option<bool>,
     node_kind: Option<String>,
     parent_id: Option<String>,
 ) -> Result<DocumentRecord, String> {
-    db::create_document(&app, title, is_template.unwrap_or(false), node_kind, parent_id)
-        .map_err(|error| error.to_string())
+    db::create_document(
+        &app,
+        &expected_scope,
+        title,
+        is_template.unwrap_or(false),
+        node_kind,
+        parent_id,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn save_document_command(app: AppHandle, input: SaveDocumentInput) -> Result<DocumentRecord, String> {
+pub fn save_document_command(
+    app: AppHandle,
+    input: SaveDocumentInput,
+) -> Result<DocumentRecord, String> {
     db::save_document(&app, input).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn move_document_command(
     app: AppHandle,
+    expected_scope: String,
     id: String,
     parent_id: Option<String>,
 ) -> Result<DocumentRecord, String> {
-    db::move_document(&app, &id, parent_id.as_deref()).map_err(|error| error.to_string())
+    db::move_document(&app, &expected_scope, &id, parent_id.as_deref())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn set_document_status_command(
     app: AppHandle,
+    expected_scope: String,
     id: String,
     status: String,
 ) -> Result<DocumentRecord, String> {
-    db::set_document_status(&app, &id, &status).map_err(|error| error.to_string())
+    db::set_document_status(&app, &expected_scope, &id, &status).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn toggle_favorite_command(
     app: AppHandle,
+    expected_scope: String,
     id: String,
     favorite: bool,
 ) -> Result<DocumentRecord, String> {
-    db::toggle_favorite(&app, &id, favorite).map_err(|error| error.to_string())
+    db::toggle_favorite(&app, &expected_scope, &id, favorite).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn recover_local_documents_command(
+    app: AppHandle,
+    expected_scope: String,
+    source: String,
+) -> Result<usize, String> {
+    db::recover_local_documents(&app, &expected_scope, &source).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn permanently_delete_document_command(
+    app: AppHandle,
+    expected_scope: String,
+    id: String,
+) -> Result<(), String> {
+    db::permanently_delete_document(&app, &expected_scope, &id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -170,11 +195,12 @@ pub fn list_tags_command(app: AppHandle) -> Result<Vec<TagRecord>, String> {
 #[tauri::command]
 pub fn upsert_tag_command(
     app: AppHandle,
+    expected_scope: String,
     id: Option<String>,
     name: String,
     color: Option<String>,
 ) -> Result<TagRecord, String> {
-    db::upsert_tag(&app, id, &name, color).map_err(|error| error.to_string())
+    db::upsert_tag(&app, &expected_scope, id, &name, color).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -199,13 +225,19 @@ pub fn get_supabase_session_command(app: AppHandle) -> Result<Option<SupabaseSes
 pub fn save_supabase_session_command(
     app: AppHandle,
     session: SupabaseSession,
+    expected_project: String,
+    expected_scope: Option<String>,
 ) -> Result<SupabaseSession, String> {
-    db::save_supabase_session(&app, session).map_err(|error| error.to_string())
+    db::save_supabase_session(&app, session, &expected_project, expected_scope.as_deref())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn clear_supabase_session_command(app: AppHandle) -> Result<(), String> {
-    db::clear_supabase_session(&app).map_err(|error| error.to_string())
+pub fn clear_supabase_session_command(
+    app: AppHandle,
+    expected_scope: String,
+) -> Result<(), String> {
+    db::clear_supabase_session(&app, &expected_scope).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -223,49 +255,69 @@ pub fn mark_sync_attempt_command(
 }
 
 #[tauri::command]
-pub fn export_sync_documents_command(app: AppHandle) -> Result<SyncExport, String> {
-    db::export_sync_documents(&app).map_err(|error| error.to_string())
+pub fn export_sync_documents_command(
+    app: AppHandle,
+    expected_scope: String,
+) -> Result<SyncExport, String> {
+    db::export_sync_documents(&app, &expected_scope).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn export_document_structures_command(app: AppHandle) -> Result<Vec<SyncDocumentStructure>, String> {
+pub fn export_document_structures_command(
+    app: AppHandle,
+) -> Result<Vec<SyncDocumentStructure>, String> {
     db::export_document_structures(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn export_documents_structured_command(app: AppHandle) -> Result<Vec<SyncDocumentStructure>, String> {
+pub fn export_documents_structured_command(
+    app: AppHandle,
+) -> Result<Vec<SyncDocumentStructure>, String> {
     db::export_document_structures(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn apply_remote_documents_command(
     app: AppHandle,
+    expected_scope: String,
     documents: Vec<SyncDocumentRecord>,
-) -> Result<usize, String> {
-    db::apply_remote_documents(&app, documents).map_err(|error| error.to_string())
+) -> Result<ApplyRemoteResult, String> {
+    db::apply_remote_documents(&app, &expected_scope, documents).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn finalize_sync_jobs_command(
     app: AppHandle,
+    expected_scope: String,
     processed_job_ids: Vec<i64>,
+    acknowledgements: Vec<SyncDocumentRecord>,
+    conflict_copies: usize,
     success: bool,
     error: Option<String>,
     pulled_cursor: Option<String>,
 ) -> Result<SyncSnapshot, String> {
     db::finalize_sync_jobs(
         &app,
+        &expected_scope,
         &processed_job_ids,
+        &acknowledgements,
         success,
         error.as_deref(),
         pulled_cursor.as_deref(),
     )
-        .map_err(|err| err.to_string())
+    .map(|mut snapshot| {
+        snapshot.conflict_copies = conflict_copies;
+        snapshot
+    })
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
-pub async fn import_legacy_workspace_command(app: AppHandle) -> Result<LegacyImportResult, String> {
-    db::import_legacy_workspace(&app, |path| {
+pub async fn import_legacy_workspace_command(
+    app: AppHandle,
+    expected_scope: String,
+) -> Result<LegacyImportResult, String> {
+    db::import_legacy_workspace(&app, &expected_scope, |path| {
         let runtime = tokio::runtime::Handle::current();
         runtime.block_on(read_encrypted_file(path, &app))
     })
@@ -282,7 +334,7 @@ pub fn read_workspace_config() -> Result<WorkspaceConfig, String> {
 
 #[tauri::command]
 pub fn write_workspace_config(_config: WorkspaceConfig) -> Result<(), String> {
-    Ok(())
+    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
 }
 
 #[tauri::command]
@@ -292,7 +344,7 @@ pub fn read_library_metadata() -> Result<LibraryMetadata, String> {
 
 #[tauri::command]
 pub fn write_library_metadata(_metadata: LibraryMetadata) -> Result<(), String> {
-    Ok(())
+    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
 }
 
 #[tauri::command]
@@ -311,11 +363,17 @@ pub async fn write_file(path: String, content: String, app: AppHandle) -> Result
 
 #[tauri::command]
 pub async fn list_directory_command(path: String) -> Result<Vec<FileInfo>, String> {
-    list_directory(&path).await.map_err(|error| error.to_string())
+    list_directory(&path)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn create_file_command(path: String, content: String, app: AppHandle) -> Result<(), String> {
+pub async fn create_file_command(
+    path: String,
+    content: String,
+    app: AppHandle,
+) -> Result<(), String> {
     create_file(&path, &content, &app)
         .await
         .map_err(|error| error.to_string())
@@ -323,7 +381,9 @@ pub async fn create_file_command(path: String, content: String, app: AppHandle) 
 
 #[tauri::command]
 pub async fn create_directory_command(path: String) -> Result<(), String> {
-    create_directory(&path).await.map_err(|error| error.to_string())
+    create_directory(&path)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -333,44 +393,48 @@ pub async fn delete_file_command(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn delete_directory_command(path: String) -> Result<(), String> {
-    delete_directory(&path).await.map_err(|error| error.to_string())
+    delete_directory(&path)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn rename_file_or_directory_command(old_path: String, new_path: String) -> Result<(), String> {
+pub async fn rename_file_or_directory_command(
+    old_path: String,
+    new_path: String,
+) -> Result<(), String> {
     rename_file_or_directory(&old_path, &new_path)
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn copy_file_or_directory_command(source_path: String, dest_path: String) -> Result<(), String> {
+pub async fn copy_file_or_directory_command(
+    source_path: String,
+    dest_path: String,
+) -> Result<(), String> {
     copy_file_or_directory(&source_path, &dest_path)
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn move_file_or_directory_command(source_path: String, dest_path: String) -> Result<(), String> {
+pub async fn move_file_or_directory_command(
+    source_path: String,
+    dest_path: String,
+) -> Result<(), String> {
     move_file_or_directory(&source_path, &dest_path)
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn search_files_command(app: AppHandle, _workspace_path: String, query: String) -> Result<Vec<SearchResult>, String> {
-    let docs = db::simple_search(&app, &query).map_err(|error| error.to_string())?;
-    Ok(docs
-        .into_iter()
-        .map(|doc| SearchResult {
-            file_path: doc.title,
-            matches: vec![SearchMatch {
-                line: 1,
-                column: 0,
-                context: format!("匹配文档：{}", doc.id),
-            }],
-        })
-        .collect())
+pub async fn search_files_command(
+    app: AppHandle,
+    _workspace_path: String,
+    query: String,
+) -> Result<Vec<SearchResult>, String> {
+    db::simple_search(&app, &query).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -417,12 +481,20 @@ pub async fn import_master_key_command(app: AppHandle, key_base64: String) -> Re
 }
 
 #[tauri::command]
-pub fn get_commit_history_command(_path: String, _limit: Option<usize>) -> Result<Vec<serde_json::Value>, String> {
-    Ok(Vec::new())
+pub fn get_commit_history_command(
+    _path: String,
+    _limit: Option<usize>,
+) -> Result<Vec<serde_json::Value>, String> {
+    Err("Git 提交历史接口已停用".to_string())
 }
 
 #[tauri::command]
-pub fn begin_sync(_path: String, _remote_name: String, _branch_name: String, _pat_token: Option<String>) -> Result<SyncResult, String> {
+pub fn begin_sync(
+    _path: String,
+    _remote_name: String,
+    _branch_name: String,
+    _pat_token: Option<String>,
+) -> Result<SyncResult, String> {
     Ok(SyncResult {
         success: false,
         message: "Git 同步已从主线移除，请在设置页配置 Supabase".to_string(),
@@ -441,30 +513,51 @@ pub fn continue_sync_command(_path: String, _branch_name: String) -> Result<Sync
 
 #[tauri::command]
 pub fn abort_sync_command(_path: String) -> Result<(), String> {
-    Ok(())
+    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
 }
 
 #[tauri::command]
-pub fn resolve_conflict_command(_path: String, _items: Vec<ConflictResolutionItem>) -> Result<(), String> {
-    Ok(())
+pub fn resolve_conflict_command(
+    _path: String,
+    _items: Vec<ConflictResolutionItem>,
+) -> Result<(), String> {
+    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
 }
 
 #[tauri::command]
-pub fn save_export_file(app: AppHandle, filename: String, content: Vec<u8>, file_type: String) -> Result<String, String> {
+pub fn save_export_file(
+    app: AppHandle,
+    filename: String,
+    content: Vec<u8>,
+    file_type: String,
+) -> Result<String, String> {
     save_export_bytes(&app, &filename, &content, &file_type)
 }
 
 #[tauri::command]
-pub fn share_export_file(app: AppHandle, path: String, file_type: String, title: String) -> Result<(), String> {
-    let path = crate::export_file::validate_share_path(&export_dir(&app)?, &PathBuf::from(path), &file_type)?;
+pub fn share_export_file(
+    app: AppHandle,
+    path: String,
+    file_type: String,
+    title: String,
+) -> Result<(), String> {
+    let path = crate::export_file::validate_share_path(
+        &export_dir(&app)?,
+        &PathBuf::from(path),
+        &file_type,
+    )?;
     share_export_path(&path.to_string_lossy(), &file_type, &title)
 }
 
 #[tauri::command]
-pub async fn export_pdf_with_typst(app: AppHandle, filename: String, typst_source: String) -> Result<String, String> {
+pub async fn export_pdf_with_typst(
+    app: AppHandle,
+    filename: String,
+    typst_source: String,
+) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let pdf_bytes = compile_typst_source_to_pdf(&typst_source)
-            .map_err(|error| error.to_string())?;
+        let pdf_bytes =
+            compile_typst_source_to_pdf(&typst_source).map_err(|error| error.to_string())?;
         save_export_bytes(&app, &filename, &pdf_bytes, "pdf")
     })
     .await
@@ -490,7 +583,12 @@ fn export_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("无法获取导出目录: {}", error))
 }
 
-fn save_export_bytes(app: &AppHandle, filename: &str, content: &[u8], file_type: &str) -> Result<String, String> {
+fn save_export_bytes(
+    app: &AppHandle,
+    filename: &str,
+    content: &[u8],
+    file_type: &str,
+) -> Result<String, String> {
     crate::export_file::save_bytes(&export_dir(app)?, filename, content, file_type)
         .map(|path| path.to_string_lossy().into_owned())
 }
