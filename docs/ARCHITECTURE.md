@@ -53,11 +53,11 @@ Hosted 数量/总量/频率限制只用于内置 Hosted 的已登录空间。访
 
 ## 安全边界
 
-当前 SQLite 正文、历史、Supabase 正文以及全局会话/refresh token 都是明文。本地 Unix 数据目录限制为 0700；Windows/Android 使用应用目录权限。不要称为端到端加密、SQLCipher 或系统凭据保险库。`tauri-plugin-store` 保存的旧文件迁移密钥是 JSON 文件中的 Base64，不是系统 Keychain/Keystore。旧 `.enc` 文件的 AES-GCM 与当前 SQLite 文档不是同一存储路径。
+当前 SQLite 正文、历史、空间备份和 Supabase 正文仍是明文。会话秘密通过 Rust Auth 保存到系统凭据库：Linux Secret Service、Windows Credential Manager、Android Keystore + no-backup 目录中的 AES-GCM 密文。SQLite 只保留账号摘要和随机凭据标识；前端获得短期 access token 用于现有文档传输，不获得 refresh token。旧 SQLite 会话在凭据库写入并回读成功后清除，凭据库不可用时认证明确失败。本地 Unix 数据目录限制为 0700；Windows/Android 使用应用目录权限。不要称为端到端加密、SQLCipher 或系统凭据保险库。`tauri-plugin-store` 保存的旧文件迁移密钥是 JSON 文件中的 Base64，不是系统 Keychain/Keystore。旧 `.enc` 文件的 AES-GCM 与当前 SQLite 文档不是同一存储路径。
 
 Auth `/user` 成功返回有效 UUID 后才允许保存导入会话；云端读权限由 RLS 限定到 `auth.uid()`，写 RPC 不接受客户端声明的 owner。服务端管理员仍可读取云端数据。Anon key 是公开配置，service_role key 不应进入客户端。生产连接应使用 HTTPS。原生导出文件名、扩展名、写入碰撞及分享目录边界受到校验。
 
-要抵御本机同一用户的恶意程序、XSS 或管理员，需要后续专门实施系统凭据库、CSP、数据库加密或端到端加密及密钥迁移，当前版本没有这些承诺。
+生产包已设置 CSP，限制脚本来源、对象和 frame；保留编辑器必需的内联样式及自托管 HTTPS 连接。正文保存、同步、历史恢复和备份验证支持的节点/属性/链接及结构上限，导出属性使用白名单。系统凭据库与 CSP 不等于数据库加密或端到端加密，也不能保证抵御同用户恶意程序或管理员。三平台真实认证和设备验证仍是发布条件。
 
 ## 验证
 
@@ -66,3 +66,11 @@ Auth `/user` 成功返回有效 UUID 后才允许保存导入会话；云端读�
 - `cargo check -j 2 --manifest-path src-tauri/Cargo.toml`
 - `python3 scripts/test-supabase-protocol.py`：独立 Docker PostgreSQL、实际迁移、RLS、原子回滚、分页及并发写入。Auth 由测试 stub 提供，不等于托管 Supabase 部署验证。
 - 浏览器验证真实 React/Tiptap，Tauri IPC 由受控 fixture 替代；不能据此声称原生 ACL 或真机分享已验证。
+
+## 修改记录、备份和冲突查看
+
+正文恢复的领域 API 位于 `db/history.rs`，在 IMMEDIATE 事务内同时比较预览正文和 `content_generation`，保留当前正文、增加代次并写入 outbox。恢复保留当前标题、标签和目录。前端草稿 store 对恢复操作执行串行化。
+
+`db/backup.rs` 以一致性快照导出白名单格式，隔离验证后复制导入新 ID；不带会话、revision 或 outbox。格式契约见 [备份格式](BACKUP_FORMAT.md)。
+
+`db/conflicts.rs` 保存本机关联并按需读取正文进行对照，列表只传摘要；已查看标记不删除正文。其他设备/旧版本的名称标记只用于发现，无法据此猜测原文关联。空间 schema v4 为已有 v3 数据库增补冲突表。
