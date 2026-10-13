@@ -222,6 +222,7 @@ jobs:
 
       - name: Import Windows certificate
         shell: pwsh
+        timeout-minutes: 3
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -256,8 +257,10 @@ jobs:
             # Trust only on the disposable runner so Authenticode verifies integrity.
             # This does not give end-user machines a trusted publisher certificate.
             Export-Certificate -Cert $signer[0] -FilePath "$env:RUNNER_TEMP\vana-signer.cer" | Out-Null
-            Import-Certificate -FilePath "$env:RUNNER_TEMP\vana-signer.cer" `
-              -CertStoreLocation Cert:\CurrentUser\Root -ErrorAction Stop | Out-Null
+            # CurrentUser\Root can show a confirmation dialog and hang CI.
+            # The hosted runner is an administrator; machine-store import has no UI.
+            & certutil.exe -f -addstore Root "$env:RUNNER_TEMP\vana-signer.cer" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Unable to trust the signer on the disposable runner" }
             Write-Host "Using a project self-signed certificate; public publisher trust is not provided"
           }
 
