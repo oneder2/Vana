@@ -27,9 +27,11 @@
 - 已通过：17 项实际后端源文件测试、14 项前端行为测试、Linux cargo check、typecheck、前端 build。
 - 已通过：独立 PostgreSQL 上实际核心迁移、RLS/账号边界、条件写入/幂等、原子回滚、固定分页和两个独立会话并发写入。
 - 浏览器：真实 React/Tiptap，模拟 IPC 的切换、标签、撤销隔离、导出通知、导航和关闭保存场景通过；原生 ACL/真机不能据此视为通过。
-- Android Arm64 Release/R8：52 个 Gradle 任务完成；实际 DEX 验证 JNI 方法与静态字段。完整 APK 编译验证进行中。无连接真机，真实系统分享的设备验证仍是发布验证范围。
+- Android Arm64 Release/R8：独立 R8 的 52 个 Gradle 任务完成，完整 `npm run tauri:build:android -- --apk true` 构建成功。Arm64 与 universal Release 的实际 DEX 均通过 JNI 类名、public static 方法签名及错误字段检查；最终 APK 的 DEX 与已验证的 universal Release DEX 完全一致。
+- APK：`dist/android/vana-0.7.0-android-release.apk`，70,906,562 字节，SHA-256 `9d90aa695a2793327f39b34a33bf51f7861e3bb9088199f7ef02a2a2e2ddeb09`。包内含 `lib/arm64-v8a/libvana.so`，版本 0.7.0、minSdk 24、targetSdk 36；实际 Manifest 的 FileProvider authority、禁止导出和 URI 临时授权，以及引用的 `exports/` 路径资源均已检查。签名验证通过，证书为 Android Debug，仅作本地验证产物，正式发布须使用发布密钥。
+- 无连接真机，安装运行和真实系统分享的设备验证仍是发布验证范围。
 - 服务端迁移尚未部署到真实 Supabase。新客户端需要 202610120001_revision_sync.sql；旧直接写入客户端应同步升级。
-- CI 已接入前端、原生领域及独立 PostgreSQL 协议测试。
+- CI 已接入前端、原生领域及独立 PostgreSQL 协议测试。`e821aa1` 对应运行 `38335742376` 的 Validate Project 已成功；记录时 Linux、Windows、Android Preview 构建仍在进行，未计为通过。
 
 ## 提交
 
@@ -39,5 +41,6 @@
 - `8abfd71`：账号空间、领域事务、revision RPC、固定分页、搜索、保留/永久删除及行为测试。
 - `cfd9b7c`：修正 Android SDK 安装及发布 JNI 检查。
 - `1e2de9f`：并发删除收敛、一致状态读取、实际 DEX 检查及容器正式服务 readiness。
+- `e821aa1`：当前架构、登录与迁移说明及修复验证文档。
 
 以上提交已推送 `origin/dev`。后续架构与使用文档随验证记录一同提交；不变更审查报告中的历史基线结论。
