@@ -254,10 +254,19 @@ jobs:
           fi
           test -f src-tauri/gen/android/app/build.gradle.kts
 
-      - name: Build Android debug APK
+      - name: Build Android Release preview APK
+        env:
+          VANA_ANDROID_KEYSTORE_PASSWORD: android
+          VANA_ANDROID_KEY_ALIAS: vana-preview
+          VANA_ANDROID_KEY_PASSWORD: android
         run: |
-          npx tauri android build --debug --target aarch64
+          export VANA_ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/vana-preview.jks"
+          keytool -genkeypair -keystore "$VANA_ANDROID_KEYSTORE_PATH" -storepass android -keypass android -alias vana-preview -keyalg RSA -keysize 2048 -validity 7 -dname "CN=Vana CI Preview"
+          npx tauri android build --target aarch64
           find src-tauri/gen/android -type f \( -name "*.apk" -o -name "*.aab" \) | head -20
+
+      - name: Verify minified Release JNI contract
+        run: python3 scripts/check-android-jni.py
 
       - name: Upload Android preview artifacts
         uses: actions/upload-artifact@v4
