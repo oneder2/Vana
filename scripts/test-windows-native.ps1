@@ -72,7 +72,9 @@ try {
   Set-PrivateValue $body $synthetic
   Click-Name '保存并进入阅读模式'
   Wait-For { Find-Name $synthetic } 'saved document body' | Out-Null
-  $exports = Join-Path $data 'exports'
+  # Production uses the Windows Documents known folder when available.
+  $documents = [Environment]::GetFolderPath('MyDocuments')
+  $exports = if ($documents) { Join-Path $documents 'vana' } else { Join-Path $data 'exports' }
   foreach ($format in @(@('Markdown', 'md'), @('DOCX', 'docx'), @('PDF', 'pdf'))) {
     Click-Name '文件'
     Click-Name "导出 $($format[0])"
