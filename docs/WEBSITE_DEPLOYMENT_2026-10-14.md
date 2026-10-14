@@ -4,9 +4,9 @@
 
 ## 生效配置
 
-- 部署源码：`/opt/vana-site/releases/web-20261014T173632Z-25d4a4b`。
+- 部署源码：`/opt/vana-site/releases/web-20261014T174242Z-566f673`。
 - 源码指针：`/opt/vana-site/current`。
-- 页面指针：`/var/www/vana/current` → `releases/site-v0.7.0-dc6d2a6825f96d03`。
+- 页面指针：`/var/www/vana/current` → `releases/site-v0.7.0-965a14612c93c5c2`。
 - 独立 Nginx 站点：`/etc/nginx/sites-available/vana`。
 - `vana-site-refresh.timer` 按每刻钟执行，随机延迟最多 30 秒；服务以非 root 用户 `gellar` 运行。手动检查任务返回成功，重复生成保持同一页面指针。
 - 当前官网版本 `v0.7.0`；所有六种安装格式来自已公开的正式 Release。
