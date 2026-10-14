@@ -50,7 +50,7 @@ def release_manifest(release):
     selections = {
         'windows': ('_x64-setup.exe', 'Windows', 'x86_64', 'Windows 10 / 11'),
         'msi': ('_x64_en-US.msi', 'Windows', 'x86_64', 'Windows 10 / 11'),
-        'android': ('-android-release.apk', 'Android', '见 APK 支持的架构', 'Android 7.0'),
+        'android': ('-android-release.apk', 'Android', 'arm64-v8a', 'Android 7.0'),
         'linux': ('_amd64.AppImage', 'Linux', 'x86_64', '请查看安装说明'),
         'deb': ('_amd64.deb', 'Linux', 'x86_64', 'Debian / Ubuntu'),
         'rpm': ('.x86_64.rpm', 'Linux', 'x86_64', 'Fedora / RPM 系统'),
