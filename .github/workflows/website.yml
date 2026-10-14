@@ -26,4 +26,5 @@ jobs:
       - name: Check browser enhancement and deployment syntax
         run: |
           node --check website/site.js
+          node --check website/effects.js
           bash -n website/deploy.sh website/deploy/install-host.sh

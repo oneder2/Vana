@@ -72,8 +72,10 @@ class ReleaseBoundary(unittest.TestCase):
             for asset in build.release_manifest(fixture())['downloads'].values():
                 self.assertIn(asset['url'], page)
             self.assertEqual(len(list((base / 'releases').iterdir())), 1)
-            self.assertEqual((first / 'assets/vana-icon.png').read_bytes(),
-                             (build.SOURCE / 'assets/vana-icon.png').read_bytes())
+            for name in build.STATIC_FILES:
+                with self.subTest(asset=name):
+                    self.assertEqual((first / name).read_bytes(),
+                                     (build.SOURCE / name).read_bytes())
 
 
 if __name__ == '__main__':

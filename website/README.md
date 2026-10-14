@@ -2,13 +2,14 @@
 
 线上：<https://vana.gellaronline.cc/>。官网提供介绍、三个平台下载、安装帮助和版本说明入口；安装文件始终来自 `oneder2/Vana` 的正式 GitHub Release。Preview 不进入默认下载入口。
 
-页面使用静态 HTML / CSS 和约 1.5 KB 的浏览器增强脚本，没有 Node 服务、前端运行时框架、远程字体或客户端 GitHub API 请求。无需 JavaScript 也能下载和展开安装帮助。文档对照是交互示意，已在页面标注。
+页面使用静态 HTML / CSS 和无依赖的浏览器增强脚本，没有 Node 服务、前端运行时框架、远程字体或客户端 GitHub API 请求。首屏改编 React Bits Aurora 的 WebGL 极光，能力与下载区域使用 SpotlightCard 聚光交互，附带原许可。极光限制为最高 30fps / 1.25 DPR / 1200 像素宽 / 65 万像素总量，首屏离屏与标签页隐藏时暂停；遵循减少动画偏好，并提供记住选择的暂停按钮。WebGL 不可用时显示静态 CSS 光晕。无需 JavaScript 也能下载和展开安装帮助。文档对照是交互示意，已在页面标注。
 
 ## 本地预览与检查
 
 ```bash
 python3 -m unittest discover -s website -p 'test_*.py'
 node --check website/site.js
+node --check website/effects.js
 bash -n website/deploy.sh website/deploy/install-host.sh
 python3 website/build.py
 python3 -m http.server 3091 --directory website/output/current
@@ -16,7 +17,7 @@ python3 -m http.server 3091 --directory website/output/current
 
 生成器从公开 `/releases/latest` 读取正式版本，校验版本标签、日期、附件名称、来源、文件大小和 GitHub SHA-256。草稿、预发布、缺少附件或哈希的响应会失败；已有页面不会被替换。所选六种格式为 Windows EXE / MSI、Android APK、Linux AppImage / DEB / RPM。若未来更改附件命名或平台清单，需要更新 `build.py` 的选择规则。
 
-每次生成一个完整目录，包含 HTML、`release.json`、CSS、JS 和图标；只有生成成功才原子切换 `current`。相同版本和源码重复检查不产生新目录。`release.json` 提供版本、发布日期、文件 URL、大小、SHA-256 和平台信息。
+每次生成一个完整目录，包含 HTML、`release.json`、CSS、JS、图标和动效许可；只有生成成功才原子切换 `current`。相同版本和源码重复检查不产生新目录。`release.json` 提供版本、发布日期、文件 URL、大小、SHA-256 和平台信息。
 
 ## 部署
 

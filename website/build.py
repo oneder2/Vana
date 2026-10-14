@@ -20,6 +20,8 @@ import urllib.request
 REPO = 'oneder2/Vana'
 API = f'https://api.github.com/repos/{REPO}/releases/latest'
 SOURCE = Path(__file__).resolve().parent
+STATIC_FILES = ('style.css', 'site.js', 'effects.js', 'assets/vana-icon.png',
+                'licenses/react-bits.md')
 
 
 def fetch_release():
@@ -97,7 +99,7 @@ def publish(release, base):
     manifest = release_manifest(release)
     content = render(manifest)
     source_digest = hashlib.sha256()
-    for name in ('style.css', 'site.js', 'assets/vana-icon.png'):
+    for name in STATIC_FILES:
         source_digest.update((SOURCE / name).read_bytes())
     digest = hashlib.sha256((content + json.dumps(manifest, sort_keys=True) +
                              source_digest.hexdigest()).encode()).hexdigest()[:16]
@@ -112,7 +114,7 @@ def publish(release, base):
             (stage / 'release.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
             (stage / 'robots.txt').write_text('User-agent: *\nAllow: /\nSitemap: https://vana.gellaronline.cc/sitemap.xml\n')
             (stage / 'sitemap.xml').write_text('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://vana.gellaronline.cc/</loc></url></urlset>\n')
-            for name in ('style.css', 'site.js', 'assets/vana-icon.png'):
+            for name in STATIC_FILES:
                 target = stage / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(SOURCE / name, target)

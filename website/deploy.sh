@@ -3,11 +3,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python3 -m unittest discover -s website -p 'test_*.py'
 node --check website/site.js
+node --check website/effects.js
 id="web-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD)"
 local_stage=$(mktemp -d /tmp/vana-site-local.XXXXXXXX)
 remote_stage=$(ssh -o BatchMode=yes Gellar 'mktemp -d /tmp/vana-site-deploy.XXXXXXXX')
 [[ "$remote_stage" =~ ^/tmp/vana-site-deploy\.[a-zA-Z0-9]{8}$ ]]
-tar -czf "$local_stage/source.tar.gz" -C website index.template.html style.css site.js build.py assets deploy
+tar -czf "$local_stage/source.tar.gz" -C website index.template.html style.css site.js effects.js build.py assets licenses deploy
 scp "$local_stage/source.tar.gz" "Gellar:$remote_stage/source.tar.gz"
 ssh -o BatchMode=yes Gellar "bash -s -- '$remote_stage' '$id'" <<'REMOTE'
 set -euo pipefail
