@@ -65,3 +65,5 @@
 本轮 `npm test` 共 30 项，29 项首次通过，Windows release 检查再次遇到宿主机 `Too many open files`。关闭本轮创建的 Chromium 会话后，单独重跑该检查通过；30 项均已完成验证，没有修改测试断言或系统限制。
 
 此轮没有更新手机原生包，也没有运行真实 Supabase 验收；此前的 OnePlus 图标安装验收见 `docs/design/APP_ICON.md`。
+
+后续完整 Android 包已更新到手机，账号入口、阅读精确点击、滑动与保存持久化完成真机验收，并修复长按菜单的返回行为。具体结果与测试边界见 [Android 真机验收](ANDROID_DEVICE_ACCEPTANCE_2026-10-14.md)。
