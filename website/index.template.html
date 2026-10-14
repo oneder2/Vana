@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#edf2f7">
+  <meta name="description" content="Vana 是开源的个人文档编辑器。在 Windows、Linux 和 Android 上阅读、写作、回看正文改动，并导出自己的文档。">
+  <meta property="og:title" content="Vana · 把文字留下，把思路接上">
+  <meta property="og:description" content="本地写作，回看改动，带走文档。下载适用于 Windows、Linux 和 Android 的 Vana。">
+  <meta property="og:url" content="https://vana.gellaronline.cc/">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://vana.gellaronline.cc/assets/vana-icon.png">
+  <link rel="canonical" href="https://vana.gellaronline.cc/">
+  <link rel="icon" href="/assets/vana-icon.png" type="image/png">
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/site.js"></script>
+  <title>Vana · 把文字留下，把思路接上</title>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+<header class="site-header wrap">
+  <a class="brand" href="/" aria-label="Vana 首页"><img src="/assets/vana-icon.png" width="42" height="42" alt=""><span>Vana</span></a>
+  <nav aria-label="官网导航"><a href="#help">安装帮助</a><a class="source-link" href="https://github.com/oneder2/Vana">GitHub <span aria-hidden="true">↗</span></a><a class="nav-download" href="#download">下载 Vana <span aria-hidden="true">↓</span></a></nav>
+</header>
+<main id="main">
+<section class="hero wrap" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <p class="eyebrow"><span class="ink-dot" aria-hidden="true"></span>个人文档，随时接着写</p>
+    <h1 id="hero-title">把文字留下，<br>把思路接上<span class="title-period">。</span></h1>
+    <p class="lead">Vana 是一款开源的个人文档编辑器。<br class="desktop-break">安静地阅读、写作，也能回看每一次正文改动。</p>
+    <a class="primary-link" href="#download">下载 Vana <span aria-hidden="true">↓</span></a>
+    <p class="platform-caption">Windows / Linux / Android <span>· {{version}}</span></p>
+  </div>
+  <div class="document-scene" aria-label="文档与修改记录的交互示意">
+    <div class="scene-top"><span>一页文档</span><span class="demo-label">交互示意</span></div>
+    <div class="document-paper">
+      <div class="paper-heading"><span class="document-path">我的文档 / 日常</span><span class="bookmark" aria-hidden="true"></span></div>
+      <h2>周末的一页</h2>
+      <p class="paper-date">十月 · 晴</p>
+      <div id="reading-example"><p>把最近想到的事情写下来。<br>不用急着整理成一个答案。</p><p>一些句子会被修改，<br>一些想法值得留下。</p><p class="paper-last">下次打开时，从这里继续。</p></div>
+      <div id="history-example" hidden><p>把最近想到的事情写下来。<br><del>今天就要找到答案。</del><br><ins>不用急着整理成一个答案。</ins></p><p>一些句子会被修改，<br>一些想法值得留下。</p><p class="paper-last">看清改动，再决定留下什么。</p></div>
+      <div class="paper-bottom"><span id="demo-caption">正文阅读</span><span aria-hidden="true">V</span></div>
+    </div>
+    <button class="history-toggle" type="button" aria-pressed="false" aria-controls="reading-example history-example" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.7 7M3 4v7h7M12 7v5l3 2"/></svg><span>看看修改对照</span><span aria-hidden="true">↗</span></button>
+  </div>
+</section>
+<section class="features wrap" aria-label="你可以用 Vana 做什么">
+  <article><span class="feature-mark" aria-hidden="true">✎</span><h2>从本地开始写</h2><p>文档保存在本机，离线也能读写。用分组和标签整理，让下一次打开更容易。</p></article>
+  <article><span class="feature-mark" aria-hidden="true">↶</span><h2>给改动留条来路</h2><p>查看正文修改记录，比较前后差异，需要时恢复正文，让修改有迹可循。</p></article>
+  <article><span class="feature-mark" aria-hidden="true">↗</span><h2>把文档带走</h2><p>导出 Markdown、Word 或 PDF。也可以备份整个空间，保留自己的文字。</p></article>
+</section>
+<section id="download" class="downloads wrap" aria-labelledby="download-title">
+  <div class="section-heading"><div><p class="eyebrow">让这一页，落在你的设备上</p><h2 id="download-title">下载 Vana</h2></div><div class="release-meta"><span class="version">{{version}}</span><span>发布于 <time datetime="{{published_iso}}">{{published_date}}</time></span><a href="{{release_url}}">查看版本说明 <span aria-hidden="true">↗</span></a></div></div>
+  <p class="download-intro">选择你的系统。当前版本处于 Beta 阶段，升级前请备份已有文档。</p>
+  <div class="download-list">
+    <div class="download-row" data-platform="windows"><div class="platform-name"><svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true" fill="currentColor"><path d="M3 5l11-1.5V15H3zm13-1.8L29 1v14H16zM3 17h11v11.5L3 27zm13 0h13v14l-13-2.2z"/></svg><div><h3>Windows</h3><p>64 位 · 安装程序</p></div></div><div class="download-actions"><a class="download-main" href="{{windows_url}}">下载 EXE <span aria-hidden="true">↓</span></a><a class="alternate" href="{{msi_url}}">MSI 安装包</a></div></div>
+    <div class="download-row" data-platform="android"><div class="platform-name"><svg viewBox="0 0 32 32" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M7 12a9 9 0 0 1 18 0v13H7zm3-9L7 0m15 3 3-3M3 14v9m26-9v9M11 25v5m10-5v5"/><path d="M11 9h1m8 0h1" stroke-width="2.5"/></svg><div><h3>Android</h3><p>Android 7.0 及以上 · APK</p></div></div><div class="download-actions"><a class="download-main" href="{{android_url}}">下载 APK <span aria-hidden="true">↓</span></a><a class="alternate" href="#android-help">安装方式</a></div></div>
+    <div class="download-row" data-platform="linux"><div class="platform-name"><svg viewBox="0 0 32 32" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="5" width="26" height="22" rx="3"/><path d="m8 11 5 5-5 5m9 0h7"/></svg><div><h3>Linux</h3><p>64 位 · x86_64</p></div></div><div class="download-actions"><a class="download-main" href="{{linux_url}}">下载 AppImage <span aria-hidden="true">↓</span></a><span class="alternate-group"><a href="{{deb_url}}">DEB</a><span aria-hidden="true">/</span><a href="{{rpm_url}}">RPM</a></span></div></div>
+  </div>
+  <div class="download-foot"><span>安装包来自项目的 GitHub Release。</span><a href="/release.json">文件校验信息 <span aria-hidden="true">↗</span></a><a href="https://github.com/oneder2/Vana/releases">历史版本 <span aria-hidden="true">↗</span></a></div>
+</section>
+<section id="help" class="help wrap" aria-labelledby="help-title"><div class="help-heading"><p class="eyebrow">从安装到第一篇文档</p><h2 id="help-title">开始使用</h2><p>选择系统，查看安装说明。</p></div><div class="help-list">
+  <details id="windows-help"><summary>在 Windows 上安装<span aria-hidden="true">+</span></summary><div class="answer"><p>下载 EXE 安装程序并运行，按提示完成安装。也可以使用 MSI 安装包。</p><p>当前版本使用项目自签名证书，Windows 可能提示未知发行者。请先确认文件来自本官网链接的项目 Release，并核对校验信息。</p></div></details>
+  <details id="android-help"><summary>在 Android 上安装<span aria-hidden="true">+</span></summary><div class="answer"><p>下载 APK 后打开文件。如果系统阻止安装，按提示允许当前浏览器或文件管理器安装应用，完成后可关闭此权限。</p><p>后续下载正式版 APK 可覆盖升级，保留应用数据。Preview 测试包是独立应用，请继续使用与你已安装版本对应的渠道。</p></div></details>
+  <details id="linux-help"><summary>在 Linux 上安装<span aria-hidden="true">+</span></summary><div class="answer"><p>AppImage 下载后，在文件属性中允许作为程序执行，再打开。也可以在终端运行：</p><code>chmod +x Vana_*.AppImage</code><p>Debian / Ubuntu 可选择 DEB；Fedora 等系统可选择 RPM。缺少运行依赖时，请查看 <a href="https://github.com/oneder2/Vana/blob/main/docs/DEPLOYMENT.md">项目安装文档</a>。</p></div></details>
+  <details><summary>文档、账号与更新<span aria-hidden="true">+</span></summary><div class="answer"><p>本地文档无需登录即可读写。跨设备同步需要账号和可用的同步服务；当前不提供实时协作、云附件或后台常驻同步。</p><p>正文修改记录仅恢复正文，不恢复历史标题、标签或目录。文档与备份为明文，当前不提供端到端加密。</p><p>升级前请导出空间备份，并阅读对应版本说明。官网始终指向最新正式发布版本，不自动安装更新。</p></div></details>
+</div></section>
+</main>
+<footer class="site-footer wrap"><a class="footer-brand" href="/">Vana<span>给文字一个可以回来的地方。</span></a><div><a href="https://github.com/oneder2/Vana">开源项目 ↗</a><a href="https://github.com/oneder2/Vana/issues">反馈问题 ↗</a><span>© {{year}} Vana</span></div></footer>
+</body>
+</html>
