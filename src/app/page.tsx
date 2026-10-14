@@ -28,7 +28,7 @@ import { DocumentNavigation } from '@/components/DocumentNavigation';
 import { DocumentHistoryModal } from '@/components/DocumentHistoryModal';
 import { DocumentConflictsModal } from '@/components/DocumentConflictsModal';
 import { documentPath } from '@/lib/documentNavigation';
-import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
+import { ContextMenu, dismissContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
 import { InputModal } from '@/components/InputModal';
 import { SearchModal } from '@/components/SearchModal';
 import { useTheme } from '@/components/ThemeProvider';
@@ -1015,6 +1015,7 @@ export default function HomePage() {
   );
 
   const closeTopMobileLayer = useCallback(() => {
+    if (dismissContextMenu()) return true;
     if (conflictsScope) {
       setConflictsScope(null);
       return true;
