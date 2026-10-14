@@ -505,6 +505,14 @@ body { font-family: var(--ui-font); color: var(--ui-text); }
 .help-question summary { cursor: pointer; min-height: 40px; padding: 8px 0; font-size: 14px; font-weight: 500; }
 .document-navigation > button, .document-navigation > div > button, .document-navigation summary { min-height: 40px; }
 .document-navigation summary { min-width: 36px; justify-content: center; }
+.document-mode-button { transition: background-color 160ms, box-shadow 160ms, border-color 160ms; }
+.document-mode-button[data-edit-hint='true'] {
+  background: color-mix(in srgb, var(--ui-accent) 18%, var(--ui-surface));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 24%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-mode-button { transition: none; }
+}
 @media (max-width: 767px) {
   .document-navigation > button, .document-navigation > div > button, .document-navigation summary { min-height: 44px; }
   .document-navigation summary { min-width: 40px; }

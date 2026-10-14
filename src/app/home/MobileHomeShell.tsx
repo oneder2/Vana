@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Info, Menu, RefreshCw, UserRound, Share2, XCircle } from 'lucide-react';
+import { Info, Menu, UserRound, Share2 } from 'lucide-react';
 import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
 import { AppLink } from '@/lib/router';
 
@@ -12,8 +12,6 @@ export function MobileHomeShell({
   mainContent,
   sidebarOpen,
   hasDocument,
-  isSyncing,
-  syncFeedback,
   accent,
   border,
   surface,
@@ -21,7 +19,6 @@ export function MobileHomeShell({
   onCloseSidebar,
   onOpenProperties,
   onOpenExportMenu,
-  onManualSync,
   onMenuAction,
   onHelp,
   onSettings,
@@ -33,8 +30,6 @@ export function MobileHomeShell({
   mainContent: React.ReactNode;
   sidebarOpen: boolean;
   hasDocument: boolean;
-  isSyncing: boolean;
-  syncFeedback: 'idle' | 'success' | 'error';
   accent: string;
   border: string;
   surface: string;
@@ -42,7 +37,6 @@ export function MobileHomeShell({
   onCloseSidebar: () => void;
   onOpenProperties: () => void;
   onOpenExportMenu: () => void;
-  onManualSync: () => void;
   onMenuAction: (action: MenuAction) => void;
   onHelp: () => void;
   onSettings: () => void;
@@ -112,22 +106,6 @@ export function MobileHomeShell({
               <Share2 size={17} />
             </button>
           )}
-          <button
-            type="button"
-            data-tauri-drag-region="false"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border"
-            style={{ borderColor: border, color: accent }}
-            onClick={onManualSync}
-            aria-label="同步"
-          >
-            {syncFeedback === 'success' && !isSyncing ? (
-              <Check size={17} />
-            ) : syncFeedback === 'error' && !isSyncing ? (
-              <XCircle size={17} />
-            ) : (
-              <RefreshCw size={17} className={isSyncing ? 'animate-spin' : ''} />
-            )}
-          </button>
           <AppLink
             href="/account"
             data-tauri-drag-region="false"

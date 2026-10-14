@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowRight, Check, Loader2, LogOut, RefreshCw, UserRound } from 'lucide-react';
+import { ArrowRight, Check, Loader2, LogOut, UserRound } from 'lucide-react';
 import { PreferencesLayout } from '@/components/PreferencesLayout';
-import { useToast } from '@/components/ToastProvider';
 import { AppLink } from '@/lib/router';
 import { completeOnboarding, ensureWorkspaceInitialized, getAppState, getSupabaseSession, recoverLocalDocuments, type AppState } from '@/lib/api';
-import { runSupabaseSync, signInWithPassword, signOutSupabase, signUpWithPassword } from '@/lib/supabaseSync';
+import { signInWithPassword, signOutSupabase, signUpWithPassword } from '@/lib/supabaseSync';
 
 export default function AccountPage() {
-  const toast = useToast();
   const [state, setState] = useState<AppState | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -76,18 +74,7 @@ export default function AccountPage() {
         </div>
       </section>
       {signedIn ? <>
-        <section className="preference-section" aria-labelledby="account-sync-title">
-          <div className="preference-section-heading"><h2 id="account-sync-title">文档同步</h2><RefreshCw size={18} aria-hidden="true" /></div>
-          <p className="preference-description">{state.sync.pending_jobs ? '还有更改等待同步。' : state.sync.last_synced_at ? `上次同步：${new Date(state.sync.last_synced_at).toLocaleString()}` : '尚未同步。'}</p>
-          {state.sync.last_error && <p role="alert" className="preference-error">同步未完成：{state.sync.last_error}</p>}
-          <div className="preference-actions">
-            <button disabled={disabled} className="ui-button ui-button-primary" onClick={() => void perform(async () => {
-              const snapshot = await runSupabaseSync(); await refresh();
-              setNotice(snapshot.pending_jobs ? '还有更改等待同步。' : '同步完成。');
-              if (snapshot.conflict_copies) toast.info(`已保留 ${snapshot.conflict_copies} 份修改副本，可回到文档查看。`);
-            })}>{busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}立即同步</button>
-          </div>
-        </section>
+        {state.sync.last_error && <p role="alert" className="preference-error">账号文档暂时无法更新，联网后会自动重试。本机文档仍可使用。</p>}
         <section className="preference-section" aria-labelledby="account-local-title">
           <h2 id="account-local-title">带上本机文档</h2>
           <p className="preference-description">将访客模式下的文档复制到账号，本机原文档会保留。</p>
@@ -111,9 +98,9 @@ export default function AccountPage() {
         <form className="account-form" onSubmit={authenticate} aria-busy={busy}>
           <label className="ui-field"><span>邮箱</span><input type="email" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={email} disabled={busy} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" /></label>
           <label className="ui-field"><span>密码</span><input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required value={password} disabled={busy} onChange={event => setPassword(event.target.value)} placeholder={mode === 'login' ? '输入密码' : '设置密码'} /></label>
-          <button type="submit" disabled={disabled || !configured} className="ui-button ui-button-primary w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}{busy ? '请稍候…' : mode === 'login' ? '登录并开始同步' : '注册账号'}</button>
+          <button type="submit" aria-label={mode === 'login' ? '登录账号' : '注册账号'} disabled={disabled || !configured} className="ui-button ui-button-primary w-full">{busy ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}{busy ? '请稍候…' : mode === 'login' ? '登录' : '注册账号'}</button>
         </form>
-        {!configured && <p className="preference-description mt-4">同步服务尚未连接。可先<AppLink href="/" className="ui-text-link">开始本机写作</AppLink>，或到<AppLink href="/settings" className="ui-text-link">设置</AppLink>连接服务。</p>}
+        {!configured && <p className="preference-description mt-4">账号服务暂不可用。可先<AppLink href="/" className="ui-text-link">开始本机写作</AppLink>，或到<AppLink href="/settings" className="ui-text-link">设置</AppLink>连接服务。</p>}
       </section>}
     </>}
     {credentialError && <p role="alert" className="preference-error">登录信息无法读取：{credentialError}。请解锁系统凭据库或重新登录，本机文档仍可使用。</p>}

@@ -6,6 +6,7 @@ import type { JSONContent } from '@tiptap/core';
 import { Bold, Copy, Heading1, Heading2, Italic, List, ListOrdered, MousePointer2, Quote, Underline } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
+import { useReadingClick } from './useReadingClick';
 import { getDocumentStyleCssVars } from '@/lib/documentStyles';
 import { getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
 import { documentDrafts } from '@/lib/documentDrafts';
@@ -28,6 +29,7 @@ interface EditorProps {
   tags?: string[];
   mobile?: boolean;
   readOnly?: boolean;
+  onReadingClick?: () => void;
 }
 
 function extractPlainText(node?: JSONContent): string {
@@ -51,6 +53,7 @@ export function Editor({
   tags = [],
   mobile = false,
   readOnly = false,
+  onReadingClick,
 }: EditorProps) {
   const { theme } = useTheme();
   const latestTags = useRef(tags);
@@ -126,6 +129,8 @@ export function Editor({
   useEffect(() => {
     editor?.setEditable(!readOnly, false);
   }, [editor, readOnly]);
+
+  const readingClickRoot = useReadingClick(readOnly && Boolean(editor), onReadingClick);
 
   useEffect(() => {
     onEditorReady?.(editor);
@@ -251,7 +256,7 @@ export function Editor({
         ))}
       </div>}
 
-      <div className="min-h-0 flex-1 overflow-y-auto relative" onContextMenu={handleContextMenu}>
+      <div ref={readingClickRoot} className="min-h-0 flex-1 overflow-y-auto relative" onContextMenu={handleContextMenu}>
         <EditorContent editor={editor} />
       </div>
 

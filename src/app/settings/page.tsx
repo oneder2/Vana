@@ -176,10 +176,6 @@ export default function SettingsPage() {
                 <summary className="cursor-pointer">诊断信息</summary>
                 <div className="mt-3 space-y-1 break-words">
                   <div>服务来源：{appState?.service_profile ?? '未连接'}</div>
-                  <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
-                  <div>自动同步：{appState?.sync.auto_sync_enabled ? '已开启' : '已关闭'}</div>
-                  <div>待同步队列：{appState?.sync.pending_jobs ?? 0}</div>
-                  <div>上次拉取：{appState?.sync.last_pulled_at ?? '尚未拉取'}</div>
                   <div>单文档上限：{appState ? formatBytes(appState.limits.max_document_content_bytes) : '—'}</div>
                   <div>总存储上限：{appState?.limits.max_total_storage_bytes ? formatBytes(appState.limits.max_total_storage_bytes) : '未设置'}</div>
                   <div>文档数量上限：{appState?.limits.max_document_count || '未设置'}</div>

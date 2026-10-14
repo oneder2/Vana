@@ -25,6 +25,7 @@ export function DesktopDocumentEditor({
   onPersisted,
   navigation,
   readOnly,
+  onReadingClick,
 }: {
   currentDocument: DocumentRecord | null;
   content: JSONContent;
@@ -43,6 +44,7 @@ export function DesktopDocumentEditor({
   onPersisted: () => void;
   navigation: React.ReactNode;
   readOnly: boolean;
+  onReadingClick: () => void;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -109,6 +111,7 @@ export function DesktopDocumentEditor({
             tags={documentTags}
             mobile={false}
             readOnly={readOnly}
+            onReadingClick={onReadingClick}
             onEditorReady={onEditorReady}
             onContentChange={onContentChange}
             onPersistError={onPersistError}

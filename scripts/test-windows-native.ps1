@@ -63,7 +63,7 @@ try {
   if ($email.Count -ne 1 -or $password.Count -ne 1) { throw 'Ambiguous authentication fields' }
   Set-PrivateValue $email[0] $config.email
   Set-PrivateValue $password[0] $config.password
-  Click-Name '登录并开始同步'
+  Click-Name '登录账号'
   Wait-For { Find-Name '当前身份：已登录' } 'authenticated account page' | Out-Null
   Click-Name '继续写作'
   Wait-For { Find-Name '新建文档' } 'authenticated app navigation' | Out-Null

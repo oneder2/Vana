@@ -1,13 +1,14 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, BookOpen, ChevronRight, GitCompareArrows, History, MoreHorizontal, Pencil } from 'lucide-react';
 import type { DocumentPathItem } from '@/lib/documentNavigation';
 import { useTheme } from './ThemeProvider';
 import { getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
 
-export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggleReading, onHistory, onConflicts }: {
+export function DocumentNavigation({ path, readOnly, busy, editHint = 0, onOpenFolder, onToggleReading, onHistory, onConflicts }: {
   path: DocumentPathItem[];
   readOnly: boolean;
   busy: boolean;
+  editHint?: number;
   onOpenFolder: (id: string | null) => void;
   onToggleReading: () => void;
   onHistory: () => void;
@@ -18,6 +19,13 @@ export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggl
   const moreMenu = useRef<HTMLDetailsElement>(null);
   const current = path.at(-1);
   const border = getThemeBorderColor(theme);
+  const [hintVisible, setHintVisible] = useState(false);
+  useEffect(() => {
+    setHintVisible(readOnly && !busy && editHint > 0);
+    if (!readOnly || busy || !editHint) return;
+    const timer = window.setTimeout(() => setHintVisible(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [editHint, readOnly, busy, current?.id]);
   useLayoutEffect(() => {
     if (navigation.current) navigation.current.scrollLeft = navigation.current.scrollWidth;
   }, [current?.id]);
@@ -62,9 +70,10 @@ export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggl
       </nav>
       <div className="flex shrink-0 items-center gap-1" style={{ color: getThemeAccentColor(theme) }}>
         <button type="button" disabled={busy} aria-pressed={readOnly} onClick={onToggleReading}
+          data-edit-hint={readOnly && hintVisible ? 'true' : undefined}
           aria-label={readOnly ? '进入编辑模式' : '保存并进入阅读模式'}
-          title={readOnly ? '进入编辑模式' : '保存并进入阅读模式'}
-          className="flex min-h-9 items-center gap-1.5 rounded border px-2 disabled:opacity-50" style={{ borderColor: border }}>
+          className="document-mode-button flex min-h-9 items-center gap-1.5 rounded border px-2 disabled:opacity-50"
+          style={{ borderColor: readOnly && hintVisible ? getThemeAccentColor(theme) : border }}>
           {readOnly ? <Pencil size={14} /> : <BookOpen size={14} />}
           {busy ? '保存中' : readOnly ? '编辑' : '阅读'}
         </button>

@@ -281,12 +281,12 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [explorerFolderId, setExplorerFolderId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(true);
   const [modeBusy, setModeBusy] = useState(false);
+  const [editHint, setEditHint] = useState<{ documentKey: string; sequence: number } | null>(null);
   const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
   const [conflictsScope, setConflictsScope] = useState<string | null>(null);
   const historyBusy = useRef(false);
@@ -318,12 +318,18 @@ export default function HomePage() {
     stage: 'generating' | 'sharing' | 'failed';
     message: string;
   } | null>(null);
-  const [syncFeedback, setSyncFeedback] = useState<'idle' | 'success' | 'error'>('idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileMenuCloseSignal, setMobileMenuCloseSignal] = useState(0);
   const syncInFlightRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const selectionIntentRef = useRef<string | null>(null);
+
+  const documentKey = currentDocument ? `${currentDocument.account_scope}:${currentDocument.id}` : null;
+  const requestEditHint = useCallback(() => {
+    if (!readOnly || modeBusy || historyDocument || conflictsScope || !documentKey) return;
+    setEditHint(previous => ({ documentKey, sequence: (previous?.sequence ?? 0) + 1 }));
+  }, [readOnly, modeBusy, historyDocument, conflictsScope, documentKey]);
+  useEffect(() => { setEditHint(null); }, [documentKey, readOnly]);
 
   useEffect(() => {
     setExplorerFolderId(null);
@@ -411,21 +417,13 @@ export default function HomePage() {
         }
 
         syncInFlightRef.current = true;
-        setIsSyncing(true);
-        setSyncFeedback('idle');
         const snapshot = await runSupabaseSync();
         await refresh(preferredId ?? selectedId);
         if (snapshot.conflict_copies) toast.info(`发现不同设备的修改，已保留 ${snapshot.conflict_copies} 份副本，可在“更多文档操作”中查看。`);
         setAppState((current) => (current ? { ...current, sync: snapshot } : current));
-        setSyncFeedback('success');
-        window.setTimeout(() => setSyncFeedback('idle'), 1800);
         console.info(`[sync] ${reason} completed`);
       } catch (error) {
-        setSyncFeedback('error');
         console.error(`[sync] ${reason} failed`, error);
-        if (force || reason.includes('manual')) {
-          toast.error(error instanceof Error ? error.message : String(error));
-        }
         try {
           await refresh(preferredId ?? selectedId);
         } catch (refreshError) {
@@ -433,7 +431,6 @@ export default function HomePage() {
         }
       } finally {
         syncInFlightRef.current = false;
-        setIsSyncing(false);
       }
     },
     [refresh, selectedId, toast]
@@ -592,7 +589,7 @@ export default function HomePage() {
   const handlePersistMetadata = useCallback(
     async (nextContent: JSONContent = content, nextTagList: string[] = documentTags) => {
       if (!currentDocument) return;
-      if (readOnly) { toast.info('请先进入编辑模式'); return; }
+      if (readOnly) { requestEditHint(); return; }
       const title =
         extractPlainText(nextContent.content?.find((node) => node.type === 'heading')) ||
         currentDocument.title ||
@@ -614,7 +611,7 @@ export default function HomePage() {
       await refresh(updated.id);
       await triggerAutoSync('metadata', false, updated.id);
     },
-    [content, currentDocument, documentTags, refresh, triggerAutoSync, readOnly, toast]
+    [content, currentDocument, documentTags, refresh, triggerAutoSync, readOnly, toast, requestEditHint]
   );
 
   const handleMoveDocument = useCallback(
@@ -764,7 +761,7 @@ export default function HomePage() {
   const handleMenuAction = useCallback(
     (action: MenuAction) => {
       if (readOnly && ['paste', 'cut', 'undo', 'redo', 'replace'].includes(action)) {
-        toast.info('请先进入编辑模式');
+        requestEditHint();
         return;
       }
       switch (action) {
@@ -819,7 +816,7 @@ export default function HomePage() {
           return;
       }
     },
-    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast]
+    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast, requestEditHint]
   );
 
   const openDocumentMenu = useCallback(
@@ -939,7 +936,7 @@ export default function HomePage() {
   const availableMoveTargets = useMemo(() => collectFolderTargets(documents, moveTarget), [documents, moveTarget]);
   const addTag = useCallback(
     async (rawValue: string) => {
-      if (readOnly) { toast.info('请先进入编辑模式'); return; }
+      if (readOnly) { requestEditHint(); return; }
       const next = rawValue.trim();
       if (!next || !currentDocument) return;
       if (documentTags.includes(next)) {
@@ -956,7 +953,7 @@ export default function HomePage() {
       setMobileTagEditorOpen(false);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, toast, readOnly]
+    [content, currentDocument, documentTags, handlePersistMetadata, toast, readOnly, requestEditHint]
   );
 
   const handleDropNode = useCallback(
@@ -1007,14 +1004,14 @@ export default function HomePage() {
 
   const removeTag = useCallback(
     async (tagName: string) => {
-      if (readOnly) { toast.info('请先进入编辑模式'); return; }
+      if (readOnly) { requestEditHint(); return; }
       if (!currentDocument) return;
       const nextTags = documentTags.filter((tag) => tag !== tagName);
       setDocumentTags(nextTags);
       setMobileTagDeleteTarget(null);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, readOnly, toast]
+    [content, currentDocument, documentTags, handlePersistMetadata, readOnly, toast, requestEditHint]
   );
 
   const closeTopMobileLayer = useCallback(() => {
@@ -1404,6 +1401,7 @@ export default function HomePage() {
 
   const renderDocumentEditor = (mobile: boolean) => {
     const navigation = <DocumentNavigation path={currentPath} readOnly={readOnly} busy={modeBusy}
+      editHint={editHint?.documentKey === documentKey ? editHint?.sequence : 0}
       onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} />;
     if (mobile) {
       if (!currentDocument) return null;
@@ -1411,6 +1409,7 @@ export default function HomePage() {
         <MobileDocumentEditor
           navigation={navigation}
           readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
+          onReadingClick={requestEditHint}
           currentDocument={currentDocument}
           content={content}
           documentTags={documentTags}
@@ -1428,6 +1427,7 @@ export default function HomePage() {
       <DesktopDocumentEditor
         navigation={navigation}
         readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
+        onReadingClick={requestEditHint}
         currentDocument={currentDocument}
         content={content}
         documentTags={documentTags}
@@ -1479,8 +1479,6 @@ export default function HomePage() {
       mainContent={renderMainContent(true)}
       sidebarOpen={sidebarOpen}
       hasDocument={Boolean(currentDocument)}
-      isSyncing={isSyncing}
-      syncFeedback={syncFeedback}
       accent={accent}
       border={border}
       surface={surface}
@@ -1496,7 +1494,6 @@ export default function HomePage() {
         setMobileExportStatus(null);
         setMobileExportOpen(true);
       }}
-      onManualSync={() => void triggerAutoSync('mobile-manual', true)}
       onMenuAction={handleMenuAction}
       onHelp={() => navigate('/help')}
       onSettings={() => navigate('/settings')}
@@ -1633,7 +1630,7 @@ export default function HomePage() {
                   className="shrink-0 rounded-full border px-3 py-2 text-sm"
                   style={{ borderColor: border, color: accent, opacity: documentTags.length >= 7 ? 0.45 : 1 }}
                   disabled={readOnly || documentTags.length >= 7}
-                  title={readOnly ? '请先进入编辑模式' : '添加标签'}
+                  title={readOnly ? undefined : '添加标签'}
                   onClick={() => setMobileTagEditorOpen(true)}
                 >
                   + 添加
