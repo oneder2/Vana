@@ -72,6 +72,7 @@ nginx -t
 systemctl daemon-reload
 systemctl start vana-site-refresh.service
 systemctl enable --now vana-site-refresh.timer
+systemctl restart vana-site-refresh.timer
 systemctl reload nginx
 systemctl is-active nginx vana-site-refresh.timer
 origin_ready=0

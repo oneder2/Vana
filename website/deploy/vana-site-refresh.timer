@@ -3,7 +3,7 @@ Description=Check Vana stable downloads every 15 minutes
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=15min
+OnCalendar=*:0/15
 RandomizedDelaySec=30
 Persistent=true
 
