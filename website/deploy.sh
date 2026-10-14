@@ -21,7 +21,7 @@ if sudo -n true 2>/dev/null; then
 else
     # Gellar already has Docker administration rights. The transient helper
     # runs the exact host installer; no password or privileged service is added.
-    docker run --rm --network host -v /:/host alpine:3.20 \
+    docker run --rm --network host --pid host -v /:/host alpine:3.20 \
         chroot /host /bin/bash "$stage/source/deploy/install-host.sh" "$stage" "$id"
 fi
 REMOTE
