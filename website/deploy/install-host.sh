@@ -74,8 +74,16 @@ systemctl start vana-site-refresh.service
 systemctl enable --now vana-site-refresh.timer
 systemctl reload nginx
 systemctl is-active nginx vana-site-refresh.timer
-curl --fail --silent --show-error --insecure --resolve vana.gellaronline.cc:443:127.0.0.1 https://vana.gellaronline.cc/ > "$backup/origin-check.html"
-grep -q '<title>Vana' "$backup/origin-check.html"
+origin_ready=0
+for attempt in {1..10}; do
+    if curl --fail --silent --show-error --insecure --resolve vana.gellaronline.cc:443:127.0.0.1 https://vana.gellaronline.cc/ > "$backup/origin-check.html" && grep -q '<title>Vana' "$backup/origin-check.html"; then
+        origin_ready=1
+        break
+    fi
+    # nginx reload returns before its new worker generation accepts requests.
+    sleep 1
+done
+test "$origin_ready" = 1
 # Exclude only our own site if updating an existing Vana deployment.
 python3 - "$backup/other-sites.sha256" <<'PY'
 import hashlib, pathlib, sys
