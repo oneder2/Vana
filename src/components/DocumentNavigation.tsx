@@ -42,7 +42,7 @@ export function DocumentNavigation({ path, readOnly, busy, onOpenFolder, onToggl
   }, []);
   useEffect(() => { moreMenu.current?.removeAttribute('open'); }, [current?.id]);
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs" style={{ borderColor: border }}>
+    <div className="document-navigation flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs" style={{ borderColor: border }}>
       <button type="button" aria-label="返回所在分组" title="返回所在分组"
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded border"
         style={{ borderColor: border }} onClick={() => onOpenFolder(current?.parent_id ?? null)}>

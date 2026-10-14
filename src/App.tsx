@@ -6,6 +6,7 @@ import { RouterProvider, useRouter } from '@/lib/router';
 import { ensureWorkspaceInitialized, getAppState, type AppState } from '@/lib/api';
 import HomePage from '@/app/page';
 import SettingsPage from '@/app/settings/page';
+import AccountPage from '@/app/account/page';
 import AuthCallbackPage from '@/app/auth/callback/page';
 import HelpPage from '@/app/help/page';
 import WelcomePage from '@/app/welcome/page';
@@ -49,6 +50,10 @@ function RoutedApp() {
 
   if (path === '/settings') {
     return <SettingsPage />;
+  }
+
+  if (path === '/account') {
+    return <AccountPage />;
   }
 
   if (path === '/auth/callback') {

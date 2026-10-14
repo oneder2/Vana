@@ -17,6 +17,8 @@ import {
   Import,
   RefreshCw,
   Trash2,
+  UserRound,
+  Settings2,
   X,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
@@ -69,10 +71,8 @@ import { DesktopHomeShell } from './home/DesktopHomeShell';
 import { MobileHomeShell } from './home/MobileHomeShell';
 import { MobileDocumentEditor } from './home/MobileDocumentEditor';
 import { DesktopDocumentEditor } from './home/DesktopDocumentEditor';
-import packageJson from '../../package.json';
 
 type StatusFilter = 'active' | 'recent' | 'trashed';
-const APP_VERSION = packageJson.version;
 
 function parseContent(raw: string): JSONContent {
   try {
@@ -1138,18 +1138,16 @@ export default function HomePage() {
           <div className="flex h-full min-h-0 flex-col" onContextMenu={openExplorerMenu}>
             <div className="shrink-0 flex items-center justify-between border-b px-4 py-3" style={{ borderColor: border }}>
               <div className="min-w-0">
-                <div className="shell-label">Explorer</div>
-                <div className="shell-title truncate text-sm font-medium">Vana</div>
+                <div className="library-heading">文档库</div>
               </div>
-              <button className={mobile ? '' : 'md:hidden'} onClick={() => setSidebarOpen(false)}>
+              <button aria-label="关闭文档库" className={mobile ? 'ui-icon-button' : 'ui-icon-button md:hidden'} onClick={() => setSidebarOpen(false)}>
                 <X size={18} />
               </button>
             </div>
 
             <div className="shrink-0 border-b px-3 py-3" style={{ borderColor: border }}>
               <button
-                className="flex w-full items-center justify-center gap-2 border px-3 py-2 text-sm"
-                style={{ backgroundColor: 'transparent', borderColor: border, color: accent }}
+                className="ui-button ui-button-primary w-full"
                 onClick={() => void handleCreateDocument()}
               >
                 <FilePlus2 size={15} />
@@ -1166,10 +1164,10 @@ export default function HomePage() {
                 <button
                   key={value}
                   onClick={() => { setSelectedStatus(value); setExplorerFolderId(null); }}
-                  className="flex items-center gap-2 px-2 py-2 text-left"
+                  aria-pressed={selectedStatus === value}
+                  className="library-filter flex items-center gap-2 px-2 py-2 text-left"
                   style={{
                     backgroundColor: selectedStatus === value ? accentBg : 'transparent',
-                    border: `1px solid ${border}`,
                     color: selectedStatus === value ? text : muted,
                   }}
                 >
@@ -1181,7 +1179,7 @@ export default function HomePage() {
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               <ExplorerSection
-                title="Favorites"
+                title="收藏"
                 count={favoriteDocuments.length}
                 expanded={expandedSections.favorites}
                 onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
@@ -1211,7 +1209,7 @@ export default function HomePage() {
               </ExplorerSection>
 
               <ExplorerSection
-                title={selectedStatus === 'active' ? 'Workspace' : selectedStatus === 'recent' ? 'Recent' : 'Trash'}
+                title={selectedStatus === 'active' ? '文档与分组' : selectedStatus === 'recent' ? '最近文档' : '回收站'}
                 count={selectedStatus === 'recent' ? recentDocuments.length : filteredDocuments.length}
                 expanded={expandedSections.explorer}
                 onToggle={() => setExpandedSections((current) => ({ ...current, explorer: !current.explorer }))}
@@ -1370,6 +1368,10 @@ export default function HomePage() {
                 </div>
               </ExplorerSection>
             </div>
+            <nav aria-label="个人入口" className="library-footer">
+              <AppLink href="/account" className="library-account"><UserRound size={17} /><span>{appState?.account_mode === 'authenticated' ? '我的账号' : '登录或注册'}</span></AppLink>
+              <AppLink href="/settings" aria-label="设置" className="ui-icon-button"><Settings2 size={18} /></AppLink>
+            </nav>
           </div>
     </aside>
   );
@@ -1466,13 +1468,13 @@ export default function HomePage() {
       onMenuAction={handleMenuAction}
       onHelp={() => navigate('/help')}
       onSettings={() => navigate('/settings')}
+      onAccount={() => navigate('/account')}
     />
   );
 
   const renderMobileShell = () => (
     <MobileHomeShell
       title={currentDocument ? documentLeafTitle(currentDocument) : '文档库'}
-      version={APP_VERSION}
       sidebar={renderSidebar(true)}
       mainContent={renderMainContent(true)}
       sidebarOpen={sidebarOpen}

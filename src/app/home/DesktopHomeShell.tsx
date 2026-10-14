@@ -12,6 +12,7 @@ export function DesktopHomeShell({
   onMenuAction,
   onHelp,
   onSettings,
+  onAccount,
 }: {
   sidebar: React.ReactNode;
   mainContent: React.ReactNode;
@@ -20,6 +21,7 @@ export function DesktopHomeShell({
   onMenuAction: (action: MenuAction) => void;
   onHelp: () => void;
   onSettings: () => void;
+  onAccount: () => void;
 }) {
   return (
     <>
@@ -27,7 +29,7 @@ export function DesktopHomeShell({
         menuBar={
           <div data-tauri-drag-region className="flex h-8 w-full items-center gap-3">
             <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-              <AppMenuBar onAction={onMenuAction} onHelp={onHelp} onSettings={onSettings} />
+              <AppMenuBar onAction={onMenuAction} onHelp={onHelp} onSettings={onSettings} onAccount={onAccount} />
             </div>
           </div>
         }

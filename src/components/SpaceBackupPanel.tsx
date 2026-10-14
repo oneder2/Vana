@@ -3,7 +3,7 @@ import { Download, FileCheck2, FolderInput, Loader2, Share2, X } from 'lucide-re
 import { exportSpaceBackup, importSpaceBackup, previewSpaceBackup, shareSpaceBackup, type BackupPreview } from '@/lib/api';
 import { documentDrafts } from '@/lib/documentDrafts';
 import { isMobile } from '@/lib/platform';
-import { getThemeAccentBgColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
+import { getThemeAccentBgColor, getThemeBorderColor } from '@/lib/themeStyles';
 import { FadeContent } from './motion/FadeContent';
 import { useTheme } from './ThemeProvider';
 
@@ -35,17 +35,17 @@ export function SpaceBackupPanel({ scope, disabled, onBusyChange, onImported }: 
     finally { operation.current = false; setBusy(false); onBusyChange(false); }
   }
 
-  return <section className="shell-panel border p-5 sm:p-6" aria-labelledby="space-backup-title" style={{ backgroundColor: getThemeSurfaceColor(theme), borderColor: border }}>
+  return <section className="preference-section" aria-labelledby="space-backup-title">
     <h2 id="space-backup-title" className="shell-title mb-3 flex items-center gap-2 text-lg font-medium"><FolderInput size={18} />备份与恢复</h2>
     <p className="max-w-2xl text-sm leading-7 opacity-75">保存一份文档备份，或从备份导入副本。备份包含文档内容，请妥善保管。</p>
     <div className="mt-5 flex flex-wrap gap-3">
-      <button disabled={disabled || busy} className="flex items-center gap-2 rounded-md border px-4 py-3 text-sm" style={{ borderColor: border, backgroundColor: getThemeAccentBgColor(theme) }} onClick={() => void perform(async captured => {
+      <button disabled={disabled || busy} className="ui-button ui-button-primary" onClick={() => void perform(async captured => {
         await documentDrafts.flushAll();
         const saved = await exportSpaceBackup(captured);
         if (activeScope.current !== captured) return;
         setPath(saved); setMessage('备份已保存。建议另存到其他设备或存储位置。');
       })}><Download size={16} />导出空间备份</button>
-      <button disabled={disabled || busy} className="flex items-center gap-2 rounded-md border px-4 py-3 text-sm" style={{ borderColor: border }} onClick={() => file.current?.click()}><FileCheck2 size={16} />选择备份并预览</button>
+      <button disabled={disabled || busy} className="ui-button" onClick={() => file.current?.click()}><FileCheck2 size={16} />选择备份并预览</button>
       <input ref={file} className="hidden" type="file" accept=".json,.vana-backup.json,application/json" aria-label="选择 Vana 备份文件" onChange={event => {
         const picker = event.currentTarget;
         const selected = picker.files?.[0];

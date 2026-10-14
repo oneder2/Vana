@@ -2,13 +2,12 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Info, Menu, RefreshCw, Settings, Share2, XCircle } from 'lucide-react';
+import { Check, Info, Menu, RefreshCw, UserRound, Share2, XCircle } from 'lucide-react';
 import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
 import { AppLink } from '@/lib/router';
 
 export function MobileHomeShell({
   title,
-  version,
   sidebar,
   mainContent,
   sidebarOpen,
@@ -30,7 +29,6 @@ export function MobileHomeShell({
   menuCloseSignal,
 }: {
   title: string;
-  version: string;
   sidebar: React.ReactNode;
   mainContent: React.ReactNode;
   sidebarOpen: boolean;
@@ -85,7 +83,6 @@ export function MobileHomeShell({
           <Menu size={18} />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="shell-label text-[9px]">VANA · {version}</div>
           <div className="mt-0.5 flex min-w-0 items-center gap-2">
             <div className="truncate text-sm font-medium">{title}</div>
             {hasDocument && (
@@ -132,13 +129,13 @@ export function MobileHomeShell({
             )}
           </button>
           <AppLink
-            href="/settings"
+            href="/account"
             data-tauri-drag-region="false"
             className="flex h-10 w-10 items-center justify-center rounded-lg border"
             style={{ borderColor: border, color: accent }}
-            aria-label="设置"
+            aria-label="账号"
           >
-            <Settings size={17} />
+            <UserRound size={17} />
           </AppLink>
         </div>
       </header>

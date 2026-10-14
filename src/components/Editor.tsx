@@ -7,7 +7,7 @@ import { Bold, Copy, Heading1, Heading2, Italic, List, ListOrdered, MousePointer
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
 import { getDocumentStyleCssVars } from '@/lib/documentStyles';
-import { getThemeAccentBgColor, getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
+import { getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
 import { documentDrafts } from '@/lib/documentDrafts';
 import { ContextMenu } from './ContextMenu';
 
@@ -35,6 +35,8 @@ function extractPlainText(node?: JSONContent): string {
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(extractPlainText).join('');
 }
+
+const toolbarLabels: Record<string, string> = { bold: '加粗', italic: '斜体', underline: '下划线', h1: '一级标题', h2: '二级标题', quote: '引用', bullet: '无序列表', ordered: '有序列表' };
 
 export function Editor({
   filePath,
@@ -204,7 +206,6 @@ export function Editor({
   }
 
   const accent = getThemeAccentColor(theme);
-  const accentBg = getThemeAccentBgColor(theme);
   const border = getThemeBorderColor(theme);
 
   const toolbarButtons = [
@@ -220,7 +221,7 @@ export function Editor({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col border overflow-hidden"
+      className="document-surface flex h-full min-h-0 flex-col border overflow-hidden"
       style={{
         backgroundColor: getThemeSurfaceColor(theme),
         borderColor: getThemeBorderColor(theme),
@@ -228,19 +229,20 @@ export function Editor({
       }}
     >
       {!readOnly && <div
-        className={`border-b px-3 py-2 ${mobile ? 'flex items-center gap-1 overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center gap-1'}`}
+        className={`document-format-bar border-b ${mobile ? 'flex items-center overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center'}`}
+        role="toolbar" aria-label="正文格式"
         style={{ borderColor: border }}
       >
         {toolbarButtons.map((button) => (
           <button
             key={button.key}
             type="button"
-            aria-label={button.key}
+            aria-label={toolbarLabels[button.key]}
+            aria-pressed={button.active}
+            title={toolbarLabels[button.key]}
             onClick={button.action}
-            className={`shrink-0 border transition-colors ${mobile ? 'min-h-9 min-w-9 px-2 py-2' : 'px-2 py-1'}`}
+            className={`shrink-0 transition-colors ${mobile ? 'min-h-9 min-w-9 px-2 py-2' : 'px-2 py-1'}`}
             style={{
-              borderColor: border,
-              backgroundColor: button.active ? accentBg : 'transparent',
               color: accent,
             }}
           >
