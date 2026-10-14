@@ -2,19 +2,16 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Info, Menu, RefreshCw, Settings, Share2, XCircle } from 'lucide-react';
+import { Info, Menu, UserRound, Share2 } from 'lucide-react';
 import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
 import { AppLink } from '@/lib/router';
 
 export function MobileHomeShell({
   title,
-  version,
   sidebar,
   mainContent,
   sidebarOpen,
   hasDocument,
-  isSyncing,
-  syncFeedback,
   accent,
   border,
   surface,
@@ -22,7 +19,6 @@ export function MobileHomeShell({
   onCloseSidebar,
   onOpenProperties,
   onOpenExportMenu,
-  onManualSync,
   onMenuAction,
   onHelp,
   onSettings,
@@ -30,13 +26,10 @@ export function MobileHomeShell({
   menuCloseSignal,
 }: {
   title: string;
-  version: string;
   sidebar: React.ReactNode;
   mainContent: React.ReactNode;
   sidebarOpen: boolean;
   hasDocument: boolean;
-  isSyncing: boolean;
-  syncFeedback: 'idle' | 'success' | 'error';
   accent: string;
   border: string;
   surface: string;
@@ -44,7 +37,6 @@ export function MobileHomeShell({
   onCloseSidebar: () => void;
   onOpenProperties: () => void;
   onOpenExportMenu: () => void;
-  onManualSync: () => void;
   onMenuAction: (action: MenuAction) => void;
   onHelp: () => void;
   onSettings: () => void;
@@ -85,7 +77,6 @@ export function MobileHomeShell({
           <Menu size={18} />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="shell-label text-[9px]">VANA · {version}</div>
           <div className="mt-0.5 flex min-w-0 items-center gap-2">
             <div className="truncate text-sm font-medium">{title}</div>
             {hasDocument && (
@@ -115,30 +106,14 @@ export function MobileHomeShell({
               <Share2 size={17} />
             </button>
           )}
-          <button
-            type="button"
-            data-tauri-drag-region="false"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border"
-            style={{ borderColor: border, color: accent }}
-            onClick={onManualSync}
-            aria-label="同步"
-          >
-            {syncFeedback === 'success' && !isSyncing ? (
-              <Check size={17} />
-            ) : syncFeedback === 'error' && !isSyncing ? (
-              <XCircle size={17} />
-            ) : (
-              <RefreshCw size={17} className={isSyncing ? 'animate-spin' : ''} />
-            )}
-          </button>
           <AppLink
-            href="/settings"
+            href="/account"
             data-tauri-drag-region="false"
             className="flex h-10 w-10 items-center justify-center rounded-lg border"
             style={{ borderColor: border, color: accent }}
-            aria-label="设置"
+            aria-label="账号"
           >
-            <Settings size={17} />
+            <UserRound size={17} />
           </AppLink>
         </div>
       </header>

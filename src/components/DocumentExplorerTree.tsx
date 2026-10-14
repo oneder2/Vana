@@ -174,21 +174,21 @@ function TreeItem({
     <div className="relative">
       <div
         data-drop-folder-id={isFolder ? node.id : undefined}
+        data-drop-active={isDropTarget || undefined}
         onMouseDown={(event) => onPointerStart(event, node.document, isFolder)}
         onContextMenu={(event) => onNodeContextMenu(event, node.document)}
-        className="flex w-full select-none items-center gap-1.5 rounded px-2 py-1.5 text-left text-[13px] transition-opacity hover:opacity-85"
+        className="library-tree-item flex w-full select-none items-center gap-1.5 rounded px-2 py-1.5 text-left text-[13px]"
         style={{
           paddingLeft: `${8 + level * 14}px`,
           color: text,
-          backgroundColor: isDropTarget ? `${accentBg}4d` : isSelected ? `${accentBg}55` : 'transparent',
           outline: isDropTarget ? `1px solid ${accent}` : isSelected ? `1px solid ${accentBg}` : 'none',
-          boxShadow: isSelected ? `inset 2px 0 0 ${accent}` : 'none',
           opacity: isDragging ? 0.45 : 1,
           cursor: isDragging ? 'grabbing' : 'pointer',
           userSelect: 'none',
           WebkitUserSelect: 'none',
         }}
         role="treeitem"
+        aria-selected={isSelected}
         aria-expanded={isFolder ? isExpanded : undefined}
         tabIndex={0}
         onKeyDown={(event) => {

@@ -52,6 +52,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Validate launcher icon resources
+        run: |
+          python3 -m pip install "Pillow>=10,<13"
+          python3 scripts/check-app-icons.py
+
       - name: Run lint
         run: npm run lint
 

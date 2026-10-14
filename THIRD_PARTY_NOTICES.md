@@ -12,3 +12,11 @@ the components are not offered as a standalone component library.
 The adaptations use existing React/CSS, native buttons, scoped arrow navigation
 and reduced-motion support. They omit GSAP, hover selection and global keyboard
 handlers so text selection and editor shortcuts remain predictable.
+
+The 2026-10-13 writing and account interface refinement extends these patterns
+into document selection and welcome/account/settings/help page transitions.
+References: [Animated List](https://www.reactbits.dev/components/animated-list)
+and [Fade Content](https://www.reactbits.dev/animations/fade-content), found via
+the requested [component index](https://www.reactbits.dev/get-started/index).
+The bookmark-shaped location marker and preference layout are Vana designs;
+no additional animation runtime or remote font is bundled.

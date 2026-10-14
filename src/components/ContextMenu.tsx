@@ -11,6 +11,15 @@ import { Copy, Scissors, Clipboard, MousePointer2, Trash2, FileText, Folder, Pal
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
 
+const dismissEvent = 'vana:dismiss-context-menu';
+
+/** Let native back dismiss an editor menu before navigating the document. */
+export function dismissContextMenu() {
+  const event = new Event(dismissEvent, { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 export interface ContextMenuItem {
   id: string;
   label: string;
@@ -120,10 +129,16 @@ export function ContextMenu({
         onClose();
       }
     };
+    const handleDismiss = (event: Event) => {
+      event.preventDefault();
+      onClose();
+    };
 
     document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener(dismissEvent, handleDismiss);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener(dismissEvent, handleDismiss);
     };
   }, [onClose]);
 

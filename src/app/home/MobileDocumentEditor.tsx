@@ -16,6 +16,7 @@ export function MobileDocumentEditor({
   onPersisted,
   navigation,
   readOnly,
+  onReadingClick,
 }: {
   currentDocument: DocumentRecord;
   content: JSONContent;
@@ -26,6 +27,7 @@ export function MobileDocumentEditor({
   onPersisted: () => void;
   navigation: ReactNode;
   readOnly: boolean;
+  onReadingClick: () => void;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -40,6 +42,7 @@ export function MobileDocumentEditor({
           tags={documentTags}
           mobile
           readOnly={readOnly}
+          onReadingClick={onReadingClick}
           onEditorReady={onEditorReady}
           onContentChange={onContentChange}
           onPersistError={onPersistError}
