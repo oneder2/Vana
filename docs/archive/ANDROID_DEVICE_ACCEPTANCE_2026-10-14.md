@@ -1,5 +1,6 @@
 # Android 完整包与真机验收
 
+> 历史设计或验收记录，仅说明当时状态。当前功能与发布结论见 [文档索引](../README.md)。
 2026-10-13 至 2026-10-14（纽约时间）在 OnePlus 7 Pro / GM1911 上完成。手机系统为 Android 13 / LineageOS，桌面为 Launcher3；不代表其他 OxygenOS 版本的验收。
 
 ## 安装包
@@ -27,7 +28,7 @@
 
 阅读高亮证据：
 
-![OnePlus 阅读点击高亮](design/oneplus-reading-highlight.png)
+![OnePlus 阅读点击高亮](../design/oneplus-reading-highlight.png)
 
 原始截图与结果保存在工作区 `output/device/`，未提交手机通知栏或其他应用画面。
 
@@ -41,6 +42,6 @@
 
 真实 APK、真实触摸、真实 Tauri IPC 和原生 SQLite；没有替换 IPC 或模拟原生数据库。账号部分检查页面入口与可见控件，本轮未重新执行真实登录或 Supabase 多账号同步验收。
 
-新完整包与此前已通过 OnePlus 图标验收的资源包，其所有 `res/` 文件逐字节一致，继续包含无白边图标资源；此前 Launcher3 的实际图标对比见 [图标说明](design/APP_ICON.md)。本轮没有取得新安装后的桌面图标截图，不扩大该证据到所有 OnePlus 系统。
+新完整包与此前已通过 OnePlus 图标验收的资源包，其所有 `res/` 文件逐字节一致，继续包含无白边图标资源；此前 Launcher3 的实际图标对比见 [图标说明](../design/APP_ICON.md)。本轮没有取得新安装后的桌面图标截图，不扩大该证据到所有 OnePlus 系统。
 
-官网下载与 GitHub Release 分工见 [分发建议](RELEASE_DISTRIBUTION.md)。本轮保留 PR 草稿，没有创建版本标签或发布正式 Release。
+官网下载与 GitHub Release 分工见 [分发建议](../RELEASE_DISTRIBUTION.md)。本轮保留 PR 草稿，没有创建版本标签或发布正式 Release。

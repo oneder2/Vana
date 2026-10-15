@@ -1,5 +1,6 @@
 # **产品需求文档 (PRD): Project: No Visitors (游客止步) \- Git-based Arcane Archive**
 
+> 历史设计或验收记录，仅说明当时状态。当前功能与发布结论见 [文档索引](../README.md)。
 版本: v5.1 (Refined Storage & Sync)  
 核心理念: Git 为核 (Git as Engine)、零知识加密 (Zero-Knowledge Encryption)、氛围拟态 (Atmosphere Protocol)、Tauri 驱动。
 

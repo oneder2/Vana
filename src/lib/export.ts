@@ -7,7 +7,7 @@ import { exportAlignment, exportHeadingLevel } from './exportBoundary';
 
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from 'docx';
 import { Theme } from './themes';
-import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeSurfaceColor } from './themeStyles';
+import { getThemeBgColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
 import { invoke } from '@tauri-apps/api/core';
 import { getDocumentDocxSizes, getDocumentStyleTokens } from './documentStyles';
@@ -99,16 +99,6 @@ function cssColorToHex(color: string, fallback: string): string {
 
 function typstColor(color: string, fallback: string): string {
   return `rgb("${cssColorToHex(color, fallback)}")`;
-}
-
-function rgbaToRgb(color: string): string {
-  const rgbaMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-  if (!rgbaMatch) {
-    return color;
-  }
-
-  const [, r, g, b] = rgbaMatch;
-  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function toDocxHexColor(color: string): string {
@@ -234,7 +224,6 @@ function createPDFRenderRoot(
 ): HTMLDivElement {
   const tokens = getDocumentStyleTokens(theme);
   const background = tokens.pageBackgroundColor;
-  const surface = tokens.surfaceColor;
   const border = tokens.borderColor;
   const accent = tokens.accentColor;
   const text = tokens.textColor;
@@ -486,7 +475,6 @@ function convertListItemToTypst(item: JSONContent, ordered: boolean, depth = 0):
 function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string): string {
   const tokens = getDocumentStyleTokens(theme);
   const background = typstColor(tokens.pageBackgroundColor, '#05040A');
-  const surface = typstColor(tokens.surfaceColor, '#13111C');
   const border = typstColor(tokens.borderColor, '#2E2842');
   const accent = typstColor(tokens.accentColor, '#A855F7');
   const text = typstColor(tokens.textColor, '#D6D3D1');

@@ -52,4 +52,4 @@ ssh Gellar 'systemctl show vana-site-refresh.service -p Result -p ExecMainStatus
 
 如果希望官网下载暂时停留在旧版本，应保持定时任务停止，否则下一次检查会重新指向 GitHub 最新正式版本。客户端是否允许降级需另外验证，官网回退不代表安装包可直接覆盖降级。
 
-部署验收与边界见 [官网上线记录](../docs/WEBSITE_DEPLOYMENT_2026-10-14.md)。
+部署验收与边界见 [官网上线记录](../docs/archive/WEBSITE_DEPLOYMENT_2026-10-14.md)。

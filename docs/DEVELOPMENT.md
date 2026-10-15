@@ -34,7 +34,7 @@ Vana/
 ## 本地开发
 
 ```bash
-npm install
+npm ci
 npm run tauri:dev
 ```
 
@@ -43,6 +43,14 @@ npm run tauri:dev
 ```bash
 npm run dev
 ```
+
+## 最终检查
+
+```bash
+bash scripts/check-build-ready.sh
+```
+
+完整覆盖类型、前端行为、原生领域、SQL 协议、生产构建、图标、官网和生产依赖审计。设备与正式签名另外记录在发布报告。
 
 ## 构建
 
@@ -81,8 +89,8 @@ npm run tauri:build:android
 
 ## 相关文档
 
-- [Supabase 配置指南](./SUPABASE_SETUP.md)
-- [附件 / 图片 Storage 方案](./ATTACHMENT_STORAGE_PLAN.md)
-- [版本号管理策略](./VERSIONING.md)
-- [部署与发布指南](./DEPLOYMENT.md)
-- [下一阶段开发路线与验收条件](./ROADMAP.md)
+- [Supabase 配置指南](SUPABASE_SETUP.md)
+- [附件 / 图片 Storage 方案](ATTACHMENT_STORAGE_PLAN.md)
+- [版本号管理策略](VERSIONING.md)
+- [部署与发布指南](DEPLOYMENT.md)
+- [下一阶段开发路线与验收条件](ROADMAP.md)

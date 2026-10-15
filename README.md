@@ -1,8 +1,8 @@
 # Vana
 
-版本：0.7.0。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
+源码候选版本：0.7.1；当前正式下载：0.7.0。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
 
-面向个人写作与长期阅读，重点是层级清晰、改动可理解、误改可恢复。以离线空间、正文差异、受保护的恢复和可携带备份建立优势。真实多设备验收及适用边界见 [开发记录](docs/DEVELOPMENT_2026-10-13.md)，定位见 [产品方向](docs/PRODUCT_DIRECTION.md)。
+面向个人写作与长期阅读，重点是层级清晰、改动可理解、误改可恢复。以离线空间、正文差异、受保护的恢复和可携带备份建立优势。真实多设备验收及适用边界见 [开发记录](docs/archive/DEVELOPMENT_2026-10-13.md)，定位见 [产品方向](docs/PRODUCT_DIRECTION.md)。
 
 ## 当前功能
 
@@ -24,13 +24,13 @@ SQLite 与云端正文均为明文；当前版本不提供端到端加密。详�
 ## 使用
 
 1. 可直接以访客身份写作；登录后进入独立账号空间。账号页可复制本机文档到账号；设置的高级选项可恢复旧数据库。
-2. 从独立账号页使用邮箱/密码登录或注册；账号页也提供同步与退出。内置公共服务需要构建时配置；高级配置可连接自有 Supabase 项目。
+2. 从独立账号页使用邮箱/密码登录或注册；账号页提供登录状态与退出，同步自动执行。内置公共服务需要构建时配置；高级配置可连接自有 Supabase 项目。
 3. 用侧边栏创建文档或分组；打开已有文档后点击“编辑”修改，正文自动保存，点击“阅读”先保存再锁定正文和标签。顶部路径可返回任一父分组，“修改记录”可对照并确认恢复保留的正文版本。
 4. 从文件菜单导出 PDF、DOCX 或 Markdown；Android 会打开系统分享界面。
 5. 回收站节点的右键菜单支持恢复和永久删除。永久删除保留云同步删除标记，正文与历史不可恢复。
 6. 设置中的空间备份可导出当前空间，或预览备份后复制导入；备份不包含账号会话。正文页“更多文档操作 → 查看同步副本”可查看冲突，标记已查看后仍保留副本。
 
-[下载 Releases](https://github.com/oneder2/Vana/releases) · [Issues](https://github.com/oneder2/Vana/issues)
+[官网与下载](https://vana.gellaronline.cc/) · [下载 Releases](https://github.com/oneder2/Vana/releases) · [Issues](https://github.com/oneder2/Vana/issues)
 
 ## 开发与验证
 
@@ -49,10 +49,12 @@ python3 scripts/test-supabase-protocol.py  # 需要 Docker
 
 ## 文档
 
+[文档索引](docs/README.md) · [本次发布自检](docs/RELEASE_READINESS_2026-10-15.md)
+
 - [当前架构、同步契约与安全边界](docs/ARCHITECTURE.md)
-- [产品方向](docs/PRODUCT_DIRECTION.md) · [界面与账号优化](docs/UIUX_REFINEMENT_2026-10-13.md) · [空间备份格式](docs/BACKUP_FORMAT.md) · [会话与渲染安全](docs/SESSION_SECURITY.md)
+- [产品方向](docs/PRODUCT_DIRECTION.md) · [界面与账号优化](docs/archive/UIUX_REFINEMENT_2026-10-13.md) · [空间备份格式](docs/BACKUP_FORMAT.md) · [会话与渲染安全](docs/SESSION_SECURITY.md)
 - [Supabase 配置与迁移](docs/SUPABASE_SETUP.md)
-- [审查报告](docs/CODE_REVIEW_2026-10-12.md) · [逐项修复记录](docs/REMEDIATION_2026-10-12.md)
+- [审查报告](docs/archive/CODE_REVIEW_2026-10-12.md) · [逐项修复记录](docs/archive/REMEDIATION_2026-10-12.md)
 - [变更记录](docs/CHANGELOG.md) · [下一阶段开发路线与验收条件](docs/ROADMAP.md)
 - [开发指南](docs/DEVELOPMENT.md) · [部署指南](docs/DEPLOYMENT.md)
 - [附件规划](docs/ATTACHMENT_STORAGE_PLAN.md)（尚未实现）

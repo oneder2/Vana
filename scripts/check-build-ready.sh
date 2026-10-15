@@ -1,114 +1,47 @@
-#!/bin/bash
-# Beta 构建就绪检查脚本
-
-set -e
-
-echo "=== Beta 构建就绪检查 ==="
-echo ""
-
-# 1. 检查版本号一致性
-echo "1. 检查版本号一致性..."
-VERSION_TAURI=$(grep '"version"' src-tauri/tauri.conf.json | cut -d'"' -f4)
-VERSION_CARGO=$(grep '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
-VERSION_NPM=$(grep '"version"' package.json | cut -d'"' -f4)
-
-echo "  Tauri config: $VERSION_TAURI"
-echo "  Cargo.toml:   $VERSION_CARGO"
-echo "  package.json: $VERSION_NPM"
-
-if [ "$VERSION_TAURI" = "$VERSION_CARGO" ] && [ "$VERSION_CARGO" = "$VERSION_NPM" ]; then
-    echo "  ✓ 版本号一致"
-else
-    echo "  ✗ 版本号不一致！"
-    exit 1
+#!/usr/bin/env bash
+# Local release-candidate gate. Native device/signing acceptance is separate.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != --hosted ) ]]; then
+    echo 'Usage: bash scripts/check-build-ready.sh [--hosted]' >&2
+    exit 2
 fi
-
-echo ""
-
-# 2. 检查图标文件
-echo "2. 检查图标文件..."
-ICON_FILES=(
-    "src-tauri/icons/32x32.png"
-    "src-tauri/icons/128x128.png"
-    "src-tauri/icons/128x128@2x.png"
-    "src-tauri/icons/icon.ico"
-    "src-tauri/icons/icon.png"
-)
-
-ALL_ICONS_OK=true
-for icon in "${ICON_FILES[@]}"; do
-    if [ -f "$icon" ]; then
-        SIZE=$(stat -c%s "$icon" 2>/dev/null || stat -f%z "$icon" 2>/dev/null)
-        if [ "$SIZE" -gt 0 ]; then
-            echo "  ✓ $icon ($SIZE bytes)"
-        else
-            echo "  ✗ $icon (空文件)"
-            ALL_ICONS_OK=false
-        fi
-    else
-        echo "  ✗ $icon (不存在)"
-        ALL_ICONS_OK=false
-    fi
-done
-
-if [ "$ALL_ICONS_OK" = false ]; then
-    echo "  运行 ./src-tauri/icons/generate-icons.sh 生成图标"
-    exit 1
+python3 - <<'PY'
+import json, pathlib, re, subprocess, tomllib
+root = pathlib.Path.cwd()
+npm = json.loads((root / 'package.json').read_text())
+lock = json.loads((root / 'package-lock.json').read_text())
+cargo = tomllib.loads((root / 'src-tauri/Cargo.toml').read_text())
+cargo_lock = tomllib.loads((root / 'src-tauri/Cargo.lock').read_text())
+tauri = json.loads((root / 'src-tauri/tauri.conf.json').read_text())
+versions = [npm['version'], lock['version'], lock['packages']['']['version'],
+            cargo['package']['version'], tauri['version']]
+versions += [p['version'] for p in cargo_lock['package'] if p['name'] == cargo['package']['name']]
+assert len(versions) == 6 and len(set(versions)) == 1, 'Version and lockfile mismatch'
+tracked = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+for name in filter(None, tracked):
+    p = pathlib.PurePosixPath(name)
+    assert not (p.parts[0] == 'secrets' or (p.name.startswith('.env') and p.name != '.env.example') or p.name == 'keystore.properties'
+                or p.suffix.lower() in ('.jks', '.keystore', '.pfx', '.p12')), 'Private file tracked: ' + name
+    path = root / name
+    if path.is_file() and path.stat().st_size < 2_000_000:
+        content = path.read_bytes()
+        assert not re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----', content), 'Private key tracked: ' + name
+print('PASS: source/lockfile versions agree; tracked-file secret checks (' + versions[0] + ')')
+PY
+npm run typecheck
+npm test
+CARGO_TARGET_DIR="${VANA_NATIVE_TEST_TARGET:-tests/native-core/target}" cargo test -j 2 --locked --manifest-path tests/native-core/Cargo.toml
+python3 scripts/test-supabase-protocol.py
+npm run build
+cargo check -j 2 --locked --manifest-path src-tauri/Cargo.toml
+python3 scripts/check-app-icons.py
+python3 -m unittest discover -s website -p 'test_*.py'
+node --check website/site.js
+node --check website/effects.js
+bash -n website/deploy.sh website/deploy/install-host.sh
+npm audit --omit=dev --audit-level=moderate
+if [[ "${1:-}" == --hosted ]]; then
+    python3 scripts/check-supabase-release.py --require-protocol
 fi
-
-echo ""
-
-# 3. 检查前端与 Rust 静态校验
-echo "3. 检查 lint/typecheck 与 Rust 编译..."
-if npm run check > /dev/null 2>&1; then
-    echo "  ✓ npm run check 成功"
-else
-    echo "  ✗ npm run check 失败"
-    exit 1
-fi
-
-echo ""
-
-# 4. 检查 Vite 前端构建
-echo "4. 检查 Vite 前端构建..."
-if npm run build > /dev/null 2>&1; then
-    echo "  ✓ Vite 构建成功"
-else
-    echo "  ✗ Vite 构建失败"
-    exit 1
-fi
-
-echo ""
-
-# 5. 检查敏感文件
-echo "5. 检查敏感文件..."
-if [ -f "secrets/.pat" ]; then
-    echo "  ⚠ secrets/.pat 存在（旧 Git/PAT 分支遗留文件，请确认不会被提交）"
-else
-    echo "  ✓ 无敏感文件泄露风险"
-fi
-
-echo ""
-
-# 6. 检查构建产物目录
-echo "6. 检查构建配置..."
-if [ -f "src-tauri/tauri.conf.json" ]; then
-    echo "  ✓ tauri.conf.json 存在"
-    if grep -q '"icon"' src-tauri/tauri.conf.json; then
-        echo "  ✓ 图标配置存在"
-    else
-        echo "  ✗ 缺少图标配置"
-        exit 1
-    fi
-else
-    echo "  ✗ tauri.conf.json 不存在"
-    exit 1
-fi
-
-echo ""
-echo "=== 所有检查通过！可以运行 npm run tauri:build ==="
-echo ""
-echo "提示：如果构建时间过长，可以："
-echo "  1. 使用 --target 参数只构建特定平台"
-echo "  2. 检查网络连接（首次构建需要下载依赖）"
-echo "  3. 确保有足够的磁盘空间"
+echo 'PASS: automated candidate checks. Check the release report for platform/signing/device evidence.'

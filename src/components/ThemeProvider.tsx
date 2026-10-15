@@ -6,7 +6,7 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Theme, ThemeId, getTheme, DEFAULT_THEME, THEMES } from '@/lib/themes';
 import { applyTheme } from '@/lib/atmosphere';
 import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeMutedColor, getThemeSurfaceColor, getThemeTextColor } from '@/lib/themeStyles';

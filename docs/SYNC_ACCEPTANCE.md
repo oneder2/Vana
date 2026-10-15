@@ -44,7 +44,7 @@ python3 scripts/test-supabase-live.py cleanup --config PRIVATE_CONFIG --fixtures
 
 `provision` 使用不会发邮件的 admin signup link，随后真实 verify/password/refresh/logout；不代表外部邮箱投递成功。`run` 只通过 user JWT 执行协议。`cleanup` 先核对账号邮箱及本轮 ownership marker，只删除这些自建账号及其级联记录，并核对 HTTP 404；删除确认丢失后可以重跑。首次账号创建遇到网络超时且未记录 ID 时，脚本拒绝盲目删除，需要在控制台确认对应测试账号。
 
-Linux 原生应用与 Android Preview 已通过同一账号双向编辑同步及保存后重启会话/正文回读。Linux 系统凭据原生探针已通过真实 refresh 和 logout。完整运行证据和仍待验收的签名/平台边界见 [开发记录](DEVELOPMENT_2026-10-13.md)。
+Linux 原生应用与 Android Preview 已通过同一账号双向编辑同步及保存后重启会话/正文回读。Linux 系统凭据原生探针已通过真实 refresh 和 logout。完整运行证据和仍待验收的签名/平台边界见 [开发记录](archive/DEVELOPMENT_2026-10-13.md)。
 
 原生 Auth 探针读取 `VANA_NATIVE_ACCEPTANCE_CONFIG` 所指私有 JSON，字段为 `url`、`anon`、`expected_project_ref`、测试账号 `email`/`password`/`id`，不含 admin key。仅允许自建 `vana-acceptance-…@example.com` fixture；使用全新临时空间和实际 OS 凭据库。Linux 在隔离 D-Bus/keyring 运行；Windows 使用临时 runner。手动签名构建可开启 `windows_native_acceptance`，并临时配置 `VANA_NATIVE_ACCEPTANCE_ACCOUNT` Secret；运行后移除此测试 Secret。探针的重新打开存储与完整应用进程重启是两项独立证据。
 

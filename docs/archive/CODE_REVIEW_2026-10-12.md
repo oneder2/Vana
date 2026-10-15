@@ -1,5 +1,6 @@
 # Vana 项目信息与代码审查
 
+> 历史设计或验收记录，仅说明当时状态。当前功能与发布结论见 [文档索引](../README.md)。
 审查日期：2026-10-12（America/New_York）。范围：当前完整工作区，包括审查开始前已有的未提交 Android 分享、导出和主页改动；不是仅审查最近一次提交。未修改业务代码，未访问真实账号或向真实 Supabase 写入数据。
 
 **结论：技术选型适合本地优先文档应用，但当前保存与同步机制尚不足以支持可靠的多设备使用。已复现正文丢失、跨文档标签串写、跨账号数据混用和数据库部分提交。建议先修复数据正确性，再增加附件、实时同步等功能。**
@@ -40,13 +41,13 @@ flowchart LR
 
 **1. 本地库与同步队列没有账号隔离，切换账号会暴露并可能上传旧账号文档。**
 
-定位：[db.rs:223](../src-tauri/src/db.rs#L223)、[db.rs:710](../src-tauri/src/db.rs#L710)、[db.rs:727](../src-tauri/src/db.rs#L727)、[supabaseSync.ts:310](../src/lib/supabaseSync.ts#L310)。本地 documents、tags、history、sync_queue 均没有 account/user/project 归属；退出只删除 session 配置。上行时则给导出的任何文档填入当前 session.user_id。复现：A 创建文档 → 完成一次同步 → 退出 → B 登录；B 仍能读取 A 的文档，修改后被作为 B 的待上传文档导出。A 原有未同步任务还可能在 B 登录后直接上传。云端 RLS 对各用户行生效，但不能阻止客户端将别人的本地数据以当前用户身份复制到云端。
+定位：[db.rs:223](../../src-tauri/src/db.rs#L223)、[db.rs:710](../../src-tauri/src/db.rs#L710)、[db.rs:727](../../src-tauri/src/db.rs#L727)、[supabaseSync.ts:310](../../src/lib/supabaseSync.ts#L310)。本地 documents、tags、history、sync_queue 均没有 account/user/project 归属；退出只删除 session 配置。上行时则给导出的任何文档填入当前 session.user_id。复现：A 创建文档 → 完成一次同步 → 退出 → B 登录；B 仍能读取 A 的文档，修改后被作为 B 的待上传文档导出。A 原有未同步任务还可能在 B 登录后直接上传。云端 RLS 对各用户行生效，但不能阻止客户端将别人的本地数据以当前用户身份复制到云端。
 
 建议：以 Supabase 项目与 user_id 确定本地数据命名空间，可选每账号独立库或全表账号键；访客数据有单独空间及明确迁移流程。账号切换必须停掉旧同步任务，并隔离会话、队列和游标。
 
 **2. 编辑器共用一个防抖保存定时器，切换文档会丢正文或串写标签。**
 
-定位：[Editor.tsx:55](../src/components/Editor.tsx#L55)、[Editor.tsx:75](../src/components/Editor.tsx#L75)、[Editor.tsx:115](../src/components/Editor.tsx#L115)。保存回调捕获旧文档的 id/content，但在执行时读取共享的 latestTags.current。编辑 A 后，在 600ms 保存执行前切到 B 并编辑，B 的 onUpdate 会 clearTimeout，取消 A 的待保存任务；若只切换不编辑，则 A 会用 B 的标签保存。离开主页时 cleanup 也直接取消待保存任务，没有 flush。
+定位：[Editor.tsx:55](../../src/components/Editor.tsx#L55)、[Editor.tsx:75](../../src/components/Editor.tsx#L75)、[Editor.tsx:115](../../src/components/Editor.tsx#L115)。保存回调捕获旧文档的 id/content，但在执行时读取共享的 latestTags.current。编辑 A 后，在 600ms 保存执行前切到 B 并编辑，B 的 onUpdate 会 clearTimeout，取消 A 的待保存任务；若只切换不编辑，则 A 会用 B 的标签保存。离开主页时 cleanup 也直接取消待保存任务，没有 flush。
 
 真实 React/Tiptap 浏览器复现已确认两种结果：第一种只出现 id=b 的保存调用；第二种保存 id=a，但 tags=[tagB]。为消除机器负载对 600ms 窗口的影响，复现只控制防抖定时器，IPC 使用隔离内存假数据。
 
@@ -54,13 +55,13 @@ flowchart LR
 
 **3. 页面 refresh 无条件回填数据库正文，通知变化也会触发重新初始化并覆盖未保存草稿。**
 
-定位：[page.tsx:328](../src/app/page.tsx#L328)、[page.tsx:417](../src/app/page.tsx#L417)、[Editor.tsx:106](../src/components/Editor.tsx#L106)、[ToastProvider.tsx:88](../src/components/ToastProvider.tsx#L88)。refresh 每次都 setContent(数据库正文)，Editor 再 setContent 覆盖编辑状态。Home 初始化 effect 依赖整个 toast 对象；ToastProvider 每次通知增删都创建新的 context value，导致初始化重跑。浏览器复现：A 输入 LIVE_DRAFT，保存尚未执行 → 点击导出 Markdown → 成功通知触发重新初始化；编辑器从 LIVE_DRAFTDocA 变回 DocA，期间没有保存调用。同步结束和其他元数据刷新也有同类覆盖路径。
+定位：[page.tsx:328](../../src/app/page.tsx#L328)、[page.tsx:417](../../src/app/page.tsx#L417)、[Editor.tsx:106](../../src/components/Editor.tsx#L106)、[ToastProvider.tsx:88](../../src/components/ToastProvider.tsx#L88)。refresh 每次都 setContent(数据库正文)，Editor 再 setContent 覆盖编辑状态。Home 初始化 effect 依赖整个 toast 对象；ToastProvider 每次通知增删都创建新的 context value，导致初始化重跑。浏览器复现：A 输入 LIVE_DRAFT，保存尚未执行 → 点击导出 Markdown → 成功通知触发重新初始化；编辑器从 LIVE_DRAFTDocA 变回 DocA，期间没有保存调用。同步结束和其他元数据刷新也有同类覆盖路径。
 
 建议：初始化只由稳定依赖触发，通知接口与通知列表分离或稳定化；列表、同步状态、当前编辑草稿分别刷新。维护 dirty/base revision，只在确认无本地草稿或接受远端变更时更新正文。
 
 **4. 下行会覆盖尚未上传的本地修改，上行也没有并发版本条件。**
 
-定位：[supabaseSync.ts:431](../src/lib/supabaseSync.ts#L431)、[db.rs:1004](../src-tauri/src/db.rs#L1004)、[db.rs:1057](../src-tauri/src/db.rs#L1057)。同步先 pull/apply，再重新导出本地待处理任务；apply_remote_documents 仅按 updated_at 字符串比较，不检查是否存在本地未同步改动。复现：本地 offline-local-edit 尚在队列，较新远端正文进入 apply 后，本地正文变成 remote-edit，后续 export 导出的也是 remote-edit，原任务最终仍可能被标完成。已有本地历史表可能留有旧快照，但主线没有恢复入口，也没有冲突提示。
+定位：[supabaseSync.ts:431](../../src/lib/supabaseSync.ts#L431)、[db.rs:1004](../../src-tauri/src/db.rs#L1004)、[db.rs:1057](../../src-tauri/src/db.rs#L1057)。同步先 pull/apply，再重新导出本地待处理任务；apply_remote_documents 仅按 updated_at 字符串比较，不检查是否存在本地未同步改动。复现：本地 offline-local-edit 尚在队列，较新远端正文进入 apply 后，本地正文变成 remote-edit，后续 export 导出的也是 remote-edit，原任务最终仍可能被标完成。已有本地历史表可能留有旧快照，但主线没有恢复入口，也没有冲突提示。
 
 POST 上行使用无条件 merge-duplicates；两台设备都 pull 完后依次 POST，后到的旧版本仍可覆盖先到的新版本。客户端时钟偏差也会影响胜负。
 
@@ -68,43 +69,43 @@ POST 上行使用无条件 merge-duplicates；两台设备都 pull 完后依次 
 
 **5. 每轮同步先 PATCH 本地目录结构，旧设备会回滚云端的新移动操作。**
 
-定位：[supabaseSync.ts:360](../src/lib/supabaseSync.ts#L360)、[supabaseSync.ts:399](../src/lib/supabaseSync.ts#L399)、[db.rs:959](../src-tauri/src/db.rs#L959)。pushLocalStructureRepair 在 pull 前对本地所有分组及嵌套节点 PATCH parent_id/depth/node_kind，无版本比较、无 dirty 判断，也不更新 updated_at。复现实际同步函数：云端文档位于 new-folder 且时间更晚，本地仍在 old-folder；请求顺序 PATCH → GET，拉回的 parent_id 已变成 old-folder。
+定位：[supabaseSync.ts:360](../../src/lib/supabaseSync.ts#L360)、[supabaseSync.ts:399](../../src/lib/supabaseSync.ts#L399)、[db.rs:959](../../src-tauri/src/db.rs#L959)。pushLocalStructureRepair 在 pull 前对本地所有分组及嵌套节点 PATCH parent_id/depth/node_kind，无版本比较、无 dirty 判断，也不更新 updated_at。复现实际同步函数：云端文档位于 new-folder 且时间更晚，本地仍在 old-folder；请求顺序 PATCH → GET，拉回的 parent_id 已变成 old-folder。
 
 建议：停止常态执行这种结构修复；历史补丁应作为带版本的单次迁移。正常移动走与正文相同的版本化同步规则。目录深度可由父链派生，减少冗余字段分歧。
 
 **6. 文件夹移入回收站/恢复改变整个子树，却只给根节点写同步任务。**
 
-定位：[db.rs:617](../src-tauri/src/db.rs#L617)、[db.rs:1425](../src-tauri/src/db.rs#L1425)、[db.rs:917](../src-tauri/src/db.rs#L917)。apply_status_to_subtree 修改全部后代的 status/updated_at，但 set_document_status 只对根节点 queue_job。export 只读取队列 entity_id 对应文档，所以已同步过的子文档不会上传新状态。实际 SQLite 复现：父子都已同步后删除父文件夹，子文档本地变为 trashed，导出却只有父文件夹。另一设备的子文档仍 active，可能因父节点状态过滤而在树中消失。
+定位：[db.rs:617](../../src-tauri/src/db.rs#L617)、[db.rs:1425](../../src-tauri/src/db.rs#L1425)、[db.rs:917](../../src-tauri/src/db.rs#L917)。apply_status_to_subtree 修改全部后代的 status/updated_at，但 set_document_status 只对根节点 queue_job。export 只读取队列 entity_id 对应文档，所以已同步过的子文档不会上传新状态。实际 SQLite 复现：父子都已同步后删除父文件夹，子文档本地变为 trashed，导出却只有父文件夹。另一设备的子文档仍 active，可能因父节点状态过滤而在树中消失。
 
 建议：一个事务中修改完整子树并为所有改变的节点登记同步任务；恢复/归档同样适用。移动目录产生的后代 depth 改动也需纳入一致的处理机制。
 
 **7. 多步数据库修改没有事务，操作失败后仍留下部分变更。**
 
-定位：[db.rs:592](../src-tauri/src/db.rs#L592)、[db.rs:1404](../src-tauri/src/db.rs#L1404)，保存链路另见 [db.rs:569](../src-tauri/src/db.rs#L569)。移动先 UPDATE 根节点并 queue_job，随后 cascade_child_depths 才验证后代最大深度。复现：带子文档的根文件夹移到 depth=6 的文件夹内，返回“最大深度为 7”，但根已迁移为 depth=7、任务已入队，子文档仍 depth=1。save_document 的正文、标签、队列与历史亦分别提交，后一步出错不能撤回前一步。
+定位：[db.rs:592](../../src-tauri/src/db.rs#L592)、[db.rs:1404](../../src-tauri/src/db.rs#L1404)，保存链路另见 [db.rs:569](../../src-tauri/src/db.rs#L569)。移动先 UPDATE 根节点并 queue_job，随后 cascade_child_depths 才验证后代最大深度。复现：带子文档的根文件夹移到 depth=6 的文件夹内，返回“最大深度为 7”，但根已迁移为 depth=7、任务已入队，子文档仍 depth=1。save_document 的正文、标签、队列与历史亦分别提交，后一步出错不能撤回前一步。
 
 建议：先校验完整子树深度，再用同一 SQLite 事务提交 documents、tags、history、outbox；apply 远端批次同样需要明确原子性及失败恢复策略。
 
 **8. 新 Android 分享入口通过 JNI 名称调用，但 Release 混淆规则没有保留该入口。**
 
-定位：[commands.rs:528](../src-tauri/src/commands.rs#L528)、[AndroidShare.java:32](../src-tauri/gen/android/app/src/main/java/com/vana/no_visitors/AndroidShare.java#L32)、[build.gradle.kts:72](../src-tauri/gen/android/app/build.gradle.kts#L72)、[proguard-rules.pro](../src-tauri/gen/android/app/proguard-rules.pro)。Release 开启 isMinifyEnabled；Rust 以字符串查找 AndroidShare 类、shareExportFile 方法和 lastShareError 字段。Java/Kotlin 中只有 setActivity/clearActivity 的调用，不存在 shareExportFile 的 Java 调用；项目现有 keep 规则只保留部分 TauriActivity 方法。R8 无法从 Rust 字符串调用推断需要保留的入口，可删除或改名，导致 Release 分享失效。
+定位：[commands.rs:528](../../src-tauri/src/commands.rs#L528)、[AndroidShare.java:32](../../src-tauri/gen/android/app/src/main/java/com/vana/no_visitors/AndroidShare.java#L32)、[build.gradle.kts:72](../../src-tauri/gen/android/app/build.gradle.kts#L72)、[proguard-rules.pro](../../src-tauri/gen/android/app/proguard-rules.pro)。Release 开启 isMinifyEnabled；Rust 以字符串查找 AndroidShare 类、shareExportFile 方法和 lastShareError 字段。Java/Kotlin 中只有 setActivity/clearActivity 的调用，不存在 shareExportFile 的 Java 调用；项目现有 keep 规则只保留部分 TauriActivity 方法。R8 无法从 Rust 字符串调用推断需要保留的入口，可删除或改名，导致 Release 分享失效。
 
 建议：为该类及 JNI 访问的方法/字段添加明确 keep 规则或可靠的 @Keep，并检查 Release APK 的类/方法及真机分享。此项是静态发现；本轮未执行 Android Release 安装验证。
 
 另有 7 项中优先级问题（P2），影响同步规模、错误反馈、存储和格式兼容。
 
-**9. 全量 pull 未分页，超过 1000 行后较新远端文档可能一直不可见。** 定位：[supabaseSync.ts:402](../src/lib/supabaseSync.ts#L402)、[supabase/config.toml:18](../supabase/config.toml#L18)。只有一次 GET，无 Range/offset/page，按 updated_at 升序；仓库配置 max_rows=1000，而本地允许 5000 文档。配置不变时只能拿到最旧 1000 行，后续循环重复同一批。隔离实际函数调用已确认单个未分页请求；没有运行真实 1001 行 Supabase 场景。建议分页直到结束，并为增量游标使用服务器 revision 或 (updated_at,id) 复合游标。
+**9. 全量 pull 未分页，超过 1000 行后较新远端文档可能一直不可见。** 定位：[supabaseSync.ts:402](../../src/lib/supabaseSync.ts#L402)、[supabase/config.toml:18](../../supabase/config.toml#L18)。只有一次 GET，无 Range/offset/page，按 updated_at 升序；仓库配置 max_rows=1000，而本地允许 5000 文档。配置不变时只能拿到最旧 1000 行，后续循环重复同一批。隔离实际函数调用已确认单个未分页请求；没有运行真实 1001 行 Supabase 场景。建议分页直到结束，并为增量游标使用服务器 revision 或 (updated_at,id) 复合游标。
 
-**10. 同步 HTTP 失败会走 UI 的成功分支。** 定位：[supabaseSync.ts:417](../src/lib/supabaseSync.ts#L417)、[supabaseSync.ts:447](../src/lib/supabaseSync.ts#L447)、[page.tsx:392](../src/app/page.tsx#L392)。非 JWT 过期的 HTTP 错误返回 finalizeSyncJobs(...false...) 的正常 Promise，调用方不检查 snapshot.last_error，直接显示 success 并输出 completed 日志。隔离 fetch 返回 permission denied 后，runSupabaseSync 正常 resolve，已确认。建议返回可区分的结果类型或抛出业务错误；异常路径也统一持久化错误状态。
+**10. 同步 HTTP 失败会走 UI 的成功分支。** 定位：[supabaseSync.ts:417](../../src/lib/supabaseSync.ts#L417)、[supabaseSync.ts:447](../../src/lib/supabaseSync.ts#L447)、[page.tsx:392](../../src/app/page.tsx#L392)。非 JWT 过期的 HTTP 错误返回 finalizeSyncJobs(...false...) 的正常 Promise，调用方不检查 snapshot.last_error，直接显示 success 并输出 completed 日志。隔离 fetch 返回 permission denied 后，runSupabaseSync 正常 resolve，已确认。建议返回可区分的结果类型或抛出业务错误；异常路径也统一持久化错误状态。
 
-**11. 搜索词直接构造正则，普通字符可能导致整页渲染异常。** 定位：[SearchModal.tsx:153](../src/components/SearchModal.tsx#L153)。例如搜索 '['、'('、'\' 且有结果时，new RegExp 产生 SyntaxError；页面没有 ErrorBoundary。建议转义正则特殊字符或使用纯字符串分段高亮。另有搜索结果用 context 文本夹带文档 id 的旧接口，不展示实际命中片段，应改为结构化 document_id/title/snippet。
+**11. 搜索词直接构造正则，普通字符可能导致整页渲染异常。** 定位：[SearchModal.tsx:153](../../src/components/SearchModal.tsx#L153)。例如搜索 '['、'('、'\' 且有结果时，new RegExp 产生 SyntaxError；页面没有 ErrorBoundary。建议转义正则特殊字符或使用纯字符串分段高亮。另有搜索结果用 context 文本夹带文档 id 的旧接口，不展示实际命中片段，应改为结构化 document_id/title/snippet。
 
-**12. SQLite 配额没有覆盖实际磁盘占用，历史和任务会无限积累。** 定位：[db.rs:1147](../src-tauri/src/db.rs#L1147)、[db.rs:1208](../src-tauri/src/db.rs#L1208)、[db.rs:1231](../src-tauri/src/db.rs#L1231)、[db.rs:1111](../src-tauri/src/db.rs#L1111)。每次正文变化都保存全量 history 和全量 queue.payload，成功同步只更新 processed_at，未清理任务；25MB 统计只计算 documents 三个字段，不含历史、任务、附件。约 1000 次 100KiB 正文保存即可额外积累约 200MiB 快照与任务正文。回收站仍计入文档数量/存储，主线也没有永久删除入口。建议规定历史保留/压缩策略、清理已处理 outbox、提供可恢复的彻底删除，并区分逻辑配额与实际磁盘用量。
+**12. SQLite 配额没有覆盖实际磁盘占用，历史和任务会无限积累。** 定位：[db.rs:1147](../../src-tauri/src/db.rs#L1147)、[db.rs:1208](../../src-tauri/src/db.rs#L1208)、[db.rs:1231](../../src-tauri/src/db.rs#L1231)、[db.rs:1111](../../src-tauri/src/db.rs#L1111)。每次正文变化都保存全量 history 和全量 queue.payload，成功同步只更新 processed_at，未清理任务；25MB 统计只计算 documents 三个字段，不含历史、任务、附件。约 1000 次 100KiB 正文保存即可额外积累约 200MiB 快照与任务正文。回收站仍计入文档数量/存储，主线也没有永久删除入口。建议规定历史保留/压缩策略、清理已处理 outbox、提供可恢复的彻底删除，并区分逻辑配额与实际磁盘用量。
 
-**13. 云端 JSONB 与前端正文格式不一致。** 定位：[migration:7](../supabase/migrations/202604180001_init_documents.sql#L7)、[supabaseSync.ts:318](../src/lib/supabaseSync.ts#L318)、[supabaseSync.ts:338](../src/lib/supabaseSync.ts#L338)。本地 content_json 是序列化字符串，上行原样传给 JSONB 列，实际存成 JSON 字符串值；若云端使用表默认值或正常 JSON 对象写入，下行 String(object) 会变成 '[object Object]'，前端 parseContent 回退为空文档。隔离函数已复现对象正文转换结果。建议线上统一使用 JSON 对象，上行 JSON.parse，下行 JSON.stringify，并兼容迁移已有字符串行与校验 Tiptap schema。
+**13. 云端 JSONB 与前端正文格式不一致。** 定位：[migration:7](../../supabase/migrations/202604180001_init_documents.sql#L7)、[supabaseSync.ts:318](../../src/lib/supabaseSync.ts#L318)、[supabaseSync.ts:338](../../src/lib/supabaseSync.ts#L338)。本地 content_json 是序列化字符串，上行原样传给 JSONB 列，实际存成 JSON 字符串值；若云端使用表默认值或正常 JSON 对象写入，下行 String(object) 会变成 '[object Object]'，前端 parseContent 回退为空文档。隔离函数已复现对象正文转换结果。建议线上统一使用 JSON 对象，上行 JSON.parse，下行 JSON.stringify，并兼容迁移已有字符串行与校验 Tiptap schema。
 
-**14. 未登录时无法完成“连接验证”，输入会话也没有强制验证用户身份。** 定位：[supabaseSync.ts:264](../src/lib/supabaseSync.ts#L264)、[supabaseSync.ts:63](../src/lib/supabaseSync.ts#L63)、[supabaseSync.ts:132](../src/lib/supabaseSync.ts#L132)。ensureValidSupabaseSession 在无 session 时抛错，后面的“连接成功，当前未登录”分支实际不可达，已隔离复现。fetchUserProfile 遇到 HTTP 非成功却返回空对象，允许保存未经验证、缺 user_id 的导入 session。建议先单独判断 session 是否存在；导入必须以成功的 /auth/v1/user 响应确立 user_id。
+**14. 未登录时无法完成“连接验证”，输入会话也没有强制验证用户身份。** 定位：[supabaseSync.ts:264](../../src/lib/supabaseSync.ts#L264)、[supabaseSync.ts:63](../../src/lib/supabaseSync.ts#L63)、[supabaseSync.ts:132](../../src/lib/supabaseSync.ts#L132)。ensureValidSupabaseSession 在无 session 时抛错，后面的“连接成功，当前未登录”分支实际不可达，已隔离复现。fetchUserProfile 遇到 HTTP 非成功却返回空对象，允许保存未经验证、缺 user_id 的导入 session。建议先单独判断 session 是否存在；导入必须以成功的 /auth/v1/user 响应确立 user_id。
 
-**15. 文件名未经原生层校验，Windows 导出可能失败，IPC 还允许目录越界。** 定位：[commands.rs:492](../src-tauri/src/commands.rs#L492)、[page.tsx:626](../src/app/page.tsx#L626)。标题作为 filename，原生层直接 PathBuf.join；冒号、问号、反斜杠及 Windows 保留名没有处理，带路径的 filename/file_type 也未限制。建议原生层接受受控扩展名，处理保留字符/设备名并验证最终路径在导出目录内。此项未在 Windows 实机验证。
+**15. 文件名未经原生层校验，Windows 导出可能失败，IPC 还允许目录越界。** 定位：[commands.rs:492](../../src-tauri/src/commands.rs#L492)、[page.tsx:626](../../src/app/page.tsx#L626)。标题作为 filename，原生层直接 PathBuf.join；冒号、问号、反斜杠及 Windows 保留名没有处理，带路径的 filename/file_type 也未限制。建议原生层接受受控扩展名，处理保留字符/设备名并验证最终路径在导出目录内。此项未在 Windows 实机验证。
 
 除上述缺陷外，以下架构与产品边界需要明确。
 

@@ -280,7 +280,6 @@ export default function HomePage() {
   const [tagDraft, setTagDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [explorerFolderId, setExplorerFolderId] = useState<string | null>(null);
@@ -645,7 +644,6 @@ export default function HomePage() {
       toast.error(`最近 5 分钟写入次数已达到上限（${appState.limits.max_write_ops_per_5_minutes}）`);
       return;
     }
-    setIsImporting(true);
     try {
       const result = await importLegacyWorkspace();
       toast.success(`导入完成：${result.imported_documents} 篇文档`);
@@ -653,8 +651,6 @@ export default function HomePage() {
       await triggerAutoSync('legacy-import', true);
     } catch (error) {
       toast.error(`导入失败：${error}`);
-    } finally {
-      setIsImporting(false);
     }
   }, [appState, refresh, toast, triggerAutoSync]);
 
