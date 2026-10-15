@@ -29,7 +29,7 @@ if (fs.existsSync(path.join(repoRoot, "package-lock.json"))) {
   });
 }
 const cargoPath = path.join(repoRoot, "src-tauri/Cargo.toml");
-const cargo = fs.readFileSync(cargoPath, "utf8");
+const cargo = fs.readFileSync(cargoPath, "utf8").replace(/\r\n/g, "\n");
 if (!/^version = "[^"]+"$/m.test(cargo)) throw new Error("Package version missing from Cargo.toml");
 changes.set(cargoPath, cargo.replace(/^version = "[^"]+"$/m, `version = "${version}"`));
 const cargoLockPath = path.join(repoRoot, "src-tauri/Cargo.lock");
@@ -37,7 +37,7 @@ if (fs.existsSync(cargoLockPath)) {
   const packageName = cargo.match(/^name = "([^"]+)"$/m)?.[1];
   const escapedName = packageName?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matcher = new RegExp(`(\\[\\[package\\]\\]\\nname = "${escapedName}"\\nversion = ")[^"]+("\\n)`);
-  const cargoLock = fs.readFileSync(cargoLockPath, "utf8");
+  const cargoLock = fs.readFileSync(cargoLockPath, "utf8").replace(/\r\n/g, "\n");
   if (!packageName || !matcher.test(cargoLock)) throw new Error("Root package missing from Cargo.lock");
   changes.set(cargoLockPath, cargoLock.replace(matcher, (_, before, after) => before + version + after));
 }
