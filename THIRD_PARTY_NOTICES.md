@@ -20,3 +20,9 @@ and [Fade Content](https://www.reactbits.dev/animations/fade-content), found via
 the requested [component index](https://www.reactbits.dev/get-started/index).
 The bookmark-shaped location marker and preference layout are Vana designs;
 no additional animation runtime or remote font is bundled.
+
+The Vana download website's `website/effects.js` adapts the Aurora WebGL shader
+and SpotlightCard pointer-centered light from the same revision. It uses a
+native DOM lifecycle with a bounded canvas resolution, offscreen/visibility
+pausing, reduced-motion and a user pause control. The license is also distributed
+with the generated website at `/licenses/react-bits.md`.
