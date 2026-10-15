@@ -58,3 +58,6 @@ src-tauri/gen/android/app/build/
 src-tauri/gen/android/build/
 
 /tests/native-core/target/
+
+# Kotlin incremental compiler cache
+src-tauri/gen/android/buildSrc/.kotlin/

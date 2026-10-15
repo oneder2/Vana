@@ -35,3 +35,5 @@ npm run tauri:build
 ```
 
 构建入口把当前平台产物归档到 `dist/linux`、`dist/windows`、`dist/android`。官网独立生成静态文件，无 Node 常驻服务，见 [官网维护](../website/README.md)。正式分发与版本策略见 [部署指南](DEPLOYMENT.md) 和 [版本策略](VERSIONING.md)。
+
+多个 worktree 构建 Android 时，优先使用各自默认的 Cargo target 目录。跨工作树共享 `CARGO_TARGET_DIR` 可能复用绑定旧目录的 Tauri Kotlin 生成缓存，导致缺少 `TauriActivity`；这时只清理相应目标的 Tauri 编译缓存后重建，不要重建或覆盖已提交的 Android 项目。
