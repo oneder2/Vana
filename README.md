@@ -1,6 +1,6 @@
 # Vana
 
-源码候选版本：0.7.1；当前正式下载：0.7.0。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
+当前正式版本：0.7.1。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
 
 面向个人写作与长期阅读，重点是层级清晰、改动可理解、误改可恢复。以离线空间、正文差异、受保护的恢复和可携带备份建立优势。真实多设备验收及适用边界见 [开发记录](docs/archive/DEVELOPMENT_2026-10-13.md)，定位见 [产品方向](docs/PRODUCT_DIRECTION.md)。
 
@@ -49,7 +49,7 @@ python3 scripts/test-supabase-protocol.py  # 需要 Docker
 
 ## 文档
 
-[文档索引](docs/README.md) · [本次发布自检](docs/RELEASE_READINESS_2026-10-15.md)
+[文档索引](docs/README.md) · [上线前自检](docs/RELEASE_READINESS_2026-10-15.md) · [0.7.1 发布记录](docs/RELEASE_0.7.1_2026-10-16.md)
 
 - [当前架构、同步契约与安全边界](docs/ARCHITECTURE.md)
 - [产品方向](docs/PRODUCT_DIRECTION.md) · [界面与账号优化](docs/archive/UIUX_REFINEMENT_2026-10-13.md) · [空间备份格式](docs/BACKUP_FORMAT.md) · [会话与渲染安全](docs/SESSION_SECURITY.md)

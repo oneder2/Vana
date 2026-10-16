@@ -24,6 +24,6 @@ Android 所有正式分发渠道必须沿用同一签名密钥，才能覆盖升
 
 ## 当前实现
 
-官网已部署到 <https://vana.gellaronline.cc/>，使用静态 HTML、CSS 和原生浏览器脚本。服务器每 15 分钟读取 GitHub 最新正式 Release，验证版本、六种格式、来源与 SHA-256，原子替换页面；失败保留上次完整版本。当前默认下载为 0.7.0，候选和 Preview 不进入该入口。
+官网已部署到 <https://vana.gellaronline.cc/>，使用静态 HTML、CSS 和原生浏览器脚本。服务器每 15 分钟读取 GitHub 最新正式 Release，验证版本、六种格式、来源与 SHA-256，原子替换页面；失败保留上次完整版本。当前默认下载为 0.7.1，候选和 Preview 不进入该入口。0.7.1 Release 另提供 `SHA256SUMS.txt`，覆盖全部安装文件与 Android 构建清单。
 
-官网维护和回退见 [网站说明](../website/README.md)。本次候选检查见 [发布自检](RELEASE_READINESS_2026-10-15.md)。分发仍使用 GitHub 原文件，当前没有 CDN 安装包镜像或自动安装更新。
+官网维护和回退见 [网站说明](../website/README.md)。本次结果见 [发布记录](RELEASE_0.7.1_2026-10-16.md) 和 [发布自检](RELEASE_READINESS_2026-10-15.md)。分发仍使用 GitHub 原文件，当前没有 CDN 安装包镜像或自动安装更新。
