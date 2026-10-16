@@ -1,146 +1,39 @@
-# 本地构建环境清单
+# 本地构建环境
 
-本文档给出当前项目在本地进行 Windows / Android 构建时的最低配置要求，以及当前开发机上的已验证状态。
+使用 Node.js 22 LTS、Rust stable、Python 3.11+。依赖以 `npm ci` 和已提交的 Cargo lock 安装；协议回归需要 Docker，图标检查需要 Pillow（`python3 -m pip install 'Pillow>=10,<13'`）。
 
-## Windows 最小构建清单
+## Linux
 
-适用场景：
-- 本机生成 `.exe` / `.msi`
-- 调试 Windows 打包、签名或安装器问题
+安装 GTK 3、WebKit2GTK 4.1、AppIndicator、librsvg、patchelf 和 C/C++ 构建工具，包清单见 `.github/workflows/ci.yml`。通过 `npm run tauri:build` 使用项目构建入口；本机无需重复指定 Linux target。系统凭据测试使用独立 D-Bus 会话和临时 keyring，避免碰用户已有凭据。
 
-最低要求：
-- Windows 10/11
-- Node.js 20+
-- Rust stable
-- Visual Studio Build Tools 或 Visual Studio 2022
-- MSVC C++ 工具链
-- WebView2 Runtime
-- `npm ci`
-- `cargo check --manifest-path src-tauri/Cargo.toml`
-- `npm run tauri:build`
+## Android
 
-如果需要签名：
-- `.pfx` 证书
-- 证书密码
-- 可选时间戳服务配置
+需要完整 JDK 17+、Android SDK / platform-tools / NDK / build-tools，以及 `aarch64-linux-android` Rust target。已有 Android 工程已入库，不要重复初始化覆盖自定义 Insets、返回键、分享和签名配置。
 
-当前项目额外注意点：
-- Windows MSI 版本号由 CI 从 tag 派生，不建议再手动改 `tauri.conf.json`
-- 发布工作流通过 `scripts/sync-version.mjs` 同步版本号
+配置 `JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`NDK_HOME` 后运行：
 
-结论：
-- 如果你当前不在本机打 Windows 包，不需要优先配置 Windows 环境
-- 真正需要时再补 Visual Studio Build Tools 和签名证书即可
+```bash
+npm ci
+npm run tauri:dev:android
+# 完整生产构建，默认只支持 64 位 ARM
+npm run tauri:build:android
+```
 
-## Android 最小构建清单
+正式签名需要 `VANA_ANDROID_KEYSTORE_PATH`、`VANA_ANDROID_KEYSTORE_PASSWORD`、`VANA_ANDROID_KEY_ALIAS`、`VANA_ANDROID_KEY_PASSWORD`；在环境中注入，不生成 `keystore.properties`。体验包使用 `VANA_ANDROID_PREVIEW=1` 和明确的测试签名，与正式包共存；不能用它替代正式签名升级验收。
 
-适用场景：
-- 本机生成 APK / AAB
-- 验证移动端最低可运行状态
-- 在模拟器或真机上检查窄屏布局与基础交互
+`adb devices -l` 显示已授权设备后才能安装。版本号、架构和签名验证后用 `adb install -r <APK>` 升级，不卸载、不清空数据。USB 调试授权需要用户在手机确认。
 
-最低要求：
-- Node.js 20+
-- Rust stable
-- 可用的本机 JDK（JDK 17+；本机实测 Android Studio 自带 JBR 21 可用）
-- Android SDK
-- Android platform-tools
-- Android cmdline-tools
-- Android NDK
-- Android build-tools
-- 至少一个 Android platform
-- `aarch64-linux-android` Rust target
+## Windows
 
-推荐补齐：
-- `armv7-linux-androideabi`
-- `x86_64-linux-android`
-- `i686-linux-android`
-- Android Emulator
-- 至少一个 AVD 或一台真机
+需要 Windows 10/11、Visual Studio 2022 C++ Build Tools、MSVC Rust target 与 WebView2。Linux 不能代替 Windows 原生运行与安装验收。发布构建在 Windows CI 上进行，产物签名与实际 PFX 证书指纹比对；项目自签名证书不等于用户系统信任的商业发行者。
 
-项目级要求：
-- `ANDROID_HOME`
-- `ANDROID_SDK_ROOT`
-- `NDK_HOME`
-- `JAVA_HOME`
-- `npx tauri android init`
+## 检查与产物
 
-补充说明：
-- 如果系统自带的是纯 JRE 而不是完整 JDK，Gradle 会在 Android 构建阶段失败
-- 本项目当前不要求你额外安装 Oracle/Temurin JDK，只要 `JAVA_HOME` 指向可用的完整 JDK 即可
-- 对当前这台开发机，Android Studio 自带的 JBR 是已验证可用方案
+```bash
+bash scripts/check-build-ready.sh
+npm run tauri:build
+```
 
-Debug 构建：
-- `npx tauri android build --debug --target aarch64`
+构建入口把当前平台产物归档到 `dist/linux`、`dist/windows`、`dist/android`。官网独立生成静态文件，无 Node 常驻服务，见 [官网维护](../website/README.md)。正式分发与版本策略见 [部署指南](DEPLOYMENT.md) 和 [版本策略](VERSIONING.md)。
 
-Release 构建：
-- 需要 keystore
-- 需要 `keystore.properties`
-- 需要运行 `scripts/configure-android-signing.py`
-
-## 当前开发机状态
-
-已确认可用：
-- `JAVA_HOME=/home/gellar/opt/android-studio/jbr`
-- `ANDROID_HOME=/home/gellar/Android/Sdk`
-- `ANDROID_SDK_ROOT=/home/gellar/Android/Sdk`
-- `NDK_HOME=/home/gellar/Android/Sdk/ndk/28.2.13676358`
-- `sdkmanager` 已可直接使用
-- `emulator` 已可直接使用
-- `adb` 已可直接使用
-- Rust Android targets 已安装：
-  - `aarch64-linux-android`
-  - `armv7-linux-androideabi`
-  - `x86_64-linux-android`
-  - `i686-linux-android`
-- 本机已有 AVD：
-  - `Medium_Phone_API_36.1`
-
-已完成的本地配置：
-- 已将 Android SDK / emulator / cmdline-tools 路径接入 shell 启动文件
-- 已将 Android Studio JBR 接入 shell 启动文件作为 `JAVA_HOME`
-- 已完成 `npx tauri android init --ci --skip-targets-install`
-- 已补齐 Android Rust targets 所需的 NDK 工具链 `ar` / `ranlib` 兼容链接
-- Linux 本地打包已补充 `scripts/pkgconfig/librsvg-2.0.pc` shim
-  用于在缺少 `librsvg2-dev` 的机器上通过 AppImage 的 `linuxdeploy-plugin-gtk` 检查
-
-本机实测结果：
-- `npx tauri android build --debug --target aarch64` 已成功
-- 生成 APK：
-  `/home/gellar/Desktop/program/personal/Vana/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
-- 生成 AAB：
-  `/home/gellar/Desktop/program/personal/Vana/src-tauri/gen/android/app/build/outputs/bundle/universalDebug/app-universal-debug.aab`
-- 构建过程中仍会看到部分上游 Kotlin / D8 / Gradle 警告，但当前不阻塞 debug 构建
-
-## 建议使用顺序
-
-1. 前端与桌面基础校验：
-   `npm run check`
-
-2. Android 工程初始化：
-   `npx tauri android init --ci --skip-targets-install`
-
-3. Android Debug 包验证：
-   `npx tauri android build --debug --target aarch64`
-
-   如果 shell 尚未重新加载，可临时显式指定：
-   `JAVA_HOME=/home/gellar/opt/android-studio/jbr PATH=/home/gellar/opt/android-studio/jbr/bin:$PATH npx tauri android build --debug --target aarch64`
-
-4. 需要真机/模拟器运行时：
-   `emulator -avd Medium_Phone_API_36.1`
-   或连接 Android 设备后使用 `adb devices`
-
-5. 需要 Release 包时：
-   配置 keystore，再执行签名构建
-
-Linux AppImage 额外说明：
-- 如果系统没有安装 `librsvg2-dev`，仓库内的 `scripts/pkgconfig/librsvg-2.0.pc` 会作为本地兜底
-- 因此本项目推荐通过 `npm run tauri:build` 或 `npm run tauri -- build --bundles appimage` 触发打包
-  不建议直接裸跑 `npx tauri build`，否则可能绕过这个 Linux 本地修复
-- 在 Linux 本机也不要追加 `--target x86_64-unknown-linux-gnu`
-  否则会额外生成 `src-tauri/target/x86_64-unknown-linux-gnu/`，容易与标准输出 `src-tauri/target/release/` 混淆
-
-## 当前建议
-
-- Windows：先不配本地原生构建环境，除非你马上要在 Windows 本机打包或排查签名问题
-- Android：已经值得保留本地构建环境，因为它直接关系到“移动端最低限度运行”的验证
+多个 worktree 构建 Android 时，优先使用各自默认的 Cargo target 目录。跨工作树共享 `CARGO_TARGET_DIR` 可能复用绑定旧目录的 Tauri Kotlin 生成缓存，导致缺少 `TauriActivity`；这时只清理相应目标的 Tauri 编译缓存后重建，不要重建或覆盖已提交的 Android 项目。

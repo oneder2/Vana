@@ -19,53 +19,7 @@ pub struct AtmosphereConfig {
     pub theme: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceConfig {
-    pub commit_scope: String,
-    pub auto_commit_interval: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LibraryEntry {
-    pub favorite: bool,
-    pub archived_at: Option<String>,
-    pub last_opened_at: Option<String>,
-    pub trashed_at: Option<String>,
-    pub original_path: Option<String>,
-    pub title_override: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LibraryMetadata {
-    pub entries: std::collections::HashMap<String, LibraryEntry>,
-}
-
 use crate::db::SearchResult;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncConflictFile {
-    pub path: String,
-    pub ours: String,
-    pub theirs: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncConflict {
-    pub files: Vec<SyncConflictFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConflictResolutionItem {
-    pub path: String,
-    pub choice: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncResult {
-    pub success: bool,
-    pub message: String,
-    pub conflict: Option<SyncConflict>,
-}
 
 #[tauri::command]
 pub fn get_platform() -> Result<String, String> {
@@ -394,29 +348,6 @@ pub async fn import_legacy_workspace_command(
 }
 
 #[tauri::command]
-pub fn read_workspace_config() -> Result<WorkspaceConfig, String> {
-    Ok(WorkspaceConfig {
-        commit_scope: "workspace".to_string(),
-        auto_commit_interval: 15,
-    })
-}
-
-#[tauri::command]
-pub fn write_workspace_config(_config: WorkspaceConfig) -> Result<(), String> {
-    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
-}
-
-#[tauri::command]
-pub fn read_library_metadata() -> Result<LibraryMetadata, String> {
-    Ok(LibraryMetadata::default())
-}
-
-#[tauri::command]
-pub fn write_library_metadata(_metadata: LibraryMetadata) -> Result<(), String> {
-    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
-}
-
-#[tauri::command]
 pub async fn read_file(path: String, app: AppHandle) -> Result<String, String> {
     read_encrypted_file(&path, &app)
         .await
@@ -547,50 +478,6 @@ pub async fn import_master_key_command(app: AppHandle, key_base64: String) -> Re
     import_master_key(&app, &key_base64)
         .await
         .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub fn get_commit_history_command(
-    _path: String,
-    _limit: Option<usize>,
-) -> Result<Vec<serde_json::Value>, String> {
-    Err("Git 提交历史接口已停用".to_string())
-}
-
-#[tauri::command]
-pub fn begin_sync(
-    _path: String,
-    _remote_name: String,
-    _branch_name: String,
-    _pat_token: Option<String>,
-) -> Result<SyncResult, String> {
-    Ok(SyncResult {
-        success: false,
-        message: "Git 同步已从主线移除，请在设置页配置 Supabase".to_string(),
-        conflict: None,
-    })
-}
-
-#[tauri::command]
-pub fn continue_sync_command(_path: String, _branch_name: String) -> Result<SyncResult, String> {
-    Ok(SyncResult {
-        success: false,
-        message: "当前主线不再支持 Git rebase 流程".to_string(),
-        conflict: None,
-    })
-}
-
-#[tauri::command]
-pub fn abort_sync_command(_path: String) -> Result<(), String> {
-    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
-}
-
-#[tauri::command]
-pub fn resolve_conflict_command(
-    _path: String,
-    _items: Vec<ConflictResolutionItem>,
-) -> Result<(), String> {
-    Err("此旧版接口已停用，请使用文档及 Supabase 接口".to_string())
 }
 
 #[tauri::command]

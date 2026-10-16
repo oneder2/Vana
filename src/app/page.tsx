@@ -17,6 +17,8 @@ import {
   Import,
   RefreshCw,
   Trash2,
+  UserRound,
+  Settings2,
   X,
 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
@@ -26,7 +28,7 @@ import { DocumentNavigation } from '@/components/DocumentNavigation';
 import { DocumentHistoryModal } from '@/components/DocumentHistoryModal';
 import { DocumentConflictsModal } from '@/components/DocumentConflictsModal';
 import { documentPath } from '@/lib/documentNavigation';
-import { ContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
+import { ContextMenu, dismissContextMenu, type ContextMenuItem } from '@/components/ContextMenu';
 import { InputModal } from '@/components/InputModal';
 import { SearchModal } from '@/components/SearchModal';
 import { useTheme } from '@/components/ThemeProvider';
@@ -69,10 +71,8 @@ import { DesktopHomeShell } from './home/DesktopHomeShell';
 import { MobileHomeShell } from './home/MobileHomeShell';
 import { MobileDocumentEditor } from './home/MobileDocumentEditor';
 import { DesktopDocumentEditor } from './home/DesktopDocumentEditor';
-import packageJson from '../../package.json';
 
 type StatusFilter = 'active' | 'recent' | 'trashed';
-const APP_VERSION = packageJson.version;
 
 function parseContent(raw: string): JSONContent {
   try {
@@ -119,16 +119,6 @@ function documentLeafTitle(document: DocumentSummary | DocumentRecord | null): s
 function formatTimestamp(value?: string | null): string {
   if (!value) return '尚未记录';
   return new Date(value).toLocaleString();
-}
-
-function formatBytes(value: number): string {
-  if (value >= 1024 * 1024) {
-    return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  }
-  if (value >= 1024) {
-    return `${Math.round(value / 1024)} KB`;
-  }
-  return `${value} B`;
 }
 
 function collectFolderTargets(
@@ -290,13 +280,12 @@ export default function HomePage() {
   const [tagDraft, setTagDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [explorerFolderId, setExplorerFolderId] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(true);
   const [modeBusy, setModeBusy] = useState(false);
+  const [editHint, setEditHint] = useState<{ documentKey: string; sequence: number } | null>(null);
   const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
   const [conflictsScope, setConflictsScope] = useState<string | null>(null);
   const historyBusy = useRef(false);
@@ -328,12 +317,18 @@ export default function HomePage() {
     stage: 'generating' | 'sharing' | 'failed';
     message: string;
   } | null>(null);
-  const [syncFeedback, setSyncFeedback] = useState<'idle' | 'success' | 'error'>('idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileMenuCloseSignal, setMobileMenuCloseSignal] = useState(0);
   const syncInFlightRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const selectionIntentRef = useRef<string | null>(null);
+
+  const documentKey = currentDocument ? `${currentDocument.account_scope}:${currentDocument.id}` : null;
+  const requestEditHint = useCallback(() => {
+    if (!readOnly || modeBusy || historyDocument || conflictsScope || !documentKey) return;
+    setEditHint(previous => ({ documentKey, sequence: (previous?.sequence ?? 0) + 1 }));
+  }, [readOnly, modeBusy, historyDocument, conflictsScope, documentKey]);
+  useEffect(() => { setEditHint(null); }, [documentKey, readOnly]);
 
   useEffect(() => {
     setExplorerFolderId(null);
@@ -421,21 +416,13 @@ export default function HomePage() {
         }
 
         syncInFlightRef.current = true;
-        setIsSyncing(true);
-        setSyncFeedback('idle');
         const snapshot = await runSupabaseSync();
         await refresh(preferredId ?? selectedId);
-        if (snapshot.conflict_copies) toast.info(`检测到同步冲突，已保留 ${snapshot.conflict_copies} 个目录树副本。`);
+        if (snapshot.conflict_copies) toast.info(`发现不同设备的修改，已保留 ${snapshot.conflict_copies} 份副本，可在“更多文档操作”中查看。`);
         setAppState((current) => (current ? { ...current, sync: snapshot } : current));
-        setSyncFeedback('success');
-        window.setTimeout(() => setSyncFeedback('idle'), 1800);
         console.info(`[sync] ${reason} completed`);
       } catch (error) {
-        setSyncFeedback('error');
         console.error(`[sync] ${reason} failed`, error);
-        if (force || reason.includes('manual')) {
-          toast.error(error instanceof Error ? error.message : String(error));
-        }
         try {
           await refresh(preferredId ?? selectedId);
         } catch (refreshError) {
@@ -443,7 +430,6 @@ export default function HomePage() {
         }
       } finally {
         syncInFlightRef.current = false;
-        setIsSyncing(false);
       }
     },
     [refresh, selectedId, toast]
@@ -602,7 +588,7 @@ export default function HomePage() {
   const handlePersistMetadata = useCallback(
     async (nextContent: JSONContent = content, nextTagList: string[] = documentTags) => {
       if (!currentDocument) return;
-      if (readOnly) { toast.info('请先进入编辑模式'); return; }
+      if (readOnly) { requestEditHint(); return; }
       const title =
         extractPlainText(nextContent.content?.find((node) => node.type === 'heading')) ||
         currentDocument.title ||
@@ -624,7 +610,7 @@ export default function HomePage() {
       await refresh(updated.id);
       await triggerAutoSync('metadata', false, updated.id);
     },
-    [content, currentDocument, documentTags, refresh, triggerAutoSync, readOnly, toast]
+    [content, currentDocument, documentTags, refresh, triggerAutoSync, readOnly, toast, requestEditHint]
   );
 
   const handleMoveDocument = useCallback(
@@ -658,7 +644,6 @@ export default function HomePage() {
       toast.error(`最近 5 分钟写入次数已达到上限（${appState.limits.max_write_ops_per_5_minutes}）`);
       return;
     }
-    setIsImporting(true);
     try {
       const result = await importLegacyWorkspace();
       toast.success(`导入完成：${result.imported_documents} 篇文档`);
@@ -666,8 +651,6 @@ export default function HomePage() {
       await triggerAutoSync('legacy-import', true);
     } catch (error) {
       toast.error(`导入失败：${error}`);
-    } finally {
-      setIsImporting(false);
     }
   }, [appState, refresh, toast, triggerAutoSync]);
 
@@ -774,7 +757,7 @@ export default function HomePage() {
   const handleMenuAction = useCallback(
     (action: MenuAction) => {
       if (readOnly && ['paste', 'cut', 'undo', 'redo', 'replace'].includes(action)) {
-        toast.info('请先进入编辑模式');
+        requestEditHint();
         return;
       }
       switch (action) {
@@ -829,7 +812,7 @@ export default function HomePage() {
           return;
       }
     },
-    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast]
+    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast, requestEditHint]
   );
 
   const openDocumentMenu = useCallback(
@@ -949,7 +932,7 @@ export default function HomePage() {
   const availableMoveTargets = useMemo(() => collectFolderTargets(documents, moveTarget), [documents, moveTarget]);
   const addTag = useCallback(
     async (rawValue: string) => {
-      if (readOnly) { toast.info('请先进入编辑模式'); return; }
+      if (readOnly) { requestEditHint(); return; }
       const next = rawValue.trim();
       if (!next || !currentDocument) return;
       if (documentTags.includes(next)) {
@@ -966,7 +949,7 @@ export default function HomePage() {
       setMobileTagEditorOpen(false);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, toast, readOnly]
+    [content, currentDocument, documentTags, handlePersistMetadata, toast, readOnly, requestEditHint]
   );
 
   const handleDropNode = useCallback(
@@ -1017,17 +1000,18 @@ export default function HomePage() {
 
   const removeTag = useCallback(
     async (tagName: string) => {
-      if (readOnly) { toast.info('请先进入编辑模式'); return; }
+      if (readOnly) { requestEditHint(); return; }
       if (!currentDocument) return;
       const nextTags = documentTags.filter((tag) => tag !== tagName);
       setDocumentTags(nextTags);
       setMobileTagDeleteTarget(null);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, readOnly, toast]
+    [content, currentDocument, documentTags, handlePersistMetadata, readOnly, toast, requestEditHint]
   );
 
   const closeTopMobileLayer = useCallback(() => {
+    if (dismissContextMenu()) return true;
     if (conflictsScope) {
       setConflictsScope(null);
       return true;
@@ -1148,18 +1132,16 @@ export default function HomePage() {
           <div className="flex h-full min-h-0 flex-col" onContextMenu={openExplorerMenu}>
             <div className="shrink-0 flex items-center justify-between border-b px-4 py-3" style={{ borderColor: border }}>
               <div className="min-w-0">
-                <div className="shell-label">Explorer</div>
-                <div className="shell-title truncate text-sm font-medium">Vana</div>
+                <div className="library-heading">文档库</div>
               </div>
-              <button className={mobile ? '' : 'md:hidden'} onClick={() => setSidebarOpen(false)}>
+              <button aria-label="关闭文档库" className={mobile ? 'ui-icon-button' : 'ui-icon-button md:hidden'} onClick={() => setSidebarOpen(false)}>
                 <X size={18} />
               </button>
             </div>
 
             <div className="shrink-0 border-b px-3 py-3" style={{ borderColor: border }}>
               <button
-                className="flex w-full items-center justify-center gap-2 border px-3 py-2 text-sm"
-                style={{ backgroundColor: 'transparent', borderColor: border, color: accent }}
+                className="ui-button ui-button-primary w-full"
                 onClick={() => void handleCreateDocument()}
               >
                 <FilePlus2 size={15} />
@@ -1176,10 +1158,10 @@ export default function HomePage() {
                 <button
                   key={value}
                   onClick={() => { setSelectedStatus(value); setExplorerFolderId(null); }}
-                  className="flex items-center gap-2 px-2 py-2 text-left"
+                  aria-pressed={selectedStatus === value}
+                  className="library-filter flex items-center gap-2 px-2 py-2 text-left"
                   style={{
                     backgroundColor: selectedStatus === value ? accentBg : 'transparent',
-                    border: `1px solid ${border}`,
                     color: selectedStatus === value ? text : muted,
                   }}
                 >
@@ -1191,7 +1173,7 @@ export default function HomePage() {
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               <ExplorerSection
-                title="Favorites"
+                title="收藏"
                 count={favoriteDocuments.length}
                 expanded={expandedSections.favorites}
                 onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
@@ -1221,7 +1203,7 @@ export default function HomePage() {
               </ExplorerSection>
 
               <ExplorerSection
-                title={selectedStatus === 'active' ? 'Workspace' : selectedStatus === 'recent' ? 'Recent' : 'Trash'}
+                title={selectedStatus === 'active' ? '文档与分组' : selectedStatus === 'recent' ? '最近文档' : '回收站'}
                 count={selectedStatus === 'recent' ? recentDocuments.length : filteredDocuments.length}
                 expanded={expandedSections.explorer}
                 onToggle={() => setExpandedSections((current) => ({ ...current, explorer: !current.explorer }))}
@@ -1380,6 +1362,10 @@ export default function HomePage() {
                 </div>
               </ExplorerSection>
             </div>
+            <nav aria-label="个人入口" className="library-footer">
+              <AppLink href="/account" className="library-account"><UserRound size={17} /><span>{appState?.account_mode === 'authenticated' ? '我的账号' : '登录或注册'}</span></AppLink>
+              <AppLink href="/settings" aria-label="设置" className="ui-icon-button"><Settings2 size={18} /></AppLink>
+            </nav>
           </div>
     </aside>
   );
@@ -1389,11 +1375,10 @@ export default function HomePage() {
       <div className="flex min-h-full w-full items-center justify-center">
         <div className="w-full max-w-[760px]">
           <div className="mx-auto max-w-[560px] text-center">
-            <div className="shell-label mb-3">Threshold</div>
             <h1 className={`shell-title font-semibold ${mobile ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>书页尚未翻开。</h1>
             {!mobile && (
               <p className="mx-auto mt-4 max-w-[440px] text-sm leading-7 opacity-70">
-                左侧资源区负责组织文档，右侧只在选中文档后进入编辑。这里保留为空状态入口，不再堆叠文档操作面板。
+                从文档库打开一篇文档，或开始新的写作。
               </p>
             )}
           </div>
@@ -1401,9 +1386,6 @@ export default function HomePage() {
           <div className="mx-auto mt-8 flex max-w-[520px] flex-wrap items-center justify-center gap-2">
             <button className="border px-4 py-2 text-sm font-medium" style={{ backgroundColor: accentBg, borderColor: border }} onClick={() => void handleCreateDocument()}>
               新建文档
-            </button>
-            <button className="border px-4 py-2 text-sm" style={{ borderColor: border }} onClick={() => void handleImportLegacy()}>
-              导入旧工作区
             </button>
             <AppLink href="/settings" className="border px-4 py-2 text-sm" style={{ borderColor: border }}>
               进入设置
@@ -1416,6 +1398,7 @@ export default function HomePage() {
 
   const renderDocumentEditor = (mobile: boolean) => {
     const navigation = <DocumentNavigation path={currentPath} readOnly={readOnly} busy={modeBusy}
+      editHint={editHint?.documentKey === documentKey ? editHint?.sequence : 0}
       onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} />;
     if (mobile) {
       if (!currentDocument) return null;
@@ -1423,6 +1406,7 @@ export default function HomePage() {
         <MobileDocumentEditor
           navigation={navigation}
           readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
+          onReadingClick={requestEditHint}
           currentDocument={currentDocument}
           content={content}
           documentTags={documentTags}
@@ -1440,12 +1424,11 @@ export default function HomePage() {
       <DesktopDocumentEditor
         navigation={navigation}
         readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
+        onReadingClick={requestEditHint}
         currentDocument={currentDocument}
         content={content}
         documentTags={documentTags}
         tagDraft={tagDraft}
-        isSyncing={isSyncing}
-        appState={appState}
         surface={surface}
         border={border}
         accent={accent}
@@ -1459,8 +1442,6 @@ export default function HomePage() {
         onPersisted={() => {
           void triggerAutoSync('editor-save');
         }}
-        formatTimestamp={formatTimestamp}
-        formatBytes={formatBytes}
       />
     );
   };
@@ -1484,19 +1465,17 @@ export default function HomePage() {
       onMenuAction={handleMenuAction}
       onHelp={() => navigate('/help')}
       onSettings={() => navigate('/settings')}
+      onAccount={() => navigate('/account')}
     />
   );
 
   const renderMobileShell = () => (
     <MobileHomeShell
       title={currentDocument ? documentLeafTitle(currentDocument) : '文档库'}
-      version={APP_VERSION}
       sidebar={renderSidebar(true)}
       mainContent={renderMainContent(true)}
       sidebarOpen={sidebarOpen}
       hasDocument={Boolean(currentDocument)}
-      isSyncing={isSyncing}
-      syncFeedback={syncFeedback}
       accent={accent}
       border={border}
       surface={surface}
@@ -1512,7 +1491,6 @@ export default function HomePage() {
         setMobileExportStatus(null);
         setMobileExportOpen(true);
       }}
-      onManualSync={() => void triggerAutoSync('mobile-manual', true)}
       onMenuAction={handleMenuAction}
       onHelp={() => navigate('/help')}
       onSettings={() => navigate('/settings')}
@@ -1608,8 +1586,6 @@ export default function HomePage() {
 
             <div className="grid gap-2 text-sm opacity-80">
               <div>最近更新：{formatTimestamp(currentDocument.updated_at)}</div>
-              <div>同步状态：{isSyncing ? '同步中' : `待同步 ${appState?.sync.pending_jobs ?? 0}`}</div>
-              <div>同步模式：{appState?.sync.mode ?? 'local-only'}</div>
             </div>
 
             <div className="mt-5">
@@ -1651,7 +1627,7 @@ export default function HomePage() {
                   className="shrink-0 rounded-full border px-3 py-2 text-sm"
                   style={{ borderColor: border, color: accent, opacity: documentTags.length >= 7 ? 0.45 : 1 }}
                   disabled={readOnly || documentTags.length >= 7}
-                  title={readOnly ? '请先进入编辑模式' : '添加标签'}
+                  title={readOnly ? undefined : '添加标签'}
                   onClick={() => setMobileTagEditorOpen(true)}
                 >
                   + 添加

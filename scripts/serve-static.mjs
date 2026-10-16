@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..", "out");
-const host = process.env.HOST || "0.0.0.0";
+const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || "3000");
 
 const mimeTypes = {
@@ -25,44 +25,56 @@ const mimeTypes = {
   ".woff2": "font/woff2",
 };
 
-function resolvePath(urlPath) {
-  const cleanPath = decodeURIComponent(urlPath.split("?")[0]);
-  const relativePath = cleanPath === "/" ? "/index.html" : cleanPath;
-  let filePath = path.join(rootDir, relativePath);
-
-  if (!filePath.startsWith(rootDir)) {
-    return null;
-  }
-
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-    filePath = path.join(filePath, "index.html");
-  }
-
-  if (!fs.existsSync(filePath)) {
-    const fallbackPath = path.join(rootDir, "index.html");
-    return fs.existsSync(fallbackPath) ? fallbackPath : null;
-  }
-
-  return filePath;
+function isWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-const server = http.createServer((request, response) => {
-  const filePath = resolvePath(request.url || "/");
-  if (!filePath) {
-    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Not found");
-    return;
+export function createPreviewServer(directory = rootDir) {
+  const root = fs.realpathSync(directory);
+  function resolvePath(urlPath) {
+    const cleanPath = decodeURIComponent(urlPath.split("?")[0]);
+    if (cleanPath.includes("\\") || cleanPath.includes("\0")) return null;
+    let filePath = path.resolve(root, "." + (cleanPath.startsWith("/") ? cleanPath : "/" + cleanPath));
+    if (!isWithin(root, filePath)) return null;
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) filePath = path.join(filePath, "index.html");
+    if (!fs.existsSync(filePath)) filePath = path.join(root, "index.html");
+    const realPath = fs.realpathSync(filePath);
+    return isWithin(root, realPath) && fs.statSync(realPath).isFile() ? realPath : null;
   }
 
-  const ext = path.extname(filePath).toLowerCase();
-  response.writeHead(200, {
-    "Content-Type": mimeTypes[ext] || "application/octet-stream",
-    "Cache-Control": "no-store",
+  return http.createServer((request, response) => {
+    let filePath;
+    try {
+      filePath = resolvePath(request.url || "/");
+    } catch (error) {
+      response.writeHead(error instanceof URIError ? 400 : 404);
+      response.end(error instanceof URIError ? "Bad request" : "Not found");
+      return;
+    }
+    if (!filePath) {
+      response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Not found");
+      return;
+    }
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", () => {
+      if (!response.headersSent) response.writeHead(404);
+      response.end();
+    });
+    stream.on("open", () => {
+      response.writeHead(200, {
+        "Content-Type": mimeTypes[path.extname(filePath).toLowerCase()] || "application/octet-stream",
+        "Cache-Control": "no-store",
+      });
+      stream.pipe(response);
+    });
   });
+}
 
-  fs.createReadStream(filePath).pipe(response);
-});
-
-server.listen(port, host, () => {
-  console.log(`[serve-static] Serving ${rootDir} on http://${host}:${port}`);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  const server = createPreviewServer();
+  server.listen(port, host, () => {
+    console.log(`[serve-static] Serving ${rootDir} on http://${host}:${server.address().port}`);
+  });
+}

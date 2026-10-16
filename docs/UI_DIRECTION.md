@@ -1,11 +1,19 @@
-# Recovery interface direction
+# 阅读与写作界面方向
 
-- Audience: people writing and reading personal documents who need to understand and recover changes.
-- Tone: quiet, legible, deliberate; keep the existing four themes.
-- Layout: dated version rail beside a generous body panel, compact horizontal rail on mobile.
-- Typography: existing document font in previews; tabular dates and small operation labels in the rail.
-- Color: theme surfaces and accent for selection; additions and deletions have explicit labels as well as color.
-- Motion: React Bits inspired short panel reveal and selection transition, disabled with reduced motion.
-- Distinctive element: a continuous version timeline connected to a directional difference view and a guarded body recovery action.
+2026-10-13：根据用户反馈，界面优先服务阅读、写作和回看修改，减少常驻工程信息。
 
-References and license: [third-party notices](../THIRD_PARTY_NOTICES.md).
+- 用户：整理个人笔记、草稿和长期阅读文档的人。
+- 基调：安静、清晰，沿用现有四个主题与字体，不新增装饰素材。
+- 层级：正文占主位；目录、编辑/阅读切换与修改记录是直接入口；偶尔使用的同步副本进入更多菜单。
+- 欢迎页：一个开始写作的主入口，登录或注册进入独立账号页。
+- 正文页：去掉同步队列、存储占用与阅读模式解释条；无标签时不占空行，编辑时提供格式和标签操作。
+- 设置：默认提供阅读主题与备份；账号和同步操作移到独立账号页；自定义服务、旧数据导入在高级设置中，队列、额度、会话与拉取信息再折叠为诊断。
+- 修改记录：保留时间线、差异与受确认保护的恢复；保留策略和本机正文范围放在可展开说明中。
+- 反馈：保存失败、同步失败、凭据不可用、删除与恢复风险必须反馈；不在无异常时重复讲解内部实现。
+- 交互：更多菜单支持外部点击与 Escape 关闭；折叠说明可用键盘操作；沿用已有减少动画偏好。
+
+辨识度来自安静的正文阅读页和容易找到的修改记录。使用现有 Vite / React / Tiptap，不迁移框架。账号页与全局界面的后续优化参考 React Bits 的 Fade Content 与 Animated List，取舍和验证见 [界面优化](archive/UIUX_REFINEMENT_2026-10-13.md)；既有修改记录动画来源见 [第三方声明](../THIRD_PARTY_NOTICES.md)。
+
+## 验证
+
+最新候选版本的自动化、构建和设备结果见 [发布自检](RELEASE_READINESS_2026-10-15.md)。早期浏览器限制与模拟 IPC 验证仅说明当时状态，保留在 [归档记录](archive/UIUX_REFINEMENT_2026-10-13.md)。

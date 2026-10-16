@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme } from '@/components/ThemeProvider';
-import { getThemeAccentBgColor, getThemeAccentColor, getThemeBorderColor } from '@/lib/themeStyles';
+import { getThemeAccentBgColor, getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
 
 type MenuKey = 'file' | 'edit' | 'style';
 
@@ -60,12 +60,14 @@ export function AppMenuBar({
   onAction,
   onHelp,
   onSettings,
+  onAccount,
   onOpenChange,
   closeSignal = 0,
 }: {
   onAction: (action: MenuAction) => void;
   onHelp: () => void;
   onSettings: () => void;
+  onAccount?: () => void;
   onOpenChange?: (open: boolean) => void;
   closeSignal?: number;
 }) {
@@ -99,12 +101,20 @@ export function AppMenuBar({
         setOpenMenu(null);
       }
     };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && openMenu) {
+        setOpenMenu(null);
+        rootRef.current?.querySelector<HTMLButtonElement>(`[data-menu-key="${openMenu}"]`)?.focus();
+      }
+    };
 
     document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
     };
-  }, []);
+  }, [openMenu]);
 
   return (
     <div ref={rootRef} className="flex h-8 items-center gap-1">
@@ -112,11 +122,13 @@ export function AppMenuBar({
         <div key={entry.key} className="relative flex h-full items-center">
           <button
             type="button"
+            data-menu-key={entry.key}
+            aria-expanded={openMenu === entry.key}
             data-tauri-drag-region="false"
             className="h-7 rounded px-3 text-sm transition-colors"
             style={{
               color: accent,
-              backgroundColor: openMenu === entry.key ? `${accentBg}55` : 'transparent',
+              backgroundColor: openMenu === entry.key ? accentBg : 'transparent',
             }}
             onClick={() => {
               setOpenMenu((current) => (current === entry.key ? null : entry.key));
@@ -130,7 +142,7 @@ export function AppMenuBar({
               <div
                 className="min-w-[208px] rounded border py-1 shadow-xl"
                 style={{
-                  backgroundColor: theme.id === 'vellum' ? '#f6f0e6' : '#17131f',
+                  backgroundColor: getThemeSurfaceColor(theme),
                   borderColor: border,
                 }}
               >
@@ -143,7 +155,7 @@ export function AppMenuBar({
                       className="flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors"
                       style={{
                         color: accent,
-                        backgroundColor: active ? `${accentBg}45` : 'transparent',
+                        backgroundColor: active ? accentBg : 'transparent',
                       }}
                       onClick={() => {
                         setOpenMenu(null);
@@ -173,6 +185,8 @@ export function AppMenuBar({
       >
         帮助
       </button>
+
+      {onAccount && <button type="button" data-tauri-drag-region="false" className="h-7 rounded px-3 text-sm transition-colors" style={{ color: accent }} onClick={() => { setOpenMenu(null); onAccount(); }}>账号</button>}
 
       <button
         type="button"

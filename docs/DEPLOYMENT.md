@@ -4,7 +4,7 @@
 
 ## 分支模型
 
-- `feat/*`、`fix/*`、`refactor/*`、`chore/*`：功能开发分支，只跑轻量 CI
+- `feat/*`、`fix/*`、`refactor/*`、`chore/*`：功能开发分支，执行类型、行为、原生领域与协议 CI
 - `dev`：集成分支，触发测试构建
 - `main`：发布候选分支，触发发布前校验
 - `v*` tag：正式发布入口，创建 GitHub Release
@@ -15,12 +15,9 @@
 ./scripts/check-build-ready.sh
 ```
 
-它会检查：
+它检查源码与 lockfile 版本、已跟踪敏感文件、严格 TypeScript、前端行为、原生领域、隔离 PostgreSQL 协议、生产构建、Rust、图标、官网生成与脚本语法、生产依赖审计。需要 Node.js 22 LTS、Python 3.11+、Pillow、Rust、Linux 原生依赖和 Docker。
 
-- 版本号一致性
-- 前端类型检查与 Rust `cargo check`
-- Vite 生产构建
-- Tauri 配置和图标文件
+传入 `--hosted` 时额外运行只读 Supabase gate，需在环境中提供两项公开构建配置。设备、安装升级、凭据与正式签名是另外的验收项，脚本成功不代替它们。当前结果见 [发布自检](RELEASE_READINESS_2026-10-15.md)。
 
 ## 本地构建
 
@@ -47,7 +44,7 @@ npm run tauri:build:android
 
 工作流分层：
 
-- `ci.yml`：功能分支轻量校验
+- `ci.yml`：功能分支自动化校验
 - `build-dev.yml`：`dev` 分支测试构建
 - `main-verify.yml`：`main` 分支发布前校验
 - `release.yml`：`v*` tag 正式发版
@@ -63,12 +60,13 @@ npm run tauri:build:android
 ```bash
 git checkout main
 git pull
-git tag v0.6.0
-git push origin v0.6.0
+# 仅在新版本验收通过、版本号唯一后执行
+git tag v0.7.1
+git push origin v0.7.1
 ```
 
 4. GitHub Actions 自动构建 Linux / Windows / Android
-5. 构建产物上传到 GitHub Release
+5. 构建产物上传到 GitHub Draft Release；核对更新说明、附件和签名后再正式发布。官网每 15 分钟读取最新公开正式版，失败保留原页面。
 
 ## Android 说明
 
@@ -95,14 +93,14 @@ GitHub Repository Variables 需配置 `VANA_PUBLIC_SUPABASE_URL` 与 `VANA_PUBLI
 
 `python3 scripts/check-supabase-release.py --require-protocol` 只读检查公开配置、Auth 和文档同步字段，查询限制为零行，不读取用户正文。它会阻止缺配置、错误项目、特权密钥或未升级 schema 的发布；它不能替代两账号真实 RPC/认证及设备验收，仍须满足 [SYNC_ACCEPTANCE](SYNC_ACCEPTANCE.md)。
 
-当前用户已授权测试通过后推送和发布。服务恢复不等于迁移完成：先使用有项目权限的 CLI 账号备份，核对迁移链并升级，再运行真实验收；未完成这些步骤不得发布 tag。
+服务端迁移需要先备份并核对迁移链，再运行真实验收。当前 revision 协议已在 0.7.0 完成部署，本次候选不包含新的数据库迁移；不要重复执行无关迁移或清理用户数据。
 
 ## 版本对齐
 
 以下文件必须保持一致：
 
-- `package.json`
-- `src-tauri/Cargo.toml`
+- `package.json` 与 `package-lock.json` 根包
+- `src-tauri/Cargo.toml` 与 `src-tauri/Cargo.lock` 本包记录
 - `src-tauri/tauri.conf.json`
 
-详细策略见 [VERSIONING.md](./VERSIONING.md)。
+详细策略见 [VERSIONING.md](VERSIONING.md)。

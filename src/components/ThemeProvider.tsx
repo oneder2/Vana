@@ -6,9 +6,10 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Theme, ThemeId, getTheme, DEFAULT_THEME } from '@/lib/themes';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { Theme, ThemeId, getTheme, DEFAULT_THEME, THEMES } from '@/lib/themes';
 import { applyTheme } from '@/lib/atmosphere';
+import { getThemeAccentColor, getThemeBgColor, getThemeBorderColor, getThemeMutedColor, getThemeSurfaceColor, getThemeTextColor } from '@/lib/themeStyles';
 
 // 主题上下文类型
 interface ThemeContextType {
@@ -31,14 +32,22 @@ interface ThemeProviderProps {
  * 管理全局主题状态并应用到 DOM
  */
 export function ThemeProvider({ children, initialTheme = DEFAULT_THEME }: ThemeProviderProps) {
-  const [themeId, setThemeId] = useState<ThemeId>(initialTheme);
-  const [theme, setThemeState] = useState<Theme>(getTheme(initialTheme));
+  const [themeId, setThemeId] = useState<ThemeId>(() => {
+    try {
+      const saved = localStorage.getItem('vana-theme');
+      if (saved && Object.hasOwn(THEMES, saved)) return saved as ThemeId;
+    } catch { /* A blocked preference store must not prevent writing. */ }
+    return initialTheme;
+  });
+  const theme = getTheme(themeId);
 
   // 当主题 ID 改变时，更新主题对象并应用到 DOM
   useEffect(() => {
     const newTheme = getTheme(themeId);
-    setThemeState(newTheme);
     applyTheme(newTheme);
+    const tokens = { bg: getThemeBgColor(newTheme), surface: getThemeSurfaceColor(newTheme), border: getThemeBorderColor(newTheme), accent: getThemeAccentColor(newTheme), text: getThemeTextColor(newTheme), muted: getThemeMutedColor(newTheme) };
+    for (const [name, value] of Object.entries(tokens)) document.documentElement.style.setProperty(`--ui-${name}`, value);
+    try { localStorage.setItem('vana-theme', themeId); } catch { /* Session-only theme remains usable. */ }
   }, [themeId]);
 
   // 设置主题
@@ -64,4 +73,3 @@ export function useTheme(): ThemeContextType {
   }
   return context;
 }
-

@@ -7,10 +7,10 @@
 
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
-import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeBgColor } from '@/lib/themeStyles';
+import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
 import { useToast, useToastList, type ToastItem } from './ToastProvider';
 
 /**

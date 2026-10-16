@@ -18,7 +18,7 @@
 
 远端 migration：
 
-- [202604180002_reserve_attachment_storage.sql](/home/gellar/Desktop/program/personal/Vana/supabase/migrations/202604180002_reserve_attachment_storage.sql)
+- [202604180002_reserve_attachment_storage.sql](../supabase/migrations/202604180002_reserve_attachment_storage.sql)
 
 核心字段：
 
