@@ -13,6 +13,7 @@ type MenuAction =
   | 'export:md'
   | 'export:docx'
   | 'export:pdf'
+  | 'letterpress'
   | 'copy'
   | 'paste'
   | 'cut'
@@ -38,6 +39,7 @@ const MENU_ITEMS: Record<MenuKey, MenuItem[]> = {
     { id: 'export:md', label: '导出 Markdown' },
     { id: 'export:docx', label: '导出 DOCX' },
     { id: 'export:pdf', label: '导出 PDF' },
+    { id: 'letterpress', label: '文字冲印与信稿' },
   ],
   edit: [
     { id: 'copy', label: '复制' },
@@ -117,7 +119,7 @@ export function AppMenuBar({
   }, [openMenu]);
 
   return (
-    <div ref={rootRef} className="flex h-8 items-center gap-1">
+    <div ref={rootRef} className="flex h-8 items-center gap-1" data-letterpress-menu>
       {menuEntries.map((entry) => (
         <div key={entry.key} className="relative flex h-full items-center">
           <button

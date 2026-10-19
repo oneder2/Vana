@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, BookOpen, ChevronRight, GitCompareArrows, History, MoreHorizontal, Pencil } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronRight, GitCompareArrows, History, MoreHorizontal, Pencil, Sparkles } from 'lucide-react';
 import type { DocumentPathItem } from '@/lib/documentNavigation';
 import { useTheme } from './ThemeProvider';
 import { getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
 
-export function DocumentNavigation({ path, readOnly, busy, editHint = 0, onOpenFolder, onToggleReading, onHistory, onConflicts }: {
+export function DocumentNavigation({ path, readOnly, busy, editHint = 0, onOpenFolder, onToggleReading, onHistory, onConflicts, onLetterpress }: {
   path: DocumentPathItem[];
   readOnly: boolean;
   busy: boolean;
@@ -13,6 +13,7 @@ export function DocumentNavigation({ path, readOnly, busy, editHint = 0, onOpenF
   onToggleReading: () => void;
   onHistory: () => void;
   onConflicts: () => void;
+  onLetterpress: () => void;
 }) {
   const { theme } = useTheme();
   const navigation = useRef<HTMLElement>(null);
@@ -79,9 +80,10 @@ export function DocumentNavigation({ path, readOnly, busy, editHint = 0, onOpenF
         </button>
         <button type="button" onClick={onHistory} className="flex min-h-9 items-center gap-1.5 rounded border px-2"
           style={{ borderColor: border }} aria-label="查看修改记录"><History size={14} /><span className="hidden sm:inline">修改记录</span></button>
-        <details ref={moreMenu} className="relative">
+        <details ref={moreMenu} className="relative" data-letterpress-menu>
           <summary aria-label="更多文档操作" title="更多文档操作" className="flex min-h-9 cursor-pointer list-none items-center rounded px-2 focus-visible:outline focus-visible:outline-2"><MoreHorizontal size={16} /></summary>
           <div className="absolute right-0 top-full z-30 mt-1 min-w-40 rounded border p-1 shadow-lg" style={{ borderColor: border, backgroundColor: getThemeSurfaceColor(theme) }}>
+            <button type="button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); onLetterpress(); }} className="flex min-h-10 w-full items-center gap-2 rounded px-3 text-left hover:opacity-75"><Sparkles size={14} />文字冲印与信稿</button>
             <button type="button" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); onConflicts(); }} className="flex min-h-10 w-full items-center gap-2 rounded px-3 text-left hover:opacity-75" aria-label="查看同步副本"><GitCompareArrows size={14} />查看同步副本</button>
           </div>
         </details>

@@ -9,7 +9,8 @@ export function useDialogFocus(dialog: RefObject<HTMLElement | null>, initial: R
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); dismiss.current(); return; }
       if (event.key !== 'Tab') return;
-      const items = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? [])];
+      const items = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]') ?? [])]
+        .filter(item => item.tabIndex >= 0 && item.getClientRects().length > 0);
       const first = items[0], last = items.at(-1);
       if (!first) { event.preventDefault(); dialog.current?.focus(); }
       else if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last?.focus(); }

@@ -36,6 +36,7 @@ pub fn validate(content: &str) -> Result<()> {
                     | "listItem"
                     | "meta"
                     | "horizontalRule"
+                    | "letterpress"
                     | "text"
                     | "hardBreak"
             ),
@@ -53,6 +54,15 @@ pub fn validate(content: &str) -> Result<()> {
             anyhow::ensure!(node["text"].is_string(), "文字节点无效");
         } else {
             anyhow::ensure!(node.get("text").is_none(), "非文字节点包含 text 字段");
+        }
+        if kind == "letterpress" {
+            anyhow::ensure!(node.get("marks").is_none(), "信稿不能带文字标记");
+            anyhow::ensure!(node.get("content").is_none_or(|v| v.as_array().is_some_and(|a| a.is_empty())), "信稿不能有子节点");
+            let attrs = node["attrs"].as_object().context("信稿属性无效")?;
+            anyhow::ensure!(attrs.len() == 2 && attrs.contains_key("id") && attrs.contains_key("design"), "信稿属性无效");
+            anyhow::ensure!(attrs["id"].as_str().is_some_and(|s| !s.is_empty() && s.encode_utf16().count() <= 80), "信稿标识无效");
+            validate_letter(&attrs["design"])?;
+            continue;
         }
         if let Some(attrs) = node.get("attrs").filter(|v| !v.is_null()) {
             for (name, value) in attrs.as_object().context("正文属性无效")? {
@@ -178,4 +188,32 @@ fn safe_link(href: &str) -> bool {
             || url::Url::parse(href)
                 .map(|url| matches!(url.scheme(), "https" | "http" | "mailto" | "tel"))
                 .unwrap_or(false))
+}
+
+/// Portable, finite recipes only: never persisted HTML, external images or font URLs.
+fn validate_letter(d: &Value) -> Result<()> {
+    fn keys(v: &Value, names: &[&str]) -> bool {
+        v.as_object().is_some_and(|o| o.len() == names.len() && o.keys().all(|k| names.contains(&k.as_str())))
+    }
+    fn choice(v: &Value, allowed: &[&str]) -> bool { v.as_str().is_some_and(|s| allowed.contains(&s)) }
+    fn text(v: &Value, max: usize) -> bool { v.as_str().is_some_and(|s| s.encode_utf16().count() <= max) }
+    fn number(v: &Value, min: f64, max: f64) -> bool { v.as_f64().is_some_and(|n| n.is_finite() && (min..=max).contains(&n)) }
+    fn seed(v: &Value) -> bool { v.as_f64().is_some_and(|n| n.fract() == 0.0 && (0.0..=4294967295.0).contains(&n)) }
+    anyhow::ensure!(keys(d, &["version","material","format","font","title","text","signature","fontSize","lineHeight","inset","align","seed","marks"])
+        && d["version"] == 1 && choice(&d["material"], &["card","letter","stone","arcane","terminal"])
+        && choice(&d["format"], &["portrait","square","tall"]) && choice(&d["font"], &["song","brush","sans","mono"])
+        && choice(&d["align"], &["left","center","right"]) && text(&d["title"],120) && text(&d["text"],12000) && text(&d["signature"],120)
+        && number(&d["fontSize"],22.0,60.0) && number(&d["lineHeight"],1.3,2.4) && number(&d["inset"],60.0,160.0)
+        && seed(&d["seed"]) && d.to_string().encode_utf16().count() <= 100000, "信稿格式或参数无效");
+    let marks = d["marks"].as_array().context("信稿痕迹无效")?;
+    anyhow::ensure!(marks.len() <= 24, "信稿痕迹过多");
+    let mut ids = std::collections::HashSet::new();
+    for m in marks {
+        anyhow::ensure!(keys(m, &["id","kind","pattern","x","y","size","angle","strength","seed"])
+            && text(&m["id"],80) && m["id"].as_str().is_some_and(|id| !id.is_empty() && ids.insert(id))
+            && choice(&m["kind"], &["blood","burn","tear","stain"]) && choice(&m["pattern"], &["spray","drops","smear"])
+            && number(&m["x"],0.0,1.0) && number(&m["y"],0.0,1.0) && number(&m["size"],0.04,0.65)
+            && number(&m["angle"],-180.0,180.0) && number(&m["strength"],0.1,1.0) && seed(&m["seed"]), "信稿痕迹参数无效");
+    }
+    Ok(())
 }

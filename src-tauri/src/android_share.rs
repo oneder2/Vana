@@ -3,7 +3,8 @@ fn export_mime_type(file_type: &str) -> &'static str {
         "pdf" => "application/pdf",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "md" => "text/markdown",
-        "backup" => "application/json",
+        "png" => "image/png",
+        "backup" | "json" => "application/json",
         _ => "application/octet-stream",
     }
 }

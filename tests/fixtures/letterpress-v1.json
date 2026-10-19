@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "material": "letter",
+  "format": "portrait",
+  "font": "song",
+  "title": "未寄出的信",
+  "text": "雨停以后，来旧车站找我。\n带上那张泛黄的地图。",
+  "signature": "十月十七日",
+  "fontSize": 34,
+  "lineHeight": 1.85,
+  "inset": 100,
+  "align": "left",
+  "seed": 2718,
+  "marks": [
+    {
+      "id": "mark-blood",
+      "kind": "blood",
+      "pattern": "spray",
+      "x": 0.65,
+      "y": 0.7,
+      "size": 0.2,
+      "angle": 35,
+      "strength": 0.65,
+      "seed": 42
+    },
+    {
+      "id": "mark-burn",
+      "kind": "burn",
+      "pattern": "spray",
+      "x": 0.65,
+      "y": 0.7,
+      "size": 0.2,
+      "angle": 35,
+      "strength": 0.65,
+      "seed": 43
+    },
+    {
+      "id": "mark-tear",
+      "kind": "tear",
+      "pattern": "spray",
+      "x": 0.65,
+      "y": 0.7,
+      "size": 0.2,
+      "angle": 35,
+      "strength": 0.65,
+      "seed": 44
+    },
+    {
+      "id": "mark-stain",
+      "kind": "stain",
+      "pattern": "spray",
+      "x": 0.65,
+      "y": 0.7,
+      "size": 0.2,
+      "angle": 35,
+      "strength": 0.65,
+      "seed": 45
+    }
+  ]
+}
