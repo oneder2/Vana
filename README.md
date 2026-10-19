@@ -55,7 +55,7 @@ python3 scripts/test-supabase-protocol.py  # 需要 Docker
 
 ## 文档
 
-[文档索引](docs/README.md) · [0.8.0 更新说明](docs/RELEASE_NOTES_0.8.0.md) · [变更记录](docs/CHANGELOG.md)
+[文档索引](docs/README.md) · [0.8.0 更新说明](docs/RELEASE_NOTES_0.8.0.md) · [公开发布记录](docs/RELEASE_0.8.0_2026-10-19.md) · [变更记录](docs/CHANGELOG.md)
 
 - [当前架构、同步契约与安全边界](docs/ARCHITECTURE.md)
 - [产品方向](docs/PRODUCT_DIRECTION.md) · [界面与账号优化](docs/archive/UIUX_REFINEMENT_2026-10-13.md) · [空间备份格式](docs/BACKUP_FORMAT.md) · [会话与渲染安全](docs/SESSION_SECURITY.md)

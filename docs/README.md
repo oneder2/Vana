@@ -17,7 +17,7 @@
 
 ## 部署与发布
 
-- [0.8.0 更新说明](RELEASE_NOTES_0.8.0.md)
+- [0.8.0 更新说明](RELEASE_NOTES_0.8.0.md) · [公开发布记录](RELEASE_0.8.0_2026-10-19.md)
 - [0.7.1 上线前自检](RELEASE_READINESS_2026-10-15.md) · [0.7.1 公开发布记录](RELEASE_0.7.1_2026-10-16.md)
 - [部署指南](DEPLOYMENT.md) · [版本策略](VERSIONING.md) · [变更记录](CHANGELOG.md)
 - [官网与安装包分工](RELEASE_DISTRIBUTION.md) · [官网维护与回退](../website/README.md)
