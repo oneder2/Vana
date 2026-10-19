@@ -1,6 +1,6 @@
 # 文字冲印与信稿工坊
 
-2026-10-18 · 开发分支 `feat/letterpress-studio`，尚未包含在公开版 0.7.1 中。
+0.8.0 引入的正文信稿组件；使用、材质边界与发布前验证记录如下。版本更新见 [0.8.0 更新说明](RELEASE_NOTES_0.8.0.md)。
 
 ## 使用
 
@@ -62,4 +62,4 @@
 - 质感优化另行通过四主题的桌面 / 390px 检查、透明衬底五介质检查，以及缓存淘汰后纹理一致性检查；修正烟晕外沿后再次通过 65 个渲染案例。最终质感包 `vana-0.7.1-letterpress-texture-preview-20261019-014307-arm64.apk` 已覆盖安装到 OnePlus；原信稿可重开、换介质并保存，最终包重开后仅有一个信稿块，底栏取样为当前奥术主题背景色 `#05040a`。真机截图确认纸张纤维、折痕、透底缺口与柔化烟晕；SHA-256 为 `0d2b8f7a3ab78ea8ae56d5a208ee6eb31a1efa747a3e6649f975de10bfddc608`，记录见本地 `texture-installation-result.json`。
 - 浏览器中的文档数据与原生 IPC 为模拟；真实数据库的保存和原生 PDF 已在上述真机流程另行验证。云端账号间同步、JSON 文件往返及各外部分享目标尚未逐一实测。Preview 使用测试签名，不替代正式签名升级验收。
 
-本地浏览器截图和材质对照图位于被忽略的 `output/playwright/`；安装包清单、校验和、真机截图与验收记录位于 `output/letterpress/android-feedback/`。上述包仅用于本地验收，未公开发布。
+本地浏览器截图和材质对照图位于被忽略的 `output/playwright/`；Preview 安装包清单、校验和、真机截图与验收记录位于 `output/letterpress/android-feedback/`。上述设备记录对应发布前的独立体验包，不是正式分发资产；正式安装文件见 [GitHub Release](https://github.com/oneder2/Vana/releases/tag/v0.8.0)。

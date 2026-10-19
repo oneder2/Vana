@@ -1,8 +1,14 @@
 # Vana
 
-当前正式版本：0.7.1。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
+当前版本：0.8.0。基于 Tauri v2、Vite、React、Tiptap、SQLite 的本地优先文档应用，支持可选 Supabase 同步。
 
-面向个人写作与长期阅读，重点是层级清晰、改动可理解、误改可恢复。以离线空间、正文差异、受保护的恢复和可携带备份建立优势。真实多设备验收及适用边界见 [开发记录](docs/archive/DEVELOPMENT_2026-10-13.md)，定位见 [产品方向](docs/PRODUCT_DIRECTION.md)。
+一个给文字工作者玩的写作玩具：让文字写得顺手，也能拥有好玩的形式。离线空间、修改记录和可携带备份支撑日常写作。0.8.x 增加新功能，0.9.x 完成最后一轮前端界面优化，随后发布 1.0.0，见 [开发路线](docs/ROADMAP.md)。
+
+## 文字冲印与信稿
+
+文档或选中片段制作成分享卡片、书信、石碑、奥术残页或终端消息，调整字体排版，叠加血迹、烧焦、撕裂/碎屏与污渍，可插入正文、再次编辑，或导出 PNG / 信稿 JSON。选中文字后可从右键或 Android 系统选择菜单进入。入口是文档的“更多文档操作 → 文字冲印与信稿”，桌面也可从文件菜单进入。
+
+使用方式、材质适配与验收边界见 [信稿工坊](docs/LETTERPRESS_STUDIO.md)。0.7.x 不支持信稿内容块，含信稿的文档应在各设备升级到 0.8.0 后使用；升级前可在设置中导出空间备份。
 
 ## 当前功能
 
@@ -49,7 +55,7 @@ python3 scripts/test-supabase-protocol.py  # 需要 Docker
 
 ## 文档
 
-[文档索引](docs/README.md) · [上线前自检](docs/RELEASE_READINESS_2026-10-15.md) · [0.7.1 发布记录](docs/RELEASE_0.7.1_2026-10-16.md)
+[文档索引](docs/README.md) · [0.8.0 更新说明](docs/RELEASE_NOTES_0.8.0.md) · [变更记录](docs/CHANGELOG.md)
 
 - [当前架构、同步契约与安全边界](docs/ARCHITECTURE.md)
 - [产品方向](docs/PRODUCT_DIRECTION.md) · [界面与账号优化](docs/archive/UIUX_REFINEMENT_2026-10-13.md) · [空间备份格式](docs/BACKUP_FORMAT.md) · [会话与渲染安全](docs/SESSION_SECURITY.md)
