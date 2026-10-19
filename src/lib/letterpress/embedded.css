@@ -1,0 +1,10 @@
+@font-face { font-family: 'Vana Book'; src: url('/fonts/vana-book.woff2') format('woff2'); font-display: block; }
+@font-face { font-family: 'Vana Brush'; src: url('/fonts/vana-brush.woff2') format('woff2'); font-display: block; }
+.vana-letter-block { margin: 1.5rem auto; width: min(100%, 540px); position: relative; user-select: none; }
+.vana-letter-block canvas { display: block; width: 100%; height: auto; border-radius: 2px; }
+.vana-letter-block.ProseMirror-selectednode { outline: 2px solid var(--doc-accent-color, currentColor); outline-offset: 5px; }
+.vana-letter-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.vana-letter-actions[hidden] { display: none; }
+.vana-letter-actions button { font: inherit; font-size: 12px; min-height: 40px; border: 1px solid currentColor; padding: 6px 12px; border-radius: 5px; opacity: .8; }
+.vana-letter-fallback { white-space: pre-wrap; font: inherit; padding: 1rem; border: 1px solid currentColor; }
+@media print { .vana-letter-actions { display: none; } }

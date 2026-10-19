@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import type { LetterpressRequest } from '@/lib/letterpress/document';
 import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import { Editor } from '@/components/Editor';
@@ -17,6 +18,7 @@ export function MobileDocumentEditor({
   navigation,
   readOnly,
   onReadingClick,
+  onLetterpress,
 }: {
   currentDocument: DocumentRecord;
   content: JSONContent;
@@ -28,6 +30,7 @@ export function MobileDocumentEditor({
   navigation: ReactNode;
   readOnly: boolean;
   onReadingClick: () => void;
+  onLetterpress: (request: LetterpressRequest) => void;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -43,6 +46,7 @@ export function MobileDocumentEditor({
           mobile
           readOnly={readOnly}
           onReadingClick={onReadingClick}
+          onLetterpress={onLetterpress}
           onEditorReady={onEditorReady}
           onContentChange={onContentChange}
           onPersistError={onPersistError}

@@ -1,9 +1,11 @@
 'use client';
 
+import { letterText, readLetter, selectedExcerpt, type LetterpressRequest, type TextExcerpt } from '@/lib/letterpress/document';
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor as TiptapEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
-import { Bold, Copy, Heading1, Heading2, Italic, List, ListOrdered, MousePointer2, Quote, Underline } from 'lucide-react';
+import { Bold, Copy, Clipboard, Scissors, Share2, Sparkles, Trash2, Heading1, Heading2, Italic, List, ListOrdered, MousePointer2, Quote, Underline } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
 import { useReadingClick } from './useReadingClick';
@@ -30,10 +32,12 @@ interface EditorProps {
   mobile?: boolean;
   readOnly?: boolean;
   onReadingClick?: () => void;
+  onLetterpress?: (request: LetterpressRequest) => void;
 }
 
 function extractPlainText(node?: JSONContent): string {
   if (!node) return '';
+  if (node.type === 'letterpress') return letterText(readLetter(node));
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(extractPlainText).join('');
 }
@@ -54,13 +58,17 @@ export function Editor({
   mobile = false,
   readOnly = false,
   onReadingClick,
+  onLetterpress,
 }: EditorProps) {
   const { theme } = useTheme();
   const latestTags = useRef(tags);
   const acceptedGeneration = useRef((filePath ? documentDrafts.get(filePath, accountScope)?.content_generation : undefined) ?? contentGeneration);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; excerpt?: TextExcerpt } | null>(null);
+  const letterHandler = useRef(onLetterpress);
+  letterHandler.current = onLetterpress;
+  const hasLetterHandler = Boolean(onLetterpress);
 
-  const extensions = useMemo(() => getTiptapExtensions(theme.id), [theme.id]);
+  const extensions = useMemo(() => getTiptapExtensions(theme.id, hasLetterHandler ? request => letterHandler.current?.(request) : undefined), [theme.id, hasLetterHandler]);
   const restoredContent = useMemo(() => {
     const draft = filePath ? documentDrafts.get(filePath, accountScope) : undefined;
     return draft ? JSON.parse(draft.content_json) as JSONContent : undefined;
@@ -120,6 +128,7 @@ export function Editor({
         class: `tiptap-editor focus:outline-none ${mobile ? 'min-h-[calc(100dvh-210px)] px-4 py-5' : 'min-h-[360px] px-5 py-6 sm:px-8'}`,
         role: 'textbox',
         'aria-label': '文档正文',
+        'data-vana-letterpress-actions': hasLetterHandler ? 'true' : 'false',
         'aria-multiline': 'true',
         'aria-readonly': readOnly ? 'true' : 'false',
       },
@@ -156,47 +165,56 @@ export function Editor({
     }
   }), [filePath, accountScope, onUnsavedChangesChange, onPersisted, onPersistError]);
 
+  useEffect(() => {
+    const nativeAction = (event: Event) => {
+      if (!editor || !letterHandler.current) return;
+      const action = (event as CustomEvent).detail;
+      if (action !== 'embed' && action !== 'share') return;
+      const excerpt = selectedExcerpt(editor);
+      if (excerpt?.text.trim()) letterHandler.current({ purpose: action, excerpt });
+    };
+    window.addEventListener('vana:selection-action', nativeAction);
+    return () => window.removeEventListener('vana:selection-action', nativeAction);
+  }, [editor]);
+
   const handleContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    // Preserve WebView's native selection handles, Floating ActionMode and OEM
+    // copy/process-text actions. A page menu at the touch point obscures them.
+    if (mobile || event.nativeEvent instanceof PointerEvent && event.nativeEvent.pointerType === 'touch') return;
+    if ((event.target as HTMLElement).closest('.vana-letter-actions')) return;
     event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY });
-  }, []);
+    setContextMenu({ x: event.clientX, y: event.clientY, excerpt: editor ? selectedExcerpt(editor) : undefined });
+  }, [mobile, editor]);
 
-  const handleMenuAction = useCallback(
-    (action: string) => {
-      if (!editor) return;
-      if (!editor.isEditable && action !== 'copy' && action !== 'selectAll') return;
-
-      const focusEditor = () => {
-        editor.chain().focus().run();
-      };
-
-      switch (action) {
-        case 'copy':
-          focusEditor();
-          document.execCommand('copy');
-          break;
-        case 'cut':
-          focusEditor();
-          document.execCommand('cut');
-          break;
-        case 'paste':
-          focusEditor();
-          document.execCommand('paste');
-          break;
-        case 'selectAll':
-          focusEditor();
-          editor.commands.selectAll();
-          break;
-        case 'delete':
-          focusEditor();
-          editor.commands.deleteSelection();
-          break;
-        default:
-          break;
+  const handleMenuAction = useCallback((action: string) => {
+    if (!editor) return;
+    const excerpt = contextMenu?.excerpt;
+    if (action === 'share' || action === 'embed') {
+      if (excerpt?.text.trim()) letterHandler.current?.({ purpose: action, excerpt });
+      return;
+    }
+    if (action === 'selectAll') {
+      if (editor.isEditable) editor.chain().focus().selectAll().run();
+      else {
+        const range = document.createRange(); range.selectNodeContents(editor.view.dom);
+        const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
       }
-    },
-    [editor]
-  );
+      return;
+    }
+    if (action === 'copy' || action === 'cut') {
+      const text = excerpt?.text;
+      if (!text) return;
+      // Menu buttons preserve the DOM range for execCommand on older WebViews.
+      const copy = navigator.clipboard?.writeText ? navigator.clipboard.writeText(text) : Promise.resolve(document.execCommand('copy'));
+      void copy.then(() => {
+        if (action === 'cut' && editor.isEditable && excerpt) editor.chain().focus().deleteRange(excerpt).run();
+      }).catch(() => document.execCommand('copy'));
+      return;
+    }
+    if (!editor.isEditable) return;
+    if (action === 'delete' && excerpt) editor.chain().focus().deleteRange(excerpt).run();
+    if (action === 'paste') { editor.chain().focus().run(); document.execCommand('paste'); }
+  }, [editor, contextMenu]);
 
   if (!editor) {
     return (
@@ -266,12 +284,20 @@ export function Editor({
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           onAction={handleMenuAction}
-          hasSelection={!editor.state.selection.empty}
-          isBlock
-          items={readOnly ? [
-            { id: 'copy', label: '复制', icon: Copy },
+          hasSelection={Boolean(contextMenu.excerpt?.text)}
+          items={[
+            ...(contextMenu.excerpt?.text ? [
+              { id: 'copy', label: '复制', icon: Copy },
+              ...(!readOnly ? [{ id: 'cut', label: '剪切', icon: Scissors }] : []),
+              ...(hasLetterHandler ? [
+                { id: 'share', label: '文段分享', icon: Share2 },
+                { id: 'embed', label: '制作信稿', icon: Sparkles },
+              ] : []),
+            ] : []),
+            ...(!readOnly ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),
             { id: 'selectAll', label: '全选', icon: MousePointer2 },
-          ] : undefined}
+            ...(!readOnly && contextMenu.excerpt ? [{ id: 'delete', label: '删除选区', icon: Trash2 }] : []),
+          ]}
         />
       )}
     </div>

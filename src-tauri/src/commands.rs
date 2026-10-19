@@ -510,10 +510,11 @@ pub async fn export_pdf_with_typst(
     app: AppHandle,
     filename: String,
     typst_source: String,
+    images: Option<Vec<Vec<u8>>>,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let pdf_bytes =
-            compile_typst_source_to_pdf(&typst_source).map_err(|error| error.to_string())?;
+            compile_typst_source_to_pdf(&typst_source, images.unwrap_or_default()).map_err(|error| error.to_string())?;
         save_export_bytes(&app, &filename, &pdf_bytes, "pdf")
     })
     .await

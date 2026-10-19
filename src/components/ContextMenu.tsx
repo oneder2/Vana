@@ -209,6 +209,7 @@ export function ContextMenu({
         return (
           <button
             key={item.id}
+            onPointerDown={event => event.preventDefault()}
             onClick={() => handleAction(item.id)}
             className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80 transition-opacity text-sm"
             style={{

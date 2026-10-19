@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 pub fn extension(file_type: &str) -> Result<&'static str, String> {
     match file_type {
         "pdf" => Ok("pdf"), "docx" => Ok("docx"), "md" => Ok("md"),
+        "png" => Ok("png"), "json" => Ok("json"),
         _ => Err("不支持的导出格式".into()),
     }
 }
@@ -84,6 +85,21 @@ pub fn validate_share_path(directory: &Path, path: &Path, file_type: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn letterpress_exports_preserve_png_bytes_and_recipe_without_overwriting() {
+        let root = std::env::temp_dir().join(format!("vana-letterpress-{}", uuid::Uuid::new_v4()));
+        let png = b"\x89PNG\r\n\x1a\n";
+        let first = save_bytes(&root, "../来信", png, "png").unwrap();
+        let second = save_bytes(&root, "../来信", png, "png").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(fs::read(&first).unwrap(), png);
+        assert!(validate_share_path(&root, &first, "png").is_ok());
+        assert!(validate_share_path(&root, &first, "pdf").is_err());
+        let recipe = save_bytes(&root, "来信-信稿", b"{\"version\":1}", "json").unwrap();
+        assert_eq!(fs::read_to_string(&recipe).unwrap(), "{\"version\":1}");
+        assert!(validate_share_path(&root, &recipe, "png").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn backup_files_are_unique_and_only_controlled_backups_can_be_shared() {
         let root = std::env::temp_dir().join(format!("vana-backup-file-{}", uuid::Uuid::new_v4()));

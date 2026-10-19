@@ -76,6 +76,10 @@ pub fn restore_document_history(
 /// Mirrors Tiptap getText's block separation; derive the index from the trusted
 /// stored snapshot rather than accepting a second, potentially inconsistent body.
 pub(super) fn history_plain_text(node: &serde_json::Value) -> String {
+    if node["type"] == "letterpress" {
+        let d = &node["attrs"]["design"];
+        return ["title", "text", "signature"].iter().filter_map(|key| d[key].as_str()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n");
+    }
     if node["type"] == "text" {
         return node["text"].as_str().unwrap_or("").to_owned();
     }
@@ -99,6 +103,7 @@ pub(super) fn history_plain_text(node: &serde_json::Value) -> String {
                         | "orderedList"
                         | "listItem"
                         | "horizontalRule"
+                        | "letterpress"
                 )
             )
         {

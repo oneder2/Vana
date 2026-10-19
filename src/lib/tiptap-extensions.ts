@@ -4,6 +4,8 @@
  */
 
 import { Node } from '@tiptap/core';
+import { LetterpressBlock } from './letterpress/extension';
+import type { LetterpressRequest } from './letterpress/document';
 import StarterKit from '@tiptap/starter-kit';
 import Blockquote from '@tiptap/extension-blockquote';
 import Heading from '@tiptap/extension-heading';
@@ -52,8 +54,9 @@ const MetaExtension = Node.create({
  * @param themeId 当前主题 ID（用于动态样式）
  * @returns Tiptap 扩展数组
  */
-export function getTiptapExtensions(themeId: string = 'arcane') {
+export function getTiptapExtensions(themeId: string = 'arcane', onLetterpress?: (request: LetterpressRequest) => void) {
   return [
+    LetterpressBlock.configure({ onOpen: onLetterpress }),
     StarterKit.configure({
       // 禁用一些扩展，使用自定义配置
       heading: false, // 使用自定义 Heading 配置

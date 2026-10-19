@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import type { LetterpressRequest } from '@/lib/letterpress/document';
 import type { JSONContent } from '@tiptap/core';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import { Plus, Tag, X } from 'lucide-react';
@@ -26,6 +27,7 @@ export function DesktopDocumentEditor({
   navigation,
   readOnly,
   onReadingClick,
+  onLetterpress,
 }: {
   currentDocument: DocumentRecord | null;
   content: JSONContent;
@@ -45,6 +47,7 @@ export function DesktopDocumentEditor({
   navigation: React.ReactNode;
   readOnly: boolean;
   onReadingClick: () => void;
+  onLetterpress: (request: LetterpressRequest) => void;
 }) {
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -112,6 +115,7 @@ export function DesktopDocumentEditor({
             mobile={false}
             readOnly={readOnly}
             onReadingClick={onReadingClick}
+          onLetterpress={onLetterpress}
             onEditorReady={onEditorReady}
             onContentChange={onContentChange}
             onPersistError={onPersistError}

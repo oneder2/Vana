@@ -71,6 +71,10 @@ import { DesktopHomeShell } from './home/DesktopHomeShell';
 import { MobileHomeShell } from './home/MobileHomeShell';
 import { MobileDocumentEditor } from './home/MobileDocumentEditor';
 import { DesktopDocumentEditor } from './home/DesktopDocumentEditor';
+import { letterNode, letterText, readLetter, type LetterpressRequest } from '@/lib/letterpress/document';
+import { createLetter, documentToLetterText, parseLetter, type LetterDesign } from '@/lib/letterpress/model';
+
+const LetterpressStudio = React.lazy(() => import('@/components/LetterpressStudio'));
 
 type StatusFilter = 'active' | 'recent' | 'trashed';
 
@@ -84,6 +88,7 @@ function parseContent(raw: string): JSONContent {
 
 function extractPlainText(node?: JSONContent): string {
   if (!node) return '';
+  if (node.type === 'letterpress') return letterText(readLetter(node));
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(extractPlainText).join('');
 }
@@ -288,12 +293,20 @@ export default function HomePage() {
   const [editHint, setEditHint] = useState<{ documentKey: string; sequence: number } | null>(null);
   const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
   const [conflictsScope, setConflictsScope] = useState<string | null>(null);
+  const [letterStudio, setLetterStudio] = useState<{ scope: string; id: string; design: LetterDesign; open: boolean; blockId: string; updating: boolean; position: number } | null>(null);
+  const letterBusy = useRef(false);
+  const letterSourceSnapshot = useRef('');
+  const setLetterBusy = useCallback((busy: boolean) => { letterBusy.current = busy; }, []);
+  const closeLetterStudio = useCallback((design: LetterDesign) => {
+    if (!letterBusy.current) setLetterStudio(previous => previous ? { ...previous, design, open: false } : null);
+  }, []);
   const historyBusy = useRef(false);
   const setHistoryBusy = useCallback((busy: boolean) => { historyBusy.current = busy; }, []);
   useEffect(() => {
     if (!appState) return;
     setHistoryDocument(current => current?.account_scope === appState.account_scope ? current : null);
     setConflictsScope(current => current === appState.account_scope ? current : null);
+    setLetterStudio(current => current?.scope === appState.account_scope ? current : null);
   }, [appState?.account_scope]);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     favorites: true,
@@ -304,6 +317,33 @@ export default function HomePage() {
   const [moveTarget, setMoveTarget] = useState<DocumentSummary | null>(null);
   const [moveModeSource, setMoveModeSource] = useState<DocumentSummary | null>(null);
   const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
+  const letterSelection = useRef('');
+  useEffect(() => {
+    letterSelection.current = '';
+    if (!editorInstance) return;
+    // Read-only ProseMirror selections may exist only in the DOM. Preserve them
+    // while a creation menu takes focus, and invalidate them on other actions.
+    const capture = () => {
+      if (editorInstance.isDestroyed) return;
+      const selection = window.getSelection();
+      const root = editorInstance.view.dom;
+      if (selection?.anchorNode && selection.focusNode
+        && root.contains(selection.anchorNode) && root.contains(selection.focusNode)) {
+        if (!selection.isCollapsed) letterSelection.current = selection.toString();
+        else if (root.contains(document.activeElement)) letterSelection.current = '';
+      }
+    };
+    const pointer = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-letterpress-menu]')) capture();
+      else letterSelection.current = '';
+    };
+    document.addEventListener('selectionchange', capture);
+    document.addEventListener('pointerdown', pointer, true);
+    return () => {
+      document.removeEventListener('selectionchange', capture);
+      document.removeEventListener('pointerdown', pointer, true);
+    };
+  }, [editorInstance, currentDocument?.id, currentDocument?.account_scope]);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [replaceFindValue, setReplaceFindValue] = useState('');
@@ -754,6 +794,44 @@ export default function HomePage() {
     setReplaceNextValue('');
   }, [content, currentDocument, documentTags, editorInstance, handlePersistMetadata, replaceFindValue, replaceNextValue, toast]);
 
+  const openLetterStudio = useCallback((request?: LetterpressRequest) => {
+    if (!currentDocument || !editorInstance) { toast.info('先打开一篇文档，再制作信稿'); return; }
+    const selection = editorInstance.state.selection;
+    const selectedText = request?.excerpt?.text || letterSelection.current || (editorInstance.isEditable && !selection.empty
+      ? editorInstance.state.doc.textBetween(selection.from, selection.to, '\n') : '');
+    letterSelection.current = '';
+    letterSourceSnapshot.current = JSON.stringify(editorInstance.getJSON());
+    const position = request?.excerpt?.to ?? (editorInstance.isEditable ? selection.to : editorInstance.state.doc.content.size);
+    const resolved = editorInstance.state.doc.resolve(Math.min(position, editorInstance.state.doc.content.size));
+    const afterBlock = resolved.depth > 0 ? resolved.after(1) : position;
+    setLetterStudio(previous => ({ scope: currentDocument.account_scope, id: currentDocument.id, open: true,
+      blockId: request?.blockId ?? crypto.randomUUID(), updating: !!request?.blockId, position: afterBlock,
+      design: request?.design ? parseLetter(JSON.stringify(request.design))
+        : !request && !selectedText && previous?.scope === currentDocument.account_scope && previous.id === currentDocument.id && !previous.updating
+          ? previous.design : createLetter(documentLeafTitle(currentDocument), selectedText || documentToLetterText(editorInstance.getJSON())) }));
+  }, [currentDocument, editorInstance, toast]);
+
+  const applyLetter = useCallback(async (design: LetterDesign) => {
+    if (!letterStudio || !currentDocument || !editorInstance || editorInstance.isDestroyed
+      || currentDocument.id !== letterStudio.id || currentDocument.account_scope !== letterStudio.scope
+      || getCachedAccountScope() !== letterStudio.scope) throw new Error('文档空间已切换，请重新打开信稿');
+    if (JSON.stringify(editorInstance.getJSON()) !== letterSourceSnapshot.current) throw new Error('正文已发生变化，请关闭工坊后重新打开，避免覆盖修改');
+    const node = letterNode(design, letterStudio.blockId);
+    let found = -1;
+    editorInstance.state.doc.descendants((child, position) => {
+      if (child.type.name === 'letterpress' && child.attrs.id === letterStudio.blockId) found = position;
+    });
+    if (letterStudio.updating && found < 0) throw new Error('原信稿已移除，请重新打开文档');
+    setReadOnly(false);
+    editorInstance.setEditable(true, false);
+    const ok = found >= 0
+      ? editorInstance.commands.command(({ tr }) => { tr.setNodeMarkup(found, undefined, node.attrs); return true; })
+      : editorInstance.commands.insertContentAt(letterStudio.position, [node, { type: 'paragraph' }]);
+    if (!ok) throw new Error('无法在此处插入信稿，请选择正文位置后重试');
+    letterSourceSnapshot.current = JSON.stringify(editorInstance.getJSON());
+    await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
+  }, [letterStudio, currentDocument, editorInstance]);
+
   const handleMenuAction = useCallback(
     (action: MenuAction) => {
       if (readOnly && ['paste', 'cut', 'undo', 'redo', 'replace'].includes(action)) {
@@ -761,6 +839,9 @@ export default function HomePage() {
         return;
       }
       switch (action) {
+        case 'letterpress':
+          openLetterStudio();
+          return;
         case 'newDocument':
           void handleCreateDocument();
           return;
@@ -812,7 +893,7 @@ export default function HomePage() {
           return;
       }
     },
-    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast, requestEditHint]
+    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast, requestEditHint, openLetterStudio]
   );
 
   const openDocumentMenu = useCallback(
@@ -1011,6 +1092,10 @@ export default function HomePage() {
   );
 
   const closeTopMobileLayer = useCallback(() => {
+    if (letterStudio?.open) {
+      if (!letterBusy.current) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      return true;
+    }
     if (dismissContextMenu()) return true;
     if (conflictsScope) {
       setConflictsScope(null);
@@ -1081,6 +1166,7 @@ export default function HomePage() {
     conflictsScope,
     explorerFolderId,
     documents,
+    letterStudio?.open,
   ]);
 
   useEffect(() => {
@@ -1399,7 +1485,7 @@ export default function HomePage() {
   const renderDocumentEditor = (mobile: boolean) => {
     const navigation = <DocumentNavigation path={currentPath} readOnly={readOnly} busy={modeBusy}
       editHint={editHint?.documentKey === documentKey ? editHint?.sequence : 0}
-      onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} />;
+      onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} onLetterpress={openLetterStudio} />;
     if (mobile) {
       if (!currentDocument) return null;
       return (
@@ -1410,6 +1496,7 @@ export default function HomePage() {
           currentDocument={currentDocument}
           content={content}
           documentTags={documentTags}
+          onLetterpress={openLetterStudio}
           onEditorReady={setEditorInstance}
           onContentChange={setContent}
           onPersistError={(message) => toast.error(message)}
@@ -1436,6 +1523,7 @@ export default function HomePage() {
         onTagDraftChange={setTagDraft}
         onAddTag={(value) => void addTag(value)}
         onRemoveTag={(tag) => void removeTag(tag)}
+        onLetterpress={openLetterStudio}
         onEditorReady={setEditorInstance}
         onContentChange={setContent}
         onPersistError={(message) => toast.error(message)}
@@ -1527,6 +1615,12 @@ export default function HomePage() {
           void handleSelectDocument(documentId);
         }}
       />
+
+      {letterStudio?.open && letterStudio.scope === appState?.account_scope && letterStudio.id === currentDocument?.id && (
+        <React.Suspense fallback={<div className="fixed inset-0 z-[11000] grid place-items-center bg-black/70 text-sm text-white" role="status">正在打开文字工坊…</div>}>
+          <LetterpressStudio initial={letterStudio.design} android={isMobileLayout} onApply={applyLetter} updating={letterStudio.updating} onClose={closeLetterStudio} onBusyChange={setLetterBusy} />
+        </React.Suspense>
+      )}
 
       {conflictsScope && conflictsScope === appState?.account_scope && <DocumentConflictsModal scope={conflictsScope} onClose={closeConflicts} onOpen={record => {
         if (getCachedAccountScope() !== record.account_scope) return;

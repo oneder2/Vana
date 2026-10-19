@@ -289,6 +289,52 @@ mod regressions {
         std::fs::remove_dir_all(app.0).unwrap();
     }
 
+    #[test]
+    fn embedded_letter_survives_save_reopen_history_restore_backup_and_sync_queue() {
+        let app = app(); let d = create(&app, "guest", "document", None);
+        let design: serde_json::Value = serde_json::from_str(include_str!("../../fixtures/letterpress-v1.json")).unwrap();
+        let body = serde_json::json!({"type":"doc","content":[{"type":"letterpress","attrs":{"id":"letter-qa","design":design}},{"type":"paragraph"}]});
+        let mut save = input(&d, "信稿验收"); save.content_json = body.to_string();
+        let letter = save_document(&app, save).unwrap();
+        let reopened = AppHandle(app.0.clone());
+        assert_eq!(get_document(&reopened, &d.id).unwrap().unwrap().content_json, letter.content_json);
+        let history = list_document_history(&app, "guest", &d.id).unwrap();
+        let entry = history.iter().find(|h| h.content_json == letter.content_json).unwrap();
+        let edited = save_document(&app, input(&letter, "修改之后")).unwrap();
+        let restored = restore_document_history(&app, restore_input(&edited, &entry.id)).unwrap();
+        assert_eq!(restored.content_json, letter.content_json);
+        assert!(restored.plain_text.contains("雨停以后") && restored.plain_text.contains("十月十七日"));
+        assert_eq!(export_sync_documents(&app,"guest").unwrap().documents.iter().find(|r| r.id == d.id).unwrap().content_json, letter.content_json);
+        let backup = export_space_backup(&app, "guest").unwrap();
+        let imported = import_space_backup(&app, "guest", &backup).unwrap();
+        assert_eq!(get_document(&app, imported.first_document_id.as_deref().unwrap()).unwrap().unwrap().content_json, letter.content_json);
+        let receiver = AppHandle(std::env::temp_dir().join(format!("vana-letter-receiver-{}",uuid::Uuid::new_v4())));
+        let mut cloud = remote(&restored,1,"信稿云端正文"); cloud.content_json=letter.content_json.clone(); cloud.plain_text=restored.plain_text.clone();
+        apply_remote_documents(&receiver,"guest",vec![cloud]).unwrap();
+        assert_eq!(get_document(&receiver,&d.id).unwrap().unwrap().content_json,letter.content_json);
+        assert!(export_sync_documents(&receiver,"guest").unwrap().pending_job_ids.is_empty());
+        std::fs::remove_dir_all(receiver.0).unwrap();
+        let before_jobs = export_sync_documents(&app,"guest").unwrap().pending_job_ids;
+        let before_history = list_document_history(&app,"guest",&d.id).unwrap().len();
+        let mut invalids = Vec::new();
+        for change in [serde_json::json!({"font":"url(https://bad.test)"}), serde_json::json!({"fontSize":1000000}), serde_json::json!({"seed":0.5}), serde_json::json!({"extra":"unsupported"})] {
+            let mut bad = body.clone();
+            for (key,value) in change.as_object().unwrap() { bad["content"][0]["attrs"]["design"][key] = value.clone(); }
+            invalids.push(bad);
+        }
+        let mut invalid = body.clone(); invalid["content"][0]["attrs"]["design"]["marks"][0]["x"] = serde_json::json!(2);
+        invalids.push(invalid);
+        let mut invalid = body.clone(); invalid["content"][0]["content"] = serde_json::json!([{"type":"paragraph"}]); invalids.push(invalid);
+        for invalid in invalids {
+            let mut input = input(&restored,"invalid"); input.content_json=invalid.to_string();
+            assert!(save_document(&app,input).is_err());
+        }
+        assert_eq!(get_document(&app,&d.id).unwrap().unwrap().content_json, letter.content_json);
+        assert_eq!(export_sync_documents(&app,"guest").unwrap().pending_job_ids, before_jobs);
+        assert_eq!(list_document_history(&app,"guest",&d.id).unwrap().len(), before_history);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
     fn auth_server(responses: Vec<(u16, serde_json::Value)>) -> (String, std::thread::JoinHandle<Vec<String>>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

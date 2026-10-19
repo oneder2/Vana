@@ -1,3 +1,5 @@
+import { letterText, readLetter } from './letterpress/document';
+import { prepareLetterImages, letterMarkdown, type LetterImages } from './letterpress/exportDocument';
 import { exportAlignment, exportHeadingLevel } from './exportBoundary';
 /**
  * Vana - 文档导出功能
@@ -5,7 +7,7 @@ import { exportAlignment, exportHeadingLevel } from './exportBoundary';
  * 应用文档的氛围协议主题样式
  */
 
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, ImageRun } from 'docx';
 import { Theme } from './themes';
 import { getThemeBgColor } from './themeStyles';
 import { JSONContent } from '@tiptap/core';
@@ -28,6 +30,7 @@ interface InlineRunSpec {
  */
 function extractTextFromJSON(content: JSONContent): string {
   if (!content) return '';
+  if (content.type === 'letterpress') return letterText(readLetter(content));
 
   let text = '';
 
@@ -118,9 +121,14 @@ function toDocxHexColor(color: string): string {
     .join('');
 }
 
-function convertInlineContentToHTML(content: JSONContent): string {
+function convertInlineContentToHTML(content: JSONContent, images: LetterImages): string {
   if (!content) return '';
 
+  if (content.type === 'letterpress') {
+    const image = images.get(content);
+    if (!image) throw new Error('信稿图片未能生成');
+    return `<figure style="margin:18px auto;break-inside:avoid;max-width:${image.width}px"><img src="${image.url}" alt="${escapeHtml(letterText(readLetter(content)))}" style="display:block;width:100%;height:auto" /></figure>`;
+  }
   if (content.type === 'text') {
     let text = escapeHtml(content.text || '');
 
@@ -141,20 +149,20 @@ function convertInlineContentToHTML(content: JSONContent): string {
     return text;
   }
 
-  return (content.content || []).map(convertInlineContentToHTML).join('');
+  return (content.content || []).map(child => convertInlineContentToHTML(child, images)).join('');
 }
 
-function renderListItems(list: JSONContent, ordered: boolean): string {
+function renderListItems(list: JSONContent, ordered: boolean, images: LetterImages): string {
   const tag = ordered ? 'ol' : 'ul';
   const items = (list.content || []).map((item) => {
     const itemHtml = (item.content || [])
       .map((child) => {
         if (child.type === 'paragraph') {
-          return convertInlineContentToHTML(child);
+          return convertInlineContentToHTML(child, images);
         }
         return child.type === 'bulletList' || child.type === 'orderedList'
-          ? renderListItems(child, child.type === 'orderedList')
-          : convertInlineContentToHTML(child);
+          ? renderListItems(child, child.type === 'orderedList', images)
+          : convertInlineContentToHTML(child, images);
       })
       .join('');
 
@@ -164,7 +172,7 @@ function renderListItems(list: JSONContent, ordered: boolean): string {
   return `<${tag}>${items}</${tag}>`;
 }
 
-function convertJSONToHTML(content: JSONContent): string {
+function convertJSONToHTML(content: JSONContent, images: LetterImages): string {
   if (!content?.content || !Array.isArray(content.content)) {
     return '<p class="empty">文档内容为空</p>';
   }
@@ -174,24 +182,25 @@ function convertJSONToHTML(content: JSONContent): string {
     const alignAttr = ` style="text-align:${align};"`;
 
     switch (block.type) {
+      case 'letterpress': return convertInlineContentToHTML(block, images);
       case 'heading': {
         const level = exportHeadingLevel(block.attrs?.level);
-        return `<h${level}${alignAttr}>${convertInlineContentToHTML(block) || '标题'}</h${level}>`;
+        return `<h${level}${alignAttr}>${convertInlineContentToHTML(block, images) || '标题'}</h${level}>`;
       }
       case 'blockquote':
         return `<blockquote${alignAttr}>${(block.content || [])
-          .map((child) => child.type === 'paragraph' ? convertInlineContentToHTML(child) : convertInlineContentToHTML(child))
+          .map((child) => child.type === 'paragraph' ? convertInlineContentToHTML(child, images) : convertInlineContentToHTML(child, images))
           .join('<br />') || '引用内容'}</blockquote>`;
       case 'codeBlock':
         return `<pre><code>${escapeHtml(extractTextFromJSON(block) || '')}</code></pre>`;
       case 'bulletList':
-        return renderListItems(block, false);
+        return renderListItems(block, false, images);
       case 'orderedList':
-        return renderListItems(block, true);
+        return renderListItems(block, true, images);
       case 'paragraph':
-        return `<p${alignAttr}>${convertInlineContentToHTML(block) || '&nbsp;'}</p>`;
+        return `<p${alignAttr}>${convertInlineContentToHTML(block, images) || '&nbsp;'}</p>`;
       default: {
-        const fallback = convertInlineContentToHTML(block) || escapeHtml(extractTextFromJSON(block));
+        const fallback = convertInlineContentToHTML(block, images) || escapeHtml(extractTextFromJSON(block));
         return fallback ? `<p${alignAttr}>${fallback}</p>` : '';
       }
     }
@@ -418,7 +427,12 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
   return pdfBlob;
 }
 
-function convertInlineContentToTypst(node: JSONContent): string {
+function convertInlineContentToTypst(node: JSONContent, images: LetterImages): string {
+  if (node.type === 'letterpress') {
+    const image = images.get(node);
+    if (!image) throw new Error('信稿图片未能生成');
+    return `#block(above: 12pt, below: 12pt)[#align(center)[#image("${image.path}", width: ${Math.round(image.width * .75)}pt)]]`;
+  }
   if (!node) return '';
 
   if (node.type === 'text') {
@@ -441,29 +455,29 @@ function convertInlineContentToTypst(node: JSONContent): string {
     return result;
   }
 
-  return (node.content || []).map(convertInlineContentToTypst).join('');
+  return (node.content || []).map(child => convertInlineContentToTypst(child, images)).join('');
 }
 
-function convertListItemToTypst(item: JSONContent, ordered: boolean, depth = 0): string {
+function convertListItemToTypst(item: JSONContent, ordered: boolean, images: LetterImages, depth = 0): string {
   const marker = ordered ? '+' : '-';
   const indent = '  '.repeat(depth);
   const parts: string[] = [];
 
   for (const child of item.content || []) {
     if (child.type === 'paragraph') {
-      const inline = convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child) || ' ');
+      const inline = convertInlineContentToTypst(child, images).trim() || escapeTypstText(extractTextFromJSON(child) || ' ');
       parts.push(`${indent}${marker} ${inline}`);
       continue;
     }
 
     if (child.type === 'bulletList' || child.type === 'orderedList') {
       for (const nested of child.content || []) {
-        parts.push(convertListItemToTypst(nested, child.type === 'orderedList', depth + 1));
+        parts.push(convertListItemToTypst(nested, child.type === 'orderedList', images, depth + 1));
       }
       continue;
     }
 
-    const fallback = convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child));
+    const fallback = convertInlineContentToTypst(child, images).trim() || escapeTypstText(extractTextFromJSON(child));
     if (fallback) {
       parts.push(`${indent}${marker} ${fallback}`);
     }
@@ -472,7 +486,7 @@ function convertListItemToTypst(item: JSONContent, ordered: boolean, depth = 0):
   return parts.join('\n');
 }
 
-function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string): string {
+function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string, images: LetterImages): string {
   const tokens = getDocumentStyleTokens(theme);
   const background = typstColor(tokens.pageBackgroundColor, '#05040A');
   const border = typstColor(tokens.borderColor, '#2E2842');
@@ -504,12 +518,12 @@ function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string
           : level === 2
           ? `${tokens.h2SizeRem}em`
           : `${tokens.h3SizeRem}em`;
-        const body = convertInlineContentToTypst(block).trim() || 'Untitled';
+        const body = convertInlineContentToTypst(block, images).trim() || 'Untitled';
         return `${alignPrefix}#block(above: ${tokens.headingMarginTopRem}em, below: ${tokens.headingMarginBottomRem}em)[#text(font: ${headingFonts}, size: ${size}, weight: "bold", tracking: ${tokens.headingLetterSpacingEm}em, fill: ${accent})[${body}]]${alignSuffix}`;
       }
       case 'blockquote': {
         const body = (block.content || [])
-          .map((child) => convertInlineContentToTypst(child).trim() || escapeTypstText(extractTextFromJSON(child)))
+          .map((child) => convertInlineContentToTypst(child, images).trim() || escapeTypstText(extractTextFromJSON(child)))
           .filter(Boolean)
           .join('\n\n');
         return `#block(inset: ${tokens.blockquotePaddingRem}em, fill: ${typstColor(tokens.blockquoteBackgroundColor, tokens.surfaceColor)}, stroke: (${border}), radius: ${tokens.blockquoteRadiusRem}em, above: ${tokens.blockquoteMarginYRem * 0.55}em, below: ${tokens.blockquoteMarginYRem * 0.7}em)[${body || ' '}]`;
@@ -519,12 +533,12 @@ function convertJSONToTypst(content: JSONContent, theme: Theme, filename: string
         return `#block(inset: ${tokens.codeBlockPaddingRem}em, fill: ${typstColor(tokens.codeBlockBackgroundColor, tokens.surfaceColor)}, stroke: (${border}), radius: ${tokens.codeBlockRadiusRem}em, above: ${tokens.codeBlockMarginYRem * 0.6}em, below: ${tokens.codeBlockMarginYRem * 0.8}em)[\n\`\`\`text\n${raw}\n\`\`\`\n]`;
       }
       case 'bulletList':
-        return (block.content || []).map((item) => convertListItemToTypst(item, false)).join('\n');
+        return (block.content || []).map((item) => convertListItemToTypst(item, false, images)).join('\n');
       case 'orderedList':
-        return (block.content || []).map((item) => convertListItemToTypst(item, true)).join('\n');
+        return (block.content || []).map((item) => convertListItemToTypst(item, true, images)).join('\n');
       case 'paragraph':
       default: {
-        const body = convertInlineContentToTypst(block).trim() || escapeTypstText(extractTextFromJSON(block) || ' ');
+        const body = convertInlineContentToTypst(block, images).trim() || escapeTypstText(extractTextFromJSON(block) || ' ');
         return `${alignPrefix}${body}${alignSuffix}`;
       }
     }
@@ -572,14 +586,16 @@ export async function exportToPDF(
   let renderRoot: HTMLDivElement | null = null;
 
   try {
+    const images = await prepareLetterImages(content);
     if (isTauriEnvironment()) {
-      const typstSource = convertJSONToTypst(content, theme, filename);
+      const typstSource = convertJSONToTypst(content, theme, filename, images);
       return await invoke<string>('export_pdf_with_typst', {
         filename,
         typstSource,
+        images: [...images.values()].map(image => Array.from(image.bytes)),
       });
     } else {
-      const htmlContent = convertJSONToHTML(content);
+      const htmlContent = convertJSONToHTML(content, images);
       renderRoot = createPDFRenderRoot(htmlContent, theme, filename);
       document.body.appendChild(renderRoot);
 
@@ -609,6 +625,7 @@ function convertToTextRuns(content: JSONContent, defaultColor: string): InlineRu
 
   const runs: InlineRunSpec[] = [];
 
+  if (content.type === 'letterpress') return [{ text: letterText(readLetter(content)), color: defaultColor }];
   if (content.type === 'text') {
     const text = content.text || '';
 
@@ -651,6 +668,7 @@ export async function exportToDOCX(
   filename: string
 ): Promise<string> {
   const paragraphs: Paragraph[] = [];
+  const images = await prepareLetterImages(content);
   const tokens = getDocumentStyleTokens(theme);
   const docxSizes = getDocumentDocxSizes(theme);
 
@@ -661,7 +679,21 @@ export async function exportToDOCX(
   const codeBgHex = toDocxHexColor(tokens.codeBlockBackgroundColor);
 
   if (content.content && Array.isArray(content.content)) {
-    for (const block of content.content) {
+    // Containers with artwork are expanded in order; keep the picture and all
+    // surrounding text even when a letter has been dragged into a list/quote.
+    const blocks: JSONContent[] = [];
+    const containsLetter = (n: JSONContent): boolean => n.type === 'letterpress' || (n.content ?? []).some(containsLetter);
+    const addBlock = (n: JSONContent) => {
+      if (n.type !== 'letterpress' && containsLetter(n)) (n.content ?? []).forEach(addBlock);
+      else blocks.push(n);
+    };
+    content.content.forEach(addBlock);
+    for (const block of blocks) {
+      if (block.type === 'letterpress') {
+        const image = images.get(block)!;
+        paragraphs.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 180, after: 180 }, children: [new ImageRun({ type: 'png', data: image.bytes, transformation: { width: image.width, height: image.height }, altText: { title: readLetter(block).title || '信稿', description: letterText(readLetter(block)), name: image.path } })] }));
+        continue;
+      }
       const text = extractTextFromJSON(block);
       if (!text.trim()) {
         paragraphs.push(new Paragraph({ text: '' }));
@@ -806,6 +838,7 @@ export async function exportToDOCX(
 }
 
 function convertInlineMarkdown(node: JSONContent): string {
+  if (node.type === 'letterpress') return letterMarkdown(node);
   if (node.type === 'text') {
     const text = escapeMarkdownText(node.text || '');
     const isBold = node.marks?.some((mark) => mark.type === 'bold');
@@ -844,11 +877,11 @@ export function exportToMarkdown(content: JSONContent): string {
         return `\`\`\`\n${plainText}\n\`\`\``;
       case 'bulletList':
         return (block.content || [])
-          .map((item) => `- ${extractTextFromJSON(item)}`)
+          .map((item) => `- ${convertInlineMarkdown(item) || extractTextFromJSON(item)}`)
           .join('\n');
       case 'orderedList':
         return (block.content || [])
-          .map((item, index) => `${index + 1}. ${extractTextFromJSON(item)}`)
+          .map((item, index) => `${index + 1}. ${convertInlineMarkdown(item) || extractTextFromJSON(item)}`)
           .join('\n');
       case 'paragraph':
       default:
@@ -868,7 +901,7 @@ export async function saveMarkdownExport(filename: string, markdown: string): Pr
   });
 }
 
-export async function shareExportFile(path: string, fileType: 'pdf' | 'docx' | 'md', title: string): Promise<void> {
+export async function shareExportFile(path: string, fileType: 'pdf' | 'docx' | 'md' | 'png' | 'json', title: string): Promise<void> {
   return invoke<void>('share_export_file', {
     path,
     fileType,
