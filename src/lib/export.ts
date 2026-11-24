@@ -1,4 +1,6 @@
+import { readStoryRoll, storyRollLines, storyRollText } from './storyRoll/model';
 import { letterText, readLetter } from './letterpress/document';
+import { dialogueText, dialogueToParagraphs, readDialogue } from './dialogue/model';
 import { prepareLetterImages, letterMarkdown, type LetterImages } from './letterpress/exportDocument';
 import { exportAlignment, exportHeadingLevel } from './exportBoundary';
 /**
@@ -17,6 +19,7 @@ import { getDocumentDocxSizes, getDocumentStyleTokens } from './documentStyles';
 interface InlineRunSpec {
   text: string;
   color: string;
+  break?: number;
   bold?: boolean;
   italics?: boolean;
   underline?: { type: 'single' };
@@ -30,6 +33,8 @@ interface InlineRunSpec {
  */
 function extractTextFromJSON(content: JSONContent): string {
   if (!content) return '';
+  if (content.type === 'storyRoll') return storyRollText(content);
+  if (content.type === 'dialogue' || content.type === 'dialogueLine') return dialogueText(content);
   if (content.type === 'letterpress') return letterText(readLetter(content));
 
   let text = '';
@@ -123,6 +128,20 @@ function toDocxHexColor(color: string): string {
 
 function convertInlineContentToHTML(content: JSONContent, images: LetterImages): string {
   if (!content) return '';
+  if (content.type === 'hardBreak') return '<br>';
+  if (content.type === 'storyRoll') {
+    const [question, ...lines] = storyRollLines(readStoryRoll(content));
+    return `<section style="margin:18px 0"><p><strong>${escapeHtml(question)}</strong></p>${lines.map(line => `<p>${escapeHtml(line).replaceAll('\n', '<br>')}</p>`).join('')}</section>`;
+  }
+  if (content.type === 'dialogue') {
+    readDialogue(content);
+    const layout = content.attrs!.layout;
+    return `<section style="margin:20px 0">${content.attrs!.title ? `<p><strong>${escapeHtml(content.attrs!.title)}</strong></p>` : ''}${content.content!.map(line => {
+      const right = layout === 'chat' && line.attrs!.side === 'right';
+      const body = line.content!.map(p => `<p style="margin:0 0 6px">${convertInlineContentToHTML(p, images)}</p>`).join('');
+      return `<div style="margin:${content.attrs!.density === 'compact' ? 10 : 20}px 0;text-align:${right ? 'right' : 'left'}"><strong>${escapeHtml(line.attrs!.speaker)}</strong><div style="padding:10px 14px;${layout === 'chat' ? 'border:1px solid currentColor;border-radius:8px;display:inline-block;max-width:90%;' : ''}text-align:left">${body}</div></div>`;
+    }).join('')}</section>`;
+  }
 
   if (content.type === 'letterpress') {
     const image = images.get(content);
@@ -182,6 +201,8 @@ function convertJSONToHTML(content: JSONContent, images: LetterImages): string {
     const alignAttr = ` style="text-align:${align};"`;
 
     switch (block.type) {
+      case 'storyRoll':
+      case 'dialogue':
       case 'letterpress': return convertInlineContentToHTML(block, images);
       case 'heading': {
         const level = exportHeadingLevel(block.attrs?.level);
@@ -428,6 +449,21 @@ async function renderPDFToBlob(renderRoot: HTMLElement, theme: Theme): Promise<B
 }
 
 function convertInlineContentToTypst(node: JSONContent, images: LetterImages): string {
+  if (node.type === 'hardBreak') return '\\\n';
+  if (node.type === 'storyRoll') {
+    const [question, ...lines] = storyRollLines(readStoryRoll(node));
+    return [`#strong[${escapeTypstText(question)}]`, ...lines.map(escapeTypstText)].join('\n\n');
+  }
+  if (node.type === 'dialogue') {
+    readDialogue(node);
+    const layout = node.attrs!.layout, gap = node.attrs!.density === 'compact' ? 6 : 12;
+    return [node.attrs!.title ? `#strong[${escapeTypstText(node.attrs!.title)}]` : '', ...node.content!.map(line => {
+      const words = line.content!.map(p => convertInlineContentToTypst(p, images)).join('\n\n');
+      const speaker = `#strong[${escapeTypstText(line.attrs!.speaker)}]`;
+      const side = layout === 'chat' && line.attrs!.side === 'right' ? 'right' : 'left';
+      return `#block(above: ${gap}pt, below: ${gap}pt)[#align(${side})[${speaker}\\\n${words}]]`;
+    })].filter(Boolean).join('\n\n');
+  }
   if (node.type === 'letterpress') {
     const image = images.get(node);
     if (!image) throw new Error('信稿图片未能生成');
@@ -625,6 +661,7 @@ function convertToTextRuns(content: JSONContent, defaultColor: string): InlineRu
 
   const runs: InlineRunSpec[] = [];
 
+  if (content.type === 'hardBreak') return [{ text: '', color: defaultColor, break: 1 }];
   if (content.type === 'letterpress') return [{ text: letterText(readLetter(content)), color: defaultColor }];
   if (content.type === 'text') {
     const text = content.text || '';
@@ -679,16 +716,36 @@ export async function exportToDOCX(
   const codeBgHex = toDocxHexColor(tokens.codeBlockBackgroundColor);
 
   if (content.content && Array.isArray(content.content)) {
-    // Containers with artwork are expanded in order; keep the picture and all
-    // surrounding text even when a letter has been dragged into a list/quote.
+    // Expand containers around embedded components in document order.
     const blocks: JSONContent[] = [];
-    const containsLetter = (n: JSONContent): boolean => n.type === 'letterpress' || (n.content ?? []).some(containsLetter);
+    const isComponent = (n: JSONContent) => n.type === 'letterpress' || n.type === 'dialogue' || n.type === 'storyRoll';
+    const containsComponent = (n: JSONContent): boolean => isComponent(n) || (n.content ?? []).some(containsComponent);
     const addBlock = (n: JSONContent) => {
-      if (n.type !== 'letterpress' && containsLetter(n)) (n.content ?? []).forEach(addBlock);
+      if (!isComponent(n) && containsComponent(n)) (n.content ?? []).forEach(addBlock);
       else blocks.push(n);
     };
     content.content.forEach(addBlock);
     for (const block of blocks) {
+      if (block.type === 'storyRoll') {
+        storyRollLines(readStoryRoll(block)).forEach((line, index) => {
+          const children = line.split('\n').map((text, part) => new TextRun({ text, break: part ? 1 : 0,
+            bold: index === 0, color: index === 0 ? accentColorHex : textColorHex }));
+          paragraphs.push(new Paragraph({ children, spacing: { before: index === 0 ? 180 : 0, after: 100 } }));
+        });
+        continue;
+      }
+      if (block.type === 'dialogue') {
+        readDialogue(block);
+        if (block.attrs!.title) paragraphs.push(new Paragraph({ children: [new TextRun({ text: block.attrs!.title, bold: true, color: accentColorHex })], spacing: { before: 180, after: 120 } }));
+        for (const line of block.content!) {
+          line.content!.forEach((p, index) => paragraphs.push(new Paragraph({
+            children: [...(index === 0 && line.attrs!.speaker ? [new TextRun({ text: `${line.attrs!.speaker}：`, bold: true, color: accentColorHex })] : []), ...convertToTextRuns(p, textColorHex).map(run => new TextRun(run))],
+            alignment: block.attrs!.layout === 'chat' && line.attrs!.side === 'right' ? AlignmentType.RIGHT : AlignmentType.LEFT,
+            spacing: { before: index === 0 ? (block.attrs!.density === 'compact' ? 100 : 200) : 0, after: 80 },
+          })));
+        }
+        continue;
+      }
       if (block.type === 'letterpress') {
         const image = images.get(block)!;
         paragraphs.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 180, after: 180 }, children: [new ImageRun({ type: 'png', data: image.bytes, transformation: { width: image.width, height: image.height }, altText: { title: readLetter(block).title || '信稿', description: letterText(readLetter(block)), name: image.path } })] }));
@@ -838,6 +895,9 @@ export async function exportToDOCX(
 }
 
 function convertInlineMarkdown(node: JSONContent): string {
+  if (node.type === 'hardBreak') return '  \n';
+  if (node.type === 'storyRoll') return storyRollLines(readStoryRoll(node)).map(escapeMarkdownText).join('\n\n');
+  if (node.type === 'dialogue') return dialogueToParagraphs(node).map(p => convertInlineMarkdown(p)).join('\n\n');
   if (node.type === 'letterpress') return letterMarkdown(node);
   if (node.type === 'text') {
     const text = escapeMarkdownText(node.text || '');

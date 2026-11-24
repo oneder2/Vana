@@ -1,4 +1,10 @@
+import { storyRollText } from '../storyRoll/model';
 import type { JSONContent } from '@tiptap/core';
+import { dialogueText } from '../dialogue/model';
+import { TEXT_FONTS as FONTS, type TextFont as LetterFont } from '../textFonts';
+
+export { FONTS };
+export type { LetterFont };
 
 export const MATERIALS = {
   card: { name: '分享卡片', note: '让几句话，独立成篇。', color: '#e1e9ed', ink: '#243b4a' },
@@ -9,13 +15,6 @@ export const MATERIALS = {
 } as const;
 export type Material = keyof typeof MATERIALS;
 export type MarkKind = 'blood' | 'burn' | 'tear' | 'stain';
-export type LetterFont = 'song' | 'brush' | 'sans' | 'mono';
-export const FONTS: Record<LetterFont, { name: string; family: string }> = {
-  song: { name: '书刻', family: '"Vana Book", "Noto Serif CJK SC", serif' },
-  brush: { name: '笔迹', family: '"Vana Brush", "KaiTi", cursive' },
-  sans: { name: '清晰', family: '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif' },
-  mono: { name: '电码', family: '"Liberation Mono", "Noto Sans CJK SC", monospace' },
-};
 export const FORMATS = { portrait: [1080, 1440], square: [1080, 1080], tall: [1080, 1920] } as const;
 export type LetterFormat = keyof typeof FORMATS;
 export const MAX_MARKS = 24;
@@ -61,6 +60,8 @@ export function createLetter(title: string, text: string): LetterDesign {
 }
 
 export function documentToLetterText(node: JSONContent): string {
+  if (node.type === 'storyRoll') return storyRollText(node);
+  if (node.type === 'dialogue' || node.type === 'dialogueLine') return dialogueText(node);
   if (node.type === 'letterpress') {
     const d = parseLetter(JSON.stringify(node.attrs?.design));
     return [d.title, d.text, d.signature].filter(Boolean).join('\n\n');

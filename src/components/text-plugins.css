@@ -1,0 +1,13 @@
+.tp-presets { min-width: 0; }
+.tp-note { font-size: 12px; line-height: 1.75; opacity: .75; margin: 8px 0 14px; overflow-wrap: anywhere; }
+.tp-preset-save { display: flex; flex-wrap: wrap; gap: 8px; }
+.tp-preset-save input { min-width: 120px; width: 100%; flex: 1; border: 1px solid var(--lp-line, var(--doc-border-color, currentColor)); background: transparent; border-radius: 5px; padding: 10px; color: inherit; font: inherit; font-size: 13px; }
+.tp-preset-save button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+.tp-preset-list { display: grid; gap: 6px; margin-top: 14px; max-height: 230px; overflow: auto; }
+.tp-preset-list > div { display: flex; gap: 4px; }
+.tp-preset-list button:first-child { flex: 1; text-align: left; justify-content: flex-start; overflow-wrap: anywhere; min-width: 0; }
+.tp-locks { display: flex; flex-wrap: wrap; gap: 10px 16px; border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.tp-locks legend { font-size: 12px; margin-bottom: 12px; opacity: .75; }
+.tp-locks label { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; font-size: 13px; cursor: pointer; }
+.tp-locks input { accent-color: var(--lp-accent, currentColor); width: 16px; height: 16px; }
+@media (max-width: 760px) { .tp-locks label { min-height: 44px; } .tp-preset-save button, .tp-preset-list button { min-height: 44px; } }

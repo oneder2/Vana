@@ -1,6 +1,6 @@
 # 文档索引
 
-当前版本：0.8.0。官网始终提供 GitHub 最新公开正式版，体验包和未发布候选不会覆盖正式下载。
+当前源码版本为 0.8.1。官网始终提供 GitHub 最新公开正式版，体验包和未发布候选不会覆盖正式下载。
 
 ## 使用与产品
 
@@ -8,15 +8,19 @@
 - [UI 规则](UI_DIRECTION.md) · [应用图标](design/APP_ICON.md)
 - [空间备份格式](BACKUP_FORMAT.md)
 - [文字冲印与信稿工坊](LETTERPRESS_STUDIO.md)
+- [文档文字组件](TEXT_PLUGINS.md) · [移动界面调整](MOBILE_UI_REFINEMENT.md) · [React Bits 候选效果（待选择）](REACT_BITS_CANDIDATES.md)
 
 ## 架构与开发
 
 - [架构和数据契约](ARCHITECTURE.md) · [会话与渲染安全](SESSION_SECURITY.md)
+- [交互改造验收](INTERACTION_ACCEPTANCE.md)
 - [开发指南](DEVELOPMENT.md) · [本地构建环境](LOCAL_BUILD_SETUP.md) · [脚本说明](../scripts/README.md)
+- [Linux 本机安装、自启与自动更新](LOCAL_DESKTOP.md)
 - [Supabase 配置](SUPABASE_SETUP.md) · [真实同步验收方法](SYNC_ACCEPTANCE.md)
 
 ## 部署与发布
 
+- [0.8.1 更新说明](RELEASE_NOTES_0.8.1.md)
 - [0.8.0 更新说明](RELEASE_NOTES_0.8.0.md) · [公开发布记录](RELEASE_0.8.0_2026-10-19.md)
 - [0.7.1 上线前自检](RELEASE_READINESS_2026-10-15.md) · [0.7.1 公开发布记录](RELEASE_0.7.1_2026-10-16.md)
 - [部署指南](DEPLOYMENT.md) · [版本策略](VERSIONING.md) · [变更记录](CHANGELOG.md)

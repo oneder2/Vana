@@ -538,6 +538,23 @@ jobs:
         run: |
           echo "prerelease=false" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          assets = sorted(path for path in Path('artifacts').rglob('*') if path.is_file())
+          names = [path.name for path in assets]
+          if len(names) != len(set(names)):
+              raise SystemExit('Release assets must have unique filenames')
+          with Path('SHA256SUMS.txt').open('w', encoding='utf-8') as checksums:
+              for path in assets:
+                  with path.open('rb') as stream:
+                      digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+                  checksums.write(f'{digest}  {path.name}\n')
+          PY
+
       - name: Create Release (Draft)
         uses: softprops/action-gh-release@v2
         with:
@@ -561,4 +578,5 @@ jobs:
             artifacts/linux-artifacts/**/*
             artifacts/windows-artifacts/**/*
             artifacts/android-artifacts/**/*
+            SHA256SUMS.txt
           token: ${{ secrets.GITHUB_TOKEN }}

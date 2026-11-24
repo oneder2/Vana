@@ -2,12 +2,16 @@
 
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Info, Menu, UserRound, Share2 } from 'lucide-react';
+import { Info, Menu, UserRound, Share2, ArrowLeft, ChevronRight } from 'lucide-react';
 import { AppMenuBar, type MenuAction } from '@/components/AppMenuBar';
+import type { DocumentPathItem } from '@/lib/documentNavigation';
+import { usePresence } from '@/lib/usePresence';
 import { AppLink } from '@/lib/router';
 
 export function MobileHomeShell({
   title,
+  path,
+  onOpenFolder,
   sidebar,
   mainContent,
   sidebarOpen,
@@ -26,6 +30,8 @@ export function MobileHomeShell({
   menuCloseSignal,
 }: {
   title: string;
+  path: DocumentPathItem[];
+  onOpenFolder: (id: string | null) => void;
   sidebar: React.ReactNode;
   mainContent: React.ReactNode;
   sidebarOpen: boolean;
@@ -49,13 +55,14 @@ export function MobileHomeShell({
     onOpenExportMenu();
   };
 
+  const sidebarPresent = usePresence(sidebarOpen);
   const sidebarLayer =
-    sidebarOpen && typeof document !== 'undefined'
+    sidebarPresent && typeof document !== 'undefined'
       ? createPortal(
-          <>
-            <div className="fixed inset-0 z-30 bg-black/50" onClick={onCloseSidebar} aria-hidden="true" />
+          <div className="mobile-library-layer" data-open={sidebarOpen} inert={!sidebarOpen}>
+            <div className="mobile-library-scrim fixed inset-0 z-30 bg-black/50" onClick={onCloseSidebar} aria-hidden="true" />
             {sidebar}
-          </>,
+          </div>,
           document.body,
         )
       : null;
@@ -63,7 +70,7 @@ export function MobileHomeShell({
   return (
     <>
       <header
-        className="shell-panel z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3"
+        className="shell-panel mobile-document-header z-20 flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3"
         style={{ backgroundColor: surface, borderColor: border }}
       >
         <button
@@ -71,27 +78,19 @@ export function MobileHomeShell({
           data-tauri-drag-region="false"
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border"
           style={{ borderColor: border, color: accent }}
-          onClick={onOpenSidebar}
-          aria-label="打开文档库"
+          onClick={hasDocument ? () => onOpenFolder(path.at(-1)?.parent_id ?? null) : onOpenSidebar}
+          aria-label={hasDocument ? "返回所在分组" : "打开文档库"}
         >
-          <Menu size={18} />
+          {hasDocument ? <ArrowLeft size={18} /> : <Menu size={18} />}
         </button>
         <div className="min-w-0 flex-1">
-          <div className="mt-0.5 flex min-w-0 items-center gap-2">
-            <div className="truncate text-sm font-medium">{title}</div>
-            {hasDocument && (
-              <button
-                type="button"
-                data-tauri-drag-region="false"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border"
-                style={{ borderColor: border, color: accent }}
-                onClick={onOpenProperties}
-                aria-label="文档属性"
-              >
-                <Info size={14} />
-              </button>
-            )}
-          </div>
+          {hasDocument && <div className="mobile-document-location">
+            <button onClick={onOpenSidebar}>{path.length > 1 ? path.at(-2)?.title : '文档库'}</button><ChevronRight size={10} />
+          </div>}
+          <button type="button" disabled={!hasDocument} className="flex min-h-8 w-full min-w-0 items-center gap-2 text-left" onClick={onOpenProperties} aria-label={hasDocument ? '文档属性' : undefined}>
+            <span className="truncate text-sm font-medium">{title}</span>
+            {hasDocument && <Info size={14} className="shrink-0 opacity-50" />}
+          </button>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {hasDocument && (
@@ -119,10 +118,10 @@ export function MobileHomeShell({
       </header>
 
       <div
-        className="shell-panel z-20 flex h-10 shrink-0 items-center overflow-visible border-b px-2"
+        className="shell-panel mobile-menu-row z-20 flex shrink-0 items-center overflow-visible border-b px-2"
         style={{ backgroundColor: surface, borderColor: border }}
       >
-        <AppMenuBar
+        <AppMenuBar mobile hasDocument={hasDocument}
           onAction={onMenuAction}
           onHelp={onHelp}
           onSettings={onSettings}
@@ -131,7 +130,7 @@ export function MobileHomeShell({
         />
       </div>
 
-      <div className="relative min-h-0 w-screen max-w-[100dvw] flex-1 overflow-hidden">
+      <div className="mobile-document-stage relative min-h-0 w-screen max-w-[100dvw] flex-1 overflow-hidden">
         {mainContent}
       </div>
       {sidebarLayer}

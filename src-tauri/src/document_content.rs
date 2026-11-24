@@ -36,7 +36,10 @@ pub fn validate(content: &str) -> Result<()> {
                     | "listItem"
                     | "meta"
                     | "horizontalRule"
+                    | "storyRoll"
                     | "letterpress"
+                    | "dialogue"
+                    | "dialogueLine"
                     | "text"
                     | "hardBreak"
             ),
@@ -47,13 +50,24 @@ pub fn validate(content: &str) -> Result<()> {
             "paragraph" | "heading" | "meta" => matches!(kind, "text" | "hardBreak"),
             "codeBlock" => kind == "text",
             "bulletList" | "orderedList" => kind == "listItem",
-            _ => !matches!(kind, "doc" | "text" | "hardBreak" | "listItem"),
+            "dialogue" => kind == "dialogueLine",
+            "dialogueLine" => kind == "paragraph",
+            _ => !matches!(kind, "doc" | "text" | "hardBreak" | "listItem" | "dialogueLine"),
         };
         anyhow::ensure!(valid_child, "正文节点层级不符合编辑器结构");
         if kind == "text" {
             anyhow::ensure!(node["text"].is_string(), "文字节点无效");
         } else {
             anyhow::ensure!(node.get("text").is_none(), "非文字节点包含 text 字段");
+        }
+        if kind == "storyRoll" {
+            anyhow::ensure!(node.get("marks").is_none(), "剧情判定不能带文字标记");
+            anyhow::ensure!(
+                node.get("content").is_none_or(|value| value.as_array().is_some_and(Vec::is_empty)),
+                "剧情判定不能有子节点"
+            );
+            validate_story_roll(&node["attrs"])?;
+            continue;
         }
         if kind == "letterpress" {
             anyhow::ensure!(node.get("marks").is_none(), "信稿不能带文字标记");
@@ -64,7 +78,21 @@ pub fn validate(content: &str) -> Result<()> {
             validate_letter(&attrs["design"])?;
             continue;
         }
-        if let Some(attrs) = node.get("attrs").filter(|v| !v.is_null()) {
+        if matches!(kind, "dialogue" | "dialogueLine") {
+            let attrs = node["attrs"].as_object().context("对话属性无效")?;
+            let bounded_text = |name: &str, max: usize| attrs.get(name).and_then(Value::as_str).is_some_and(|s| s.encode_utf16().count() <= max);
+            let choice = |name: &str, choices: &[&str]| attrs.get(name).and_then(Value::as_str).is_some_and(|s| choices.contains(&s));
+            let children = node["content"].as_array().context("对话正文无效")?;
+            anyhow::ensure!(!children.is_empty() && node.get("marks").is_none(), "对话需要正文且不能携带文字标记");
+            if kind == "dialogue" {
+                anyhow::ensure!(attrs.len() == 5 && bounded_text("id", 80) && attrs["id"].as_str().is_some_and(|s| !s.is_empty())
+                    && bounded_text("title", 120) && choice("layout", &["chat", "script", "transcript"])
+                    && choice("font", &["song", "brush", "sans", "mono"]) && choice("density", &["compact", "relaxed"])
+                    && children.len() <= 64, "对话样式或台词数量无效");
+            } else {
+                anyhow::ensure!(attrs.len() == 2 && bounded_text("speaker", 80) && choice("side", &["left", "right"]), "对话角色属性无效");
+            }
+        } else if let Some(attrs) = node.get("attrs").filter(|v| !v.is_null()) {
             for (name, value) in attrs.as_object().context("正文属性无效")? {
                 let valid = if value.is_null() {
                     matches!(
@@ -181,6 +209,51 @@ pub fn validate(content: &str) -> Result<()> {
     }
     Ok(())
 }
+fn validate_story_roll(value: &Value) -> Result<()> {
+    let attrs = value.as_object().context("剧情判定属性无效")?;
+    let question = value["question"].as_str().context("判定问题无效")?;
+    let rows = value["outcomes"].as_array().context("判定区间无效")?;
+    let result = attrs.get("result").context("缺少判定结果字段")?;
+    anyhow::ensure!(
+        attrs.len() == 4
+            && value["id"].as_str().is_some_and(|id| !id.is_empty() && id.encode_utf16().count() <= 80)
+            && question.encode_utf16().count() <= 200
+            && (2..=12).contains(&rows.len()),
+        "剧情判定属性无效"
+    );
+    let mut ranges = Vec::with_capacity(rows.len());
+    for row in rows {
+        let fields = row.as_object().context("判定区间格式无效")?;
+        let from = row["from"].as_u64().context("判定区间起点无效")?;
+        let to = row["to"].as_u64().context("判定区间终点无效")?;
+        let text = row["text"].as_str().context("判定区间结果无效")?;
+        anyhow::ensure!(
+            fields.len() == 3 && (1..=100).contains(&from) && (from..=100).contains(&to)
+                && !text.trim().is_empty() && text.encode_utf16().count() <= 300,
+            "判定区间格式无效"
+        );
+        ranges.push((from, to, text));
+    }
+    ranges.sort_unstable_by_key(|row| row.0);
+    let mut next = 1;
+    for (from, to, _) in &ranges {
+        anyhow::ensure!(*from == next, "判定区间有重叠或缺漏");
+        next = to + 1;
+    }
+    anyhow::ensure!(next == 101, "判定区间未覆盖 1 至 100");
+    if !result.is_null() {
+        let fields = result.as_object().context("掷骰记录无效")?;
+        let point = result["value"].as_u64().context("掷骰点数无效")?;
+        let text = result["text"].as_str().context("掷骰结果无效")?;
+        anyhow::ensure!(
+            fields.len() == 2 && !question.trim().is_empty()
+                && ranges.iter().any(|(from, to, outcome)| (*from..=*to).contains(&point) && *outcome == text),
+            "掷骰记录与判定表不一致"
+        );
+    }
+    Ok(())
+}
+
 fn safe_link(href: &str) -> bool {
     href.len() <= 4096
         && !href.chars().any(char::is_control)

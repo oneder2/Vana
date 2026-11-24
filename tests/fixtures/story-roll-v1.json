@@ -1,0 +1,28 @@
+{
+  "type": "storyRoll",
+  "attrs": {
+    "id": "test-story",
+    "question": "她能进入档案室吗？",
+    "outcomes": [
+      {
+        "from": 1,
+        "to": 20,
+        "text": "守卫认出了她。"
+      },
+      {
+        "from": 21,
+        "to": 65,
+        "text": "她只能带走一份档案。"
+      },
+      {
+        "from": 66,
+        "to": 100,
+        "text": "她发现了未登记的档案。"
+      }
+    ],
+    "result": {
+      "value": 43,
+      "text": "她只能带走一份档案。"
+    }
+  }
+}

@@ -26,7 +26,6 @@ export function DesktopDocumentEditor({
   onPersisted,
   navigation,
   readOnly,
-  onReadingClick,
   onLetterpress,
 }: {
   currentDocument: DocumentRecord | null;
@@ -46,7 +45,6 @@ export function DesktopDocumentEditor({
   onPersisted: () => void;
   navigation: React.ReactNode;
   readOnly: boolean;
-  onReadingClick: () => void;
   onLetterpress: (request: LetterpressRequest) => void;
 }) {
   return (
@@ -114,8 +112,7 @@ export function DesktopDocumentEditor({
             tags={documentTags}
             mobile={false}
             readOnly={readOnly}
-            onReadingClick={onReadingClick}
-          onLetterpress={onLetterpress}
+            onLetterpress={onLetterpress}
             onEditorReady={onEditorReady}
             onContentChange={onContentChange}
             onPersistError={onPersistError}

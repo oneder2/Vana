@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, FileText, Folder, FolderOpen, Heart } from 'lucide-react';
 import { useTheme } from '@/components/ThemeProvider';
 import type { DocumentSummary } from '@/lib/api';
@@ -151,6 +151,7 @@ function TreeItem({
   onNodeContextMenu,
   onPointerStart,
 }: TreeItemProps) {
+  const pointer = useRef('mouse'), handled = useRef(false);
   const { theme } = useTheme();
   const accent = getThemeAccentColor(theme);
   const accentBg = getThemeAccentBgColor(theme);
@@ -175,8 +176,13 @@ function TreeItem({
       <div
         data-drop-folder-id={isFolder ? node.id : undefined}
         data-drop-active={isDropTarget || undefined}
-        onMouseDown={(event) => onPointerStart(event, node.document, isFolder)}
-        onContextMenu={(event) => onNodeContextMenu(event, node.document)}
+        onPointerDown={(event) => {
+          pointer.current = event.pointerType; handled.current = false;
+          if (event.pointerType === 'mouse') onPointerStart(event, node.document, isFolder);
+        }}
+        onPointerCancel={() => { handled.current = true; }}
+        onClick={() => { if (pointer.current !== 'mouse' && !handled.current) handleActivate(); }}
+        onContextMenu={(event) => { handled.current = true; onNodeContextMenu(event, node.document); }}
         className="library-tree-item flex w-full select-none items-center gap-1.5 rounded px-2 py-1.5 text-left text-[13px]"
         style={{
           paddingLeft: `${8 + level * 14}px`,
@@ -337,7 +343,7 @@ export function DocumentExplorerTree({
       <div
         data-drop-root={rootParentId === null ? 'true' : undefined}
         data-drop-folder-id={rootParentId ?? undefined}
-        className="mb-2 rounded border border-dashed px-3 py-2 text-[11px] transition-colors"
+        className="document-drag-hint mb-2 rounded border border-dashed px-3 py-2 text-[11px] transition-colors"
         style={{
           borderColor: rootDropActive ? accent : border,
           backgroundColor: rootDropActive ? `${accentBg}4d` : 'transparent',

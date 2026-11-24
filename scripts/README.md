@@ -8,6 +8,9 @@
 | `bash scripts/check-build-ready.sh --hosted` | 在上述检查后，额外只读检查构建所用 Supabase 的 Auth / schema |
 | `npm run tauri:dev` / `npm run tauri:dev:android` | 原生开发；Android 开发入口处理 dev server 与 adb reverse |
 | `npm run tauri:build` / `npm run tauri:build:android` | 生产构建；`run-tauri.mjs` 负责环境、产物归档与平台差异 |
+| `npm run desktop:install` | Linux x86_64 当前用户安装正式版，设置桌面登录自启与每小时自动更新，见 [本机安装](../docs/LOCAL_DESKTOP.md) |
+| `npm run desktop:update` / `npm run desktop:status` | 立即检查 GitHub 新正式版本 / 查看本机所装版本；不关闭正在编辑的窗口 |
+| `npm run test:local-linux` | 隔离验证下载校验、失败保留旧版、版本比较、数据库备份、安装幂等与互斥 |
 | `node scripts/sync-version.mjs <版本>` | 同步 npm、npm lock、Cargo、Cargo lock 与 Tauri 版本；不创建 tag |
 | `python3 scripts/check-app-icons.py` | 检查桌面和 Android 自适应、单色、圆形图标与不透明边缘 |
 | `python3 scripts/check-android-jni.py` | 检查实际 Release/R8 DEX 是否保留分享与 Keystore JNI 契约 |

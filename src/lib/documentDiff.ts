@@ -1,4 +1,6 @@
+import { readStoryRoll, storyRollText } from './storyRoll/model';
 import { letterText, readLetter } from './letterpress/document';
+import { dialogueText, readDialogue } from './dialogue/model';
 import type { JSONContent } from '@tiptap/core';
 
 export type TextChange = { kind: 'same' | 'added' | 'removed'; text: string };
@@ -7,14 +9,16 @@ export type DocumentDifference = { changes: TextChange[]; formattingOnly: boolea
 export function parseDocumentBody(json: string): JSONContent {
   const node = JSON.parse(json) as JSONContent;
   if (!node || node.type !== 'doc' || !Array.isArray(node.content)) throw new Error('此版本正文格式无效');
-  const blocks = new Set(['doc', 'paragraph', 'heading', 'codeBlock', 'blockquote', 'bulletList', 'orderedList', 'listItem', 'meta', 'horizontalRule', 'letterpress', 'text', 'hardBreak']);
+  const blocks = new Set(['doc', 'paragraph', 'heading', 'codeBlock', 'blockquote', 'bulletList', 'orderedList', 'listItem', 'meta', 'horizontalRule', 'letterpress', 'dialogue', 'dialogueLine', 'storyRoll', 'text', 'hardBreak']);
   const marks = new Set(['bold', 'italic', 'underline', 'strike', 'code', 'link']);
   const stack: { node: JSONContent; depth: number }[] = [{ node, depth: 0 }];
   let count = 0;
   while (stack.length) {
     const item = stack.pop()!;
     if (!item.node || !blocks.has(item.node.type ?? '') || item.depth > 32 || ++count > 50_000) throw new Error('此版本包含不支持的正文类型或层级');
+    if (item.node.type === 'storyRoll') readStoryRoll(item.node);
     if (item.node.type === 'letterpress') readLetter(item.node);
+    if (item.node.type === 'dialogue') readDialogue(item.node);
     if (item.node.marks && (!Array.isArray(item.node.marks) || item.node.marks.some(mark => !marks.has(mark.type)))) throw new Error('此版本包含不支持的文字标记');
     if (item.node.content) {
       if (!Array.isArray(item.node.content)) throw new Error('此版本正文格式无效');
@@ -25,6 +29,8 @@ export function parseDocumentBody(json: string): JSONContent {
 }
 
 function text(node: JSONContent): string {
+  if (node.type === 'storyRoll') return storyRollText(node);
+  if (node.type === 'dialogue' || node.type === 'dialogueLine') return dialogueText(node);
   if (node.type === 'letterpress') return letterText(readLetter(node));
   if (node.type === 'text') return node.text ?? '';
   if (node.type === 'hardBreak') return '\n';

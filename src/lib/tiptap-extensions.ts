@@ -1,3 +1,4 @@
+import { StoryRollBlock } from './storyRoll/extension';
 /**
  * Vana - Tiptap 扩展配置
  * 定义自定义块类型和主题相关的样式配置
@@ -5,6 +6,7 @@
 
 import { Node } from '@tiptap/core';
 import { LetterpressBlock } from './letterpress/extension';
+import { DialogueBlock, DialogueLine } from './dialogue/extension';
 import type { LetterpressRequest } from './letterpress/document';
 import StarterKit from '@tiptap/starter-kit';
 import Blockquote from '@tiptap/extension-blockquote';
@@ -54,8 +56,10 @@ const MetaExtension = Node.create({
  * @param themeId 当前主题 ID（用于动态样式）
  * @returns Tiptap 扩展数组
  */
-export function getTiptapExtensions(themeId: string = 'arcane', onLetterpress?: (request: LetterpressRequest) => void) {
+export function getTiptapExtensions(themeId: string = 'arcane', onLetterpress?: (request: LetterpressRequest) => void, accountScope = 'guest') {
   return [
+    StoryRollBlock,
+    DialogueBlock.configure({ accountScope }), DialogueLine,
     LetterpressBlock.configure({ onOpen: onLetterpress }),
     StarterKit.configure({
       // 禁用一些扩展，使用自定义配置
@@ -332,7 +336,7 @@ export function getTiptapExtensions(themeId: string = 'arcane', onLetterpress?: 
     // Underline 扩展 - 下划线
     Underline,
     Placeholder.configure({
-      placeholder: '铭刻...',
+      placeholder: ({ editor, pos }) => editor.state.doc.resolve(pos).parent.type.name === 'dialogueLine' ? '写下台词…' : '铭刻...',
       emptyEditorClass: 'is-editor-empty',
       emptyNodeClass: 'is-empty', // 为空节点添加类
       showOnlyWhenEditable: true, // 只在可编辑时显示

@@ -1,3 +1,4 @@
+import { Disclosure } from '@/components/Disclosure';
 import { ArrowLeft, Mail } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
 import { FadeContent } from '@/components/motion/FadeContent';
@@ -18,9 +19,8 @@ export default function HelpPage() {
       <AppLink href="/" className="preferences-back"><ArrowLeft size={16} />返回文档</AppLink>
       <FadeContent>
         <header className="preferences-heading mt-6"><h1>使用帮助</h1><p>关于写作、同步与文档备份。</p></header>
-        {questions.map(question => <details key={question.title} className="help-question preference-section">
-          <summary>{question.title}</summary><p className="preference-description">{question.body}</p>
-        </details>)}
+        {questions.map(question => <Disclosure key={question.title} className="help-question preference-section" title={<>{question.title}</>}><p className="preference-description">{question.body}</p>
+        </Disclosure>)}
         <a href="mailto:eclospy@duck.com" className="ui-button ui-button-quiet mt-6"><Mail size={16} />联系支持</a>
       </FadeContent>
     </main>

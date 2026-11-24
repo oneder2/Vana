@@ -6,7 +6,7 @@
 
 'use client';
 
-import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef, ReactNode } from 'react';
 
 // Toast 项接口
 export interface ToastItem {
@@ -14,6 +14,7 @@ export interface ToastItem {
   type: 'success' | 'error' | 'warning' | 'info';
   message: string;
   duration?: number;
+  closing?: boolean;
 }
 
 // Toast 上下文类型
@@ -44,8 +45,18 @@ interface ToastProviderProps {
 export function ToastProvider({ children }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const closing = useRef(new Set<string>());
+  useEffect(() => () => { timers.current.forEach(clearTimeout); timers.current.clear(); closing.current.clear(); }, []);
   const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    if (closing.current.has(id)) return;
+    closing.current.add(id);
+    clearTimeout(timers.current.get(id));
+    setToasts(prev => prev.map(toast => toast.id === id ? { ...toast, closing: true } : toast));
+    timers.current.set(id, setTimeout(() => {
+      setToasts(prev => prev.filter(toast => toast.id !== id));
+      timers.current.delete(id); closing.current.delete(id);
+    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 160));
   }, []);
 
   // 添加 Toast
@@ -60,9 +71,7 @@ export function ToastProvider({ children }: ToastProviderProps) {
 
     // 自动移除（如果设置了duration）
     if (newToast.duration && newToast.duration > 0) {
-      setTimeout(() => {
-        removeToast(id);
-      }, newToast.duration);
+      timers.current.set(id, setTimeout(() => { removeToast(id); }, newToast.duration));
     }
   }, [removeToast]);
 

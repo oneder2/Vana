@@ -31,6 +31,7 @@ print('PASS: source/lockfile versions agree; tracked-file secret checks (' + ver
 PY
 npm run typecheck
 npm test
+python3 -m unittest discover -s tests -p local_linux_update_test.py
 CARGO_TARGET_DIR="${VANA_NATIVE_TEST_TARGET:-tests/native-core/target}" cargo test -j 2 --locked --manifest-path tests/native-core/Cargo.toml
 python3 scripts/test-supabase-protocol.py
 npm run build

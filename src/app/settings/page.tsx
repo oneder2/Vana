@@ -1,5 +1,6 @@
 'use client';
 
+import { Disclosure } from '@/components/Disclosure';
 import { useEffect, useState } from 'react';
 import {
   CheckCircle2,
@@ -149,8 +150,7 @@ export default function SettingsPage() {
 
           {appState && <SpaceBackupPanel scope={appState.account_scope} disabled={busy} onBusyChange={setBusy} onImported={refresh} />}
 
-          <details className="preference-section advanced-settings">
-            <summary className="cursor-pointer text-sm font-medium">高级设置</summary>
+          <Disclosure className="preference-section advanced-settings" title={<>高级设置</>}>
             <div className="mt-5 space-y-6">
               <section>
                 <h2 className="mb-2 text-sm font-medium">自定义同步服务</h2>
@@ -172,8 +172,7 @@ export default function SettingsPage() {
                   {appState?.recovery_available && <button disabled={busy} onClick={() => void handleRecover('legacy')} className="min-h-11 rounded border px-4 py-2 text-sm" style={{ borderColor: border }}>恢复旧数据库</button>}
                 </div>
               </section>
-              <details className="border-t pt-4 text-xs leading-6 opacity-70" style={{ borderColor: border }}>
-                <summary className="cursor-pointer">诊断信息</summary>
+              <Disclosure className="border-t pt-4 text-xs leading-6 opacity-70" style={{ borderColor: border }} title={<>诊断信息</>}>
                 <div className="mt-3 space-y-1 break-words">
                   <div>服务来源：{appState?.service_profile ?? '未连接'}</div>
                   <div>单文档上限：{appState ? formatBytes(appState.limits.max_document_content_bytes) : '—'}</div>
@@ -183,10 +182,10 @@ export default function SettingsPage() {
                   <div>当前存储：{appState ? formatBytes(appState.limits.current_total_storage_bytes) : '—'}</div>
                   <div>最近 5 分钟写入：{appState?.limits.current_write_ops_last_5_minutes ?? 0}</div>
                 </div>
-              </details>
+              </Disclosure>
               <a href="https://github.com/oneder2/Vana" target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-1 text-xs hover:underline"><ExternalLink size={14} />GitHub 仓库</a>
             </div>
-          </details>
+          </Disclosure>
         </div>
     </PreferencesLayout>
   );

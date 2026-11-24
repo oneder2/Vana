@@ -76,6 +76,31 @@ pub fn restore_document_history(
 /// Mirrors Tiptap getText's block separation; derive the index from the trusted
 /// stored snapshot rather than accepting a second, potentially inconsistent body.
 pub(super) fn history_plain_text(node: &serde_json::Value) -> String {
+    if node["type"] == "dialogue" || node["type"] == "dialogueLine" {
+        let body = node["content"].as_array().map(|children| children.iter().map(history_plain_text).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+        let label = if node["type"] == "dialogue" { node["attrs"]["title"].as_str().unwrap_or("") } else { node["attrs"]["speaker"].as_str().unwrap_or("") };
+        return if label.is_empty() { body } else if node["type"] == "dialogue" { format!("{label}\n\n{body}") } else { format!("{label}：{body}") };
+    }
+    if node["type"] == "storyRoll" {
+        let card = &node["attrs"];
+        let question = card["question"].as_str().unwrap_or("").trim();
+        let title = if question.is_empty() { "剧情判定" } else { question };
+        if let (Some(point), Some(text)) = (card["result"]["value"].as_u64(), card["result"]["text"].as_str()) {
+            return format!("{title}\n1D100 · 掷出 {point}\n{text}");
+        }
+        let mut lines = vec![title.to_owned(), "1D100 · 待判定".to_owned()];
+        if let Some(outcomes) = card["outcomes"].as_array() {
+            let mut rows: Vec<_> = outcomes.iter().filter_map(|row| {
+                Some((row["from"].as_u64()?, row["to"].as_u64()?, row["text"].as_str()?))
+            }).collect();
+            rows.sort_unstable_by_key(|row| row.0);
+            for (from, to, text) in rows {
+                let range = if from == to { from.to_string() } else { format!("{from}–{to}") };
+                lines.push(format!("{range}　{text}"));
+            }
+        }
+        return lines.join("\n");
+    }
     if node["type"] == "letterpress" {
         let d = &node["attrs"]["design"];
         return ["title", "text", "signature"].iter().filter_map(|key| d[key].as_str()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n");
@@ -104,6 +129,8 @@ pub(super) fn history_plain_text(node: &serde_json::Value) -> String {
                         | "listItem"
                         | "horizontalRule"
                         | "letterpress"
+                        | "dialogue"
+                        | "storyRoll"
                 )
             )
         {

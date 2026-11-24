@@ -1,4 +1,7 @@
 'use client';
+import { AnimatedDialog } from '@/components/AnimatedDialog';
+import { copyText } from '@/lib/clipboard';
+import { useRetained } from '@/lib/useRetained';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSONContent } from '@tiptap/core';
@@ -7,8 +10,9 @@ import { onBackButtonPress } from '@tauri-apps/api/app';
 import {
   ChevronRight,
   ArrowLeft,
-  Clock3,
   Info,
+  History,
+  GitCompareArrows,
   FilePlus2,
   FileText,
   Folder,
@@ -24,6 +28,7 @@ import {
 import { TitleBar } from '@/components/TitleBar';
 import type { MenuAction } from '@/components/AppMenuBar';
 import { DocumentExplorerTree } from '@/components/DocumentExplorerTree';
+import { DocumentMoveDialog } from '@/components/DocumentMoveDialog';
 import { DocumentNavigation } from '@/components/DocumentNavigation';
 import { DocumentHistoryModal } from '@/components/DocumentHistoryModal';
 import { DocumentConflictsModal } from '@/components/DocumentConflictsModal';
@@ -69,14 +74,17 @@ import type { ThemeId } from '@/lib/themes';
 import { isMobile } from '@/lib/platform';
 import { DesktopHomeShell } from './home/DesktopHomeShell';
 import { MobileHomeShell } from './home/MobileHomeShell';
+import { MobileSheet } from '@/components/MobileSheet';
 import { MobileDocumentEditor } from './home/MobileDocumentEditor';
 import { DesktopDocumentEditor } from './home/DesktopDocumentEditor';
 import { letterNode, letterText, readLetter, type LetterpressRequest } from '@/lib/letterpress/document';
-import { createLetter, documentToLetterText, parseLetter, type LetterDesign } from '@/lib/letterpress/model';
+import { createLetter, parseLetter, type LetterDesign } from '@/lib/letterpress/model';
+import { createDialogue, dialogueText } from '@/lib/dialogue/model';
+import { createStoryRoll, storyRollNode, storyRollText } from '@/lib/storyRoll/model';
 
 const LetterpressStudio = React.lazy(() => import('@/components/LetterpressStudio'));
 
-type StatusFilter = 'active' | 'recent' | 'trashed';
+type StatusFilter = 'active' | 'favorites' | 'trashed';
 
 function parseContent(raw: string): JSONContent {
   try {
@@ -88,6 +96,8 @@ function parseContent(raw: string): JSONContent {
 
 function extractPlainText(node?: JSONContent): string {
   if (!node) return '';
+  if (node.type === 'storyRoll') return storyRollText(node) + '\n';
+  if (node.type === 'dialogue' || node.type === 'dialogueLine') return dialogueText(node);
   if (node.type === 'letterpress') return letterText(readLetter(node));
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(extractPlainText).join('');
@@ -126,59 +136,6 @@ function formatTimestamp(value?: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function collectFolderTargets(
-  documents: DocumentSummary[],
-  target: DocumentSummary | null
-): Array<{ id: string | null; title: string; depth: number }> {
-  const folders = documents.filter((document) => document.node_kind === 'folder');
-
-  if (!target) {
-    return [{ id: null, title: '根目录', depth: 0 }, ...folders.map((folder) => ({ id: folder.id, title: folder.title, depth: folder.depth }))];
-  }
-
-  const byId = new Map(documents.map((document) => [document.id, document]));
-  const blocked = new Set<string>([target.id]);
-  if (target.node_kind === 'folder') {
-    const queue = [target.id];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      for (const document of documents) {
-        if (document.parent_id === current) {
-          if (!blocked.has(document.id)) {
-            blocked.add(document.id);
-            if (document.node_kind === 'folder') {
-              queue.push(document.id);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return [
-    { id: null, title: '根目录', depth: 0 },
-    ...folders
-      .filter((folder) => !blocked.has(folder.id))
-      .map((folder) => {
-        let safeDepth = folder.depth;
-        let cursor = folder.parent_id;
-        let guard = 0;
-        while (cursor && guard < 16) {
-          const parent = byId.get(cursor);
-          if (!parent) break;
-          safeDepth = parent.depth + 1;
-          cursor = parent.parent_id;
-          guard += 1;
-        }
-        return {
-          id: folder.id,
-          title: folder.title,
-          depth: safeDepth,
-        };
-      }),
-  ];
-}
-
 function buildTaggedTreeScope(
   documents: DocumentSummary[],
   selectedTag: string | null,
@@ -191,12 +148,15 @@ function buildTaggedTreeScope(
     if (selectedStatus === 'trashed') {
       return document.status === 'trashed' || document.status === 'archived';
     }
-    return document.node_kind === 'document' && document.status === 'active';
+    return document.node_kind === 'document' && document.status === 'active' && document.is_favorite;
   });
 
-  if (!selectedTag || selectedStatus === 'recent') {
-    return statusMatchedDocuments;
+  if (selectedStatus === 'favorites') {
+    return statusMatchedDocuments
+      .filter(document => !selectedTag || document.tags.includes(selectedTag))
+      .sort((left, right) => left.title.localeCompare(right.title, 'zh-Hans-CN'));
   }
+  if (!selectedTag) return statusMatchedDocuments;
 
   const byId = new Map(documents.map((document) => [document.id, document]));
   const includedIds = new Set<string>();
@@ -288,9 +248,6 @@ export default function HomePage() {
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [explorerFolderId, setExplorerFolderId] = useState<string | null>(null);
-  const [readOnly, setReadOnly] = useState(true);
-  const [modeBusy, setModeBusy] = useState(false);
-  const [editHint, setEditHint] = useState<{ documentKey: string; sequence: number } | null>(null);
   const [historyDocument, setHistoryDocument] = useState<DocumentRecord | null>(null);
   const [conflictsScope, setConflictsScope] = useState<string | null>(null);
   const [letterStudio, setLetterStudio] = useState<{ scope: string; id: string; design: LetterDesign; open: boolean; blockId: string; updating: boolean; position: number } | null>(null);
@@ -309,13 +266,12 @@ export default function HomePage() {
     setLetterStudio(current => current?.scope === appState.account_scope ? current : null);
   }, [appState?.account_scope]);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    favorites: true,
     explorer: true,
   });
   const [sidebarMenu, setSidebarMenu] = useState<{ x: number; y: number; items: ContextMenuItem[]; action: (action: string) => void } | null>(null);
   const [renameTarget, setRenameTarget] = useState<DocumentSummary | null>(null);
+  const moveBusy = useRef(false);
   const [moveTarget, setMoveTarget] = useState<DocumentSummary | null>(null);
-  const [moveModeSource, setMoveModeSource] = useState<DocumentSummary | null>(null);
   const [editorInstance, setEditorInstance] = useState<TiptapEditor | null>(null);
   const letterSelection = useRef('');
   useEffect(() => {
@@ -352,6 +308,7 @@ export default function HomePage() {
   const [mobileTagEditorOpen, setMobileTagEditorOpen] = useState(false);
   const [mobileTagDeleteTarget, setMobileTagDeleteTarget] = useState<string | null>(null);
   const [mobileExportOpen, setMobileExportOpen] = useState(false);
+  const shownHistory = useRetained(historyDocument), shownConflicts = useRetained(conflictsScope);
   const [mobileExportStatus, setMobileExportStatus] = useState<{
     format: 'pdf' | 'docx' | 'md';
     stage: 'generating' | 'sharing' | 'failed';
@@ -363,16 +320,8 @@ export default function HomePage() {
   const selectedIdRef = useRef<string | null>(null);
   const selectionIntentRef = useRef<string | null>(null);
 
-  const documentKey = currentDocument ? `${currentDocument.account_scope}:${currentDocument.id}` : null;
-  const requestEditHint = useCallback(() => {
-    if (!readOnly || modeBusy || historyDocument || conflictsScope || !documentKey) return;
-    setEditHint(previous => ({ documentKey, sequence: (previous?.sequence ?? 0) + 1 }));
-  }, [readOnly, modeBusy, historyDocument, conflictsScope, documentKey]);
-  useEffect(() => { setEditHint(null); }, [documentKey, readOnly]);
-
   useEffect(() => {
     setExplorerFolderId(null);
-    setReadOnly(true);
     setHistoryDocument(null);
   }, [appState?.account_scope]);
 
@@ -458,7 +407,7 @@ export default function HomePage() {
         syncInFlightRef.current = true;
         const snapshot = await runSupabaseSync();
         await refresh(preferredId ?? selectedId);
-        if (snapshot.conflict_copies) toast.info(`发现不同设备的修改，已保留 ${snapshot.conflict_copies} 份副本，可在“更多文档操作”中查看。`);
+        if (snapshot.conflict_copies) toast.info(`发现不同设备的修改，已保留 ${snapshot.conflict_copies} 份副本，可在文档属性中查看。`);
         setAppState((current) => (current ? { ...current, sync: snapshot } : current));
         console.info(`[sync] ${reason} completed`);
       } catch (error) {
@@ -523,21 +472,6 @@ export default function HomePage() {
     [documents, selectedStatus, selectedTag]
   );
 
-  const favoriteDocuments = useMemo(
-    () => documents.filter((document) => document.node_kind === 'document' && document.is_favorite && document.status === 'active').slice(0, 6),
-    [documents]
-  );
-
-  const recentDocuments = useMemo(
-    () =>
-      [...documents]
-        .filter((document) => document.node_kind === 'document' && document.status === 'active')
-        .filter((document) => (selectedTag ? document.tags.includes(selectedTag) : true))
-        .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
-        .slice(0, 12),
-    [documents, selectedTag]
-  );
-
   useEffect(() => {
     setExpandedFolders((current) => {
       if (current.size > 0) {
@@ -561,7 +495,6 @@ export default function HomePage() {
       setContent(parseContent(detail.content_json));
       setDocumentTags(detail.tags);
       setTagDraft('');
-      setReadOnly(true);
       setHistoryDocument(null);
       setExplorerFolderId(detail.parent_id);
       setSidebarOpen(false);
@@ -585,7 +518,6 @@ export default function HomePage() {
         setContent(parseContent(created.content_json));
         setDocumentTags(created.tags);
         setTagDraft('');
-        setReadOnly(false);
         setHistoryDocument(null);
         if (created.parent_id) {
           const parentFolderId = created.parent_id;
@@ -628,7 +560,6 @@ export default function HomePage() {
   const handlePersistMetadata = useCallback(
     async (nextContent: JSONContent = content, nextTagList: string[] = documentTags) => {
       if (!currentDocument) return;
-      if (readOnly) { requestEditHint(); return; }
       const title =
         extractPlainText(nextContent.content?.find((node) => node.type === 'heading')) ||
         currentDocument.title ||
@@ -650,7 +581,7 @@ export default function HomePage() {
       await refresh(updated.id);
       await triggerAutoSync('metadata', false, updated.id);
     },
-    [content, currentDocument, documentTags, refresh, triggerAutoSync, readOnly, toast, requestEditHint]
+    [content, currentDocument, documentTags, refresh, triggerAutoSync, toast]
   );
 
   const handleMoveDocument = useCallback(
@@ -797,18 +728,15 @@ export default function HomePage() {
   const openLetterStudio = useCallback((request?: LetterpressRequest) => {
     if (!currentDocument || !editorInstance) { toast.info('先打开一篇文档，再制作信稿'); return; }
     const selection = editorInstance.state.selection;
-    const selectedText = request?.excerpt?.text || letterSelection.current || (editorInstance.isEditable && !selection.empty
-      ? editorInstance.state.doc.textBetween(selection.from, selection.to, '\n') : '');
+    const selectedText = request?.excerpt?.text ?? '';
     letterSelection.current = '';
     letterSourceSnapshot.current = JSON.stringify(editorInstance.getJSON());
     const position = request?.excerpt?.to ?? (editorInstance.isEditable ? selection.to : editorInstance.state.doc.content.size);
     const resolved = editorInstance.state.doc.resolve(Math.min(position, editorInstance.state.doc.content.size));
     const afterBlock = resolved.depth > 0 ? resolved.after(1) : position;
-    setLetterStudio(previous => ({ scope: currentDocument.account_scope, id: currentDocument.id, open: true,
+    setLetterStudio({ scope: currentDocument.account_scope, id: currentDocument.id, open: true,
       blockId: request?.blockId ?? crypto.randomUUID(), updating: !!request?.blockId, position: afterBlock,
-      design: request?.design ? parseLetter(JSON.stringify(request.design))
-        : !request && !selectedText && previous?.scope === currentDocument.account_scope && previous.id === currentDocument.id && !previous.updating
-          ? previous.design : createLetter(documentLeafTitle(currentDocument), selectedText || documentToLetterText(editorInstance.getJSON())) }));
+      design: request?.design ? parseLetter(JSON.stringify(request.design)) : createLetter('', selectedText) });
   }, [currentDocument, editorInstance, toast]);
 
   const applyLetter = useCallback(async (design: LetterDesign) => {
@@ -822,7 +750,6 @@ export default function HomePage() {
       if (child.type.name === 'letterpress' && child.attrs.id === letterStudio.blockId) found = position;
     });
     if (letterStudio.updating && found < 0) throw new Error('原信稿已移除，请重新打开文档');
-    setReadOnly(false);
     editorInstance.setEditable(true, false);
     const ok = found >= 0
       ? editorInstance.commands.command(({ tr }) => { tr.setNodeMarkup(found, undefined, node.attrs); return true; })
@@ -832,13 +759,50 @@ export default function HomePage() {
     await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
   }, [letterStudio, currentDocument, editorInstance]);
 
+  const insertDialogue = useCallback(async () => {
+    if (!currentDocument || !editorInstance || editorInstance.isDestroyed) { toast.info('先打开一篇文档，再插入对话卡'); return; }
+    if (getCachedAccountScope() !== currentDocument.account_scope) return;
+    try {
+      const selection = editorInstance.state.selection;
+      const source = letterSelection.current || (editorInstance.isEditable && !selection.empty ? editorInstance.state.doc.textBetween(selection.from, selection.to, '\n') : '');
+      const node = createDialogue(source);
+      const position = editorInstance.isEditable ? selection.to : editorInstance.state.doc.content.size;
+      const resolved = editorInstance.state.doc.resolve(position);
+      const afterBlock = resolved.depth ? resolved.after(1) : position;
+      editorInstance.setEditable(true, false);
+      if (!editorInstance.commands.insertContentAt(afterBlock, [node, { type: 'paragraph' }])) throw new Error('请选择正文位置后重试');
+      letterSelection.current = '';
+      await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
+      toast.success('对话卡已插入');
+    } catch (e) { toast.error(`未能插入对话卡：${e instanceof Error ? e.message : String(e)}`); }
+  }, [currentDocument, editorInstance, toast]);
+
+  const insertStoryRoll = useCallback(async () => {
+    if (!currentDocument || !editorInstance || editorInstance.isDestroyed || !editorInstance.isEditable) return;
+    if (getCachedAccountScope() !== currentDocument.account_scope) return;
+    const { doc, selection } = editorInstance.state;
+    const end = doc.resolve(selection.to);
+    const position = end.depth ? end.after(1) : end.pos;
+    const question = selection.empty ? '' : doc.textBetween(selection.from, selection.to, '\n');
+    try {
+      if (!editorInstance.commands.insertContentAt(position, [storyRollNode(createStoryRoll(question)), { type: 'paragraph' }], { updateSelection: false })) {
+        throw new Error('请选择正文位置后重试');
+      }
+      await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentDocument, editorInstance, toast]);
+
   const handleMenuAction = useCallback(
     (action: MenuAction) => {
-      if (readOnly && ['paste', 'cut', 'undo', 'redo', 'replace'].includes(action)) {
-        requestEditHint();
-        return;
-      }
       switch (action) {
+        case 'storyRoll':
+          void insertStoryRoll();
+          return;
+        case 'dialogue':
+          void insertDialogue();
+          return;
         case 'letterpress':
           openLetterStudio();
           return;
@@ -861,10 +825,31 @@ export default function HomePage() {
           void handleExport('pdf');
           return;
         case 'copy':
-        case 'paste':
-        case 'cut':
-          document.execCommand(action);
+        case 'cut': {
+          if (!editorInstance || editorInstance.isDestroyed) return;
+          const { from, to, empty } = editorInstance.state.selection;
+          if (empty) { toast.info('请先选择文字'); return; }
+          const snapshot = editorInstance.state.doc;
+          const scope = getCachedAccountScope();
+          void copyText(snapshot.textBetween(from, to, '\n')).then(() => {
+            if (action === 'cut' && !editorInstance.isDestroyed && editorInstance.isEditable && getCachedAccountScope() === scope && editorInstance.state.doc.eq(snapshot)) editorInstance.chain().focus().deleteRange({ from, to }).run();
+            toast.success(action === 'copy' ? '文字已复制' : '文字已复制到剪贴板');
+          }).catch(error => toast.error(String(error)));
           return;
+        }
+        case 'paste': {
+          if (!editorInstance || editorInstance.isDestroyed) return;
+          const target = editorInstance, selection = target.state.selection, snapshot = target.state.doc, scope = getCachedAccountScope();
+          void (async () => {
+            try {
+              if (!navigator.clipboard?.readText) throw new Error('请长按正文，使用系统菜单粘贴');
+              const pasted = await navigator.clipboard.readText();
+              if (!pasted || target.isDestroyed || !target.isEditable || getCachedAccountScope() !== scope || !target.state.doc.eq(snapshot)) return;
+              target.chain().focus().insertContentAt({ from: selection.from, to: selection.to }, pasted.split('\n').map(text => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] }))).run();
+            } catch { toast.info('请长按正文，使用系统菜单粘贴'); }
+          })();
+          return;
+        }
         case 'undo':
           if (editorInstance?.can().undo()) {
             editorInstance.chain().focus().undo().run();
@@ -893,7 +878,7 @@ export default function HomePage() {
           return;
       }
     },
-    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, readOnly, toast, requestEditHint, openLetterStudio]
+    [editorInstance, handleCreateDocument, handleCreateFolder, handleExport, handleImportLegacy, setTheme, toast, openLetterStudio, insertDialogue, insertStoryRoll]
   );
 
   const openDocumentMenu = useCallback(
@@ -907,7 +892,7 @@ export default function HomePage() {
         ...(document.node_kind === 'document' ? [{ id: 'properties', label: '文档属性', icon: Info }] : []),
         { id: 'rename', label: '重命名', icon: FileText },
         { id: 'move', label: '移动到分组', icon: FolderOpen },
-        { id: 'toggleFavorite', label: document.is_favorite ? '取消收藏' : '加入收藏', icon: Heart },
+        ...(document.node_kind === 'document' ? [{ id: 'toggleFavorite', label: document.is_favorite ? '取消收藏' : '加入收藏', icon: Heart }] : []),
         ...(document.status !== 'trashed' ? [{ id: 'trash', label: '移至回收站', icon: Trash2 }] : [{ id: 'restore', label: '从回收站恢复', icon: RefreshCw }, { id: 'purge', label: '永久删除', icon: Trash2 }]),
       ];
 
@@ -925,7 +910,7 @@ export default function HomePage() {
           } else if (action === 'rename') {
             setRenameTarget(document);
           } else if (action === 'move') {
-            setMoveModeSource(document);
+            setMoveTarget(document);
           } else if (action === 'toggleFavorite') {
             void handleToggleFavorite(document);
           } else if (action === 'trash') {
@@ -993,15 +978,6 @@ export default function HomePage() {
       setSidebarOpen(true);
     } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
   }, [currentDocument, documents, toast]);
-  const toggleReading = useCallback(async () => {
-    if (!currentDocument || modeBusy) return;
-    setModeBusy(true);
-    try {
-      await documentDrafts.flush(currentDocument.id, currentDocument.account_scope);
-      if (selectedIdRef.current === currentDocument.id) setReadOnly(value => !value);
-    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
-    finally { setModeBusy(false); }
-  }, [currentDocument, modeBusy, toast]);
   const openHistory = useCallback(async () => {
     if (!currentDocument) return;
     try {
@@ -1010,10 +986,8 @@ export default function HomePage() {
       if (detail?.account_scope === currentDocument.account_scope && selectedIdRef.current === detail.id) setHistoryDocument(detail);
     } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
   }, [currentDocument, toast]);
-  const availableMoveTargets = useMemo(() => collectFolderTargets(documents, moveTarget), [documents, moveTarget]);
   const addTag = useCallback(
     async (rawValue: string) => {
-      if (readOnly) { requestEditHint(); return; }
       const next = rawValue.trim();
       if (!next || !currentDocument) return;
       if (documentTags.includes(next)) {
@@ -1030,7 +1004,7 @@ export default function HomePage() {
       setMobileTagEditorOpen(false);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, toast, readOnly, requestEditHint]
+    [content, currentDocument, documentTags, handlePersistMetadata, toast]
   );
 
   const handleDropNode = useCallback(
@@ -1055,40 +1029,30 @@ export default function HomePage() {
     [currentDocument?.id, documents, refresh, toast, triggerAutoSync]
   );
 
-  const handleMoveBySelection = useCallback(
-    async (source: DocumentSummary, targetParentId: string | null) => {
-      if (source.parent_id === (targetParentId ?? null)) {
-        setMoveModeSource(null);
-        return;
-      }
-      try {
-        const updated = await moveDocument(source.id, targetParentId);
-        if (currentDocument?.id === updated.id && updated.node_kind === 'document') {
-          setCurrentDocument(updated);
-        }
-        toast.success('节点已移动');
-        setMoveModeSource(null);
-        await refresh(currentDocument?.id ?? updated.id);
-        await triggerAutoSync('move-mode', false, updated.id);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : String(error));
-      }
-    },
-    [currentDocument?.id, refresh, toast, triggerAutoSync]
-  );
-
-  const moveModeTargets = useMemo(() => collectFolderTargets(documents, moveModeSource), [documents, moveModeSource]);
+  const handleMoveBySelection = useCallback(async (source: DocumentSummary, targetParentId: string | null) => {
+    if (source.parent_id === targetParentId) return;
+    await documentDrafts.flushAll();
+    if (getCachedAccountScope() !== source.account_scope) throw new Error('文档空间已切换，请重新选择文档');
+    const updated = await moveDocument(source.id, targetParentId);
+    if (getCachedAccountScope() !== source.account_scope) return;
+    if (currentDocument?.id === updated.id && updated.node_kind === 'document') setCurrentDocument(updated);
+    setExplorerFolderId(targetParentId);
+    setSelectedStatus(updated.status === 'trashed' ? 'trashed' : 'active');
+    setSelectedTag(null);
+    await refresh(currentDocument?.id ?? (updated.node_kind === 'document' ? updated.id : null));
+    toast.success('已移动到目标分组');
+    void triggerAutoSync('move', false, updated.id);
+  }, [currentDocument?.id, refresh, toast, triggerAutoSync]);
 
   const removeTag = useCallback(
     async (tagName: string) => {
-      if (readOnly) { requestEditHint(); return; }
       if (!currentDocument) return;
       const nextTags = documentTags.filter((tag) => tag !== tagName);
       setDocumentTags(nextTags);
       setMobileTagDeleteTarget(null);
       await handlePersistMetadata(content, nextTags);
     },
-    [content, currentDocument, documentTags, handlePersistMetadata, readOnly, toast, requestEditHint]
+    [content, currentDocument, documentTags, handlePersistMetadata, toast]
   );
 
   const closeTopMobileLayer = useCallback(() => {
@@ -1098,13 +1062,15 @@ export default function HomePage() {
     }
     if (dismissContextMenu()) return true;
     if (conflictsScope) {
-      setConflictsScope(null);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       return true;
     }
     if (historyDocument) {
       if (!historyBusy.current) setHistoryDocument(null);
       return true;
     }
+    if (moveTarget) { if (!moveBusy.current) setMoveTarget(null); return true; }
+    if (renameTarget) { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); return true; }
     if (sidebarOpen) {
       if (explorerFolderId) {
         setExplorerFolderId(documents.find(item => item.id === explorerFolderId)?.parent_id ?? null);
@@ -1146,10 +1112,6 @@ export default function HomePage() {
       setReplaceDialogOpen(false);
       return true;
     }
-    if (moveModeSource) {
-      setMoveModeSource(null);
-      return true;
-    }
     return false;
   }, [
     mobilePropertyOpen,
@@ -1157,7 +1119,8 @@ export default function HomePage() {
     mobileTagDeleteTarget,
     mobileTagEditorOpen,
     mobileExportOpen,
-    moveModeSource,
+    moveTarget,
+    renameTarget,
     replaceDialogOpen,
     showSearchModal,
     sidebarMenu,
@@ -1238,7 +1201,7 @@ export default function HomePage() {
             <div className="shrink-0 grid grid-cols-3 gap-px border-b px-3 py-3 text-xs" style={{ borderColor: border }}>
               {([
                 ['active', '文档库', FileText],
-                ['recent', '最近', Clock3],
+                ['favorites', '收藏', Heart],
                 ['trashed', '回收站', Trash2],
               ] as const).map(([value, label, Icon]) => (
                 <button
@@ -1259,74 +1222,12 @@ export default function HomePage() {
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               <ExplorerSection
-                title="收藏"
-                count={favoriteDocuments.length}
-                expanded={expandedSections.favorites}
-                onToggle={() => setExpandedSections((current) => ({ ...current, favorites: !current.favorites }))}
-              >
-                {favoriteDocuments.length === 0 ? (
-                  <div className="px-3 py-1 text-[11px]" style={{ color: muted }}>还没有收藏文档</div>
-                ) : (
-                  <div className="space-y-0.5">
-                    {favoriteDocuments.map((document) => (
-                      <button
-                        key={document.id}
-                        type="button"
-                        onClick={() => void handleSelectDocument(document.id)}
-                        onContextMenu={(event) => openDocumentMenu(event, document)}
-                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] hover:opacity-85"
-                        style={{
-                          color: text,
-                          backgroundColor: document.id === selectedId ? `${accentBg}40` : 'transparent',
-                        }}
-                      >
-                        <Heart size={12} className="shrink-0" style={{ color: accent }} fill="currentColor" />
-                        <span className="truncate">{documentLeafTitle(document)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </ExplorerSection>
-
-              <ExplorerSection
-                title={selectedStatus === 'active' ? '文档与分组' : selectedStatus === 'recent' ? '最近文档' : '回收站'}
-                count={selectedStatus === 'recent' ? recentDocuments.length : filteredDocuments.length}
+                title={selectedStatus === 'active' ? '文档与分组' : selectedStatus === 'favorites' ? '收藏文档' : '回收站'}
+                count={filteredDocuments.length}
                 expanded={expandedSections.explorer}
                 onToggle={() => setExpandedSections((current) => ({ ...current, explorer: !current.explorer }))}
               >
                 <div className="px-2 pb-2">
-                {moveModeSource && (
-                  <div
-                    className="mb-2 rounded border px-3 py-2 text-[11px]"
-                    style={{
-                      borderColor: border,
-                      backgroundColor: `${accentBg}35`,
-                      color: text,
-                    }}
-                  >
-                    <div className="font-medium">移动模式</div>
-                    <div className="mt-1" style={{ color: muted }}>正在移动：{moveModeSource.title}</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="rounded border px-2 py-1 text-[11px] transition-opacity hover:opacity-80"
-                        style={{ borderColor: border, color: accent }}
-                        onClick={() => void handleMoveBySelection(moveModeSource, null)}
-                      >
-                        移到根目录
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded border px-2 py-1 text-[11px] transition-opacity hover:opacity-80"
-                        style={{ borderColor: border, color: accent }}
-                        onClick={() => setMoveModeSource(null)}
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
-                )}
-
                 <div className="mb-2 flex flex-wrap gap-2">
                   <button
                     onClick={() => setSelectedTag(null)}
@@ -1355,7 +1256,7 @@ export default function HomePage() {
                   ))}
                 </div>
 
-                {selectedStatus !== 'recent' && (
+                {selectedStatus !== 'favorites' && (
                   <nav aria-label="分组位置" className="mb-2 flex flex-wrap items-center gap-1 border-b pb-2 text-xs" style={{ borderColor: border }}>
                     {explorerFolderId && <button type="button" aria-label="返回上一级分组" className="p-2"
                       onClick={() => setExplorerFolderId(documents.find(item => item.id === explorerFolderId)?.parent_id ?? null)}><ArrowLeft size={14} /></button>}
@@ -1369,12 +1270,12 @@ export default function HomePage() {
                   </nav>
                 )}
 
-                {selectedStatus === 'recent' ? (
-                  recentDocuments.length === 0 ? (
-                    <div className="px-3 py-2 text-[12px]" style={{ color: muted }}>最近还没有文档记录</div>
+                {selectedStatus === 'favorites' ? (
+                  filteredDocuments.length === 0 ? (
+                    <div className="px-3 py-2 text-[12px]" style={{ color: muted }}>还没有收藏文档</div>
                   ) : (
                     <div className="space-y-0.5">
-                      {recentDocuments.map((document) => (
+                      {filteredDocuments.map((document) => (
                         <button
                           key={document.id}
                           type="button"
@@ -1388,7 +1289,7 @@ export default function HomePage() {
                             boxShadow: document.id === selectedId ? `inset 2px 0 0 ${accent}` : 'none',
                           }}
                         >
-                          <Clock3 size={12} className="shrink-0" style={{ color: accent }} />
+                          <FileText size={12} className="shrink-0" style={{ color: accent }} />
                           <span className="truncate">{documentLeafTitle(document)}</span>
                         </button>
                       ))}
@@ -1420,31 +1321,6 @@ export default function HomePage() {
                   />
                 )}
 
-                {moveModeSource && moveModeTargets.length > 1 && (
-                  <div className="mt-3 border-t pt-3" style={{ borderColor: `${border}80` }}>
-                    <div className="mb-2 text-[10px] uppercase tracking-[0.24em]" style={{ color: muted }}>选择目标分组</div>
-                    <div className="space-y-1">
-                      {moveModeTargets
-                        .filter((candidate) => candidate.id !== null)
-                        .map((candidate) => (
-                          <button
-                            key={candidate.id}
-                            type="button"
-                            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] transition-opacity hover:opacity-85"
-                            style={{
-                              color: text,
-                              paddingLeft: `${8 + candidate.depth * 14}px`,
-                              backgroundColor: candidate.id === moveModeSource.parent_id ? `${accentBg}28` : 'transparent',
-                            }}
-                            onClick={() => void handleMoveBySelection(moveModeSource, candidate.id)}
-                          >
-                            <Folder size={13} className="shrink-0" style={{ color: accent }} />
-                            <span className="truncate">{candidate.title}</span>
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-                )}
                 </div>
               </ExplorerSection>
             </div>
@@ -1483,16 +1359,14 @@ export default function HomePage() {
   );
 
   const renderDocumentEditor = (mobile: boolean) => {
-    const navigation = <DocumentNavigation path={currentPath} readOnly={readOnly} busy={modeBusy}
-      editHint={editHint?.documentKey === documentKey ? editHint?.sequence : 0}
-      onOpenFolder={id => void openFolder(id)} onToggleReading={() => void toggleReading()} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} onLetterpress={openLetterStudio} />;
+    const editorLocked = historyDocument !== null || conflictsScope !== null;
+    const navigation = <DocumentNavigation path={currentPath}
+      onOpenFolder={id => void openFolder(id)} onHistory={() => void openHistory()} onConflicts={() => void openConflicts()} />;
     if (mobile) {
       if (!currentDocument) return null;
       return (
         <MobileDocumentEditor
-          navigation={navigation}
-          readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
-          onReadingClick={requestEditHint}
+          readOnly={editorLocked}
           currentDocument={currentDocument}
           content={content}
           documentTags={documentTags}
@@ -1510,8 +1384,7 @@ export default function HomePage() {
     return (
       <DesktopDocumentEditor
         navigation={navigation}
-        readOnly={readOnly || historyDocument !== null || conflictsScope !== null}
-        onReadingClick={requestEditHint}
+        readOnly={editorLocked}
         currentDocument={currentDocument}
         content={content}
         documentTags={documentTags}
@@ -1560,6 +1433,8 @@ export default function HomePage() {
   const renderMobileShell = () => (
     <MobileHomeShell
       title={currentDocument ? documentLeafTitle(currentDocument) : '文档库'}
+      path={currentPath}
+      onOpenFolder={id => void openFolder(id)}
       sidebar={renderSidebar(true)}
       mainContent={renderMainContent(true)}
       sidebarOpen={sidebarOpen}
@@ -1616,60 +1491,49 @@ export default function HomePage() {
         }}
       />
 
-      {letterStudio?.open && letterStudio.scope === appState?.account_scope && letterStudio.id === currentDocument?.id && (
+      {letterStudio && letterStudio.scope === appState?.account_scope && letterStudio.id === currentDocument?.id && (
         <React.Suspense fallback={<div className="fixed inset-0 z-[11000] grid place-items-center bg-black/70 text-sm text-white" role="status">正在打开文字工坊…</div>}>
-          <LetterpressStudio initial={letterStudio.design} android={isMobileLayout} onApply={applyLetter} updating={letterStudio.updating} onClose={closeLetterStudio} onBusyChange={setLetterBusy} />
+          <LetterpressStudio key={letterStudio.blockId} open={letterStudio.open} initial={letterStudio.design} android={isMobileLayout} accountScope={letterStudio.scope} onApply={applyLetter} updating={letterStudio.updating} onClose={closeLetterStudio} onBusyChange={setLetterBusy} />
         </React.Suspense>
       )}
 
-      {conflictsScope && conflictsScope === appState?.account_scope && <DocumentConflictsModal scope={conflictsScope} onClose={closeConflicts} onOpen={record => {
+      {shownConflicts && shownConflicts === appState?.account_scope && <DocumentConflictsModal open={!!conflictsScope} scope={shownConflicts} onClose={closeConflicts} onOpen={record => {
         if (getCachedAccountScope() !== record.account_scope) return;
         setConflictsScope(null);
         if (record.node_kind === 'folder') void openFolder(record.id);
         else void handleSelectDocument(record.id);
       }} />}
-      {historyDocument && historyDocument.account_scope === currentDocument?.account_scope && historyDocument.id === currentDocument.id && (
-        <DocumentHistoryModal document={historyDocument} onClose={closeHistory} onBusyChange={setHistoryBusy} onRestored={record => {
+      {shownHistory && shownHistory.account_scope === currentDocument?.account_scope && shownHistory.id === currentDocument.id && (
+        <DocumentHistoryModal open={!!historyDocument} document={shownHistory} onClose={closeHistory} onBusyChange={setHistoryBusy} onRestored={record => {
           if (getCachedAccountScope() !== record.account_scope || selectedIdRef.current !== record.id) return;
           setCurrentDocument(record);
           setContent(parseContent(record.content_json));
           setDocumentTags(record.tags);
-          setReadOnly(true);
           setHistoryDocument(null);
           toast.success('正文已恢复，恢复前的正文已保留在修改记录中');
           void refresh(record.id).then(() => triggerAutoSync('restore-history', false, record.id)).catch(error => toast.error(String(error)));
         }} />
       )}
 
-      {sidebarMenu && (
-        <ContextMenu
-          x={sidebarMenu.x}
-          y={sidebarMenu.y}
-          items={sidebarMenu.items}
+      <ContextMenu
+          open={!!sidebarMenu}
+          x={sidebarMenu?.x ?? 0}
+          y={sidebarMenu?.y ?? 0}
+          items={sidebarMenu?.items}
           onClose={() => setSidebarMenu(null)}
-          onAction={(action) => sidebarMenu.action(action)}
+          onAction={(action) => sidebarMenu?.action(action)}
         />
-      )}
 
-      {isMobileLayout && mobilePropertyOpen && currentDocument && (
-        <div
-          className="fixed inset-0 z-[10000] flex items-end"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.55)' }}
-          onClick={() => setMobilePropertyOpen(false)}
-        >
-          <section
-            className="shell-panel max-h-[82dvh] w-full overflow-y-auto border-t px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4"
-            style={{ backgroundColor: surface, borderColor: border }}
-            onClick={(event) => event.stopPropagation()}
-          >
+      {isMobileLayout && currentDocument && (
+        <MobileSheet open={mobilePropertyOpen} onClose={() => setMobilePropertyOpen(false)} label="文档属性">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="shell-label">Properties</div>
+                <div className="shell-label">文档属性</div>
                 <h2 className="mt-1 truncate text-lg font-semibold">{documentLeafTitle(currentDocument)}</h2>
               </div>
               <button
                 type="button"
-                className="rounded border p-2"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded border"
                 style={{ borderColor: border, color: accent }}
                 onClick={() => setMobilePropertyOpen(false)}
                 aria-label="关闭属性"
@@ -1678,13 +1542,23 @@ export default function HomePage() {
               </button>
             </div>
 
+            <nav aria-label="文档位置" className="mb-4 flex flex-wrap items-center gap-1 text-xs">
+              <button className="min-h-11 px-2" onClick={() => { setMobilePropertyOpen(false); void openFolder(null); }}>文档库</button>
+              {currentPath.slice(0, -1).map(item => <React.Fragment key={item.id}>
+                <ChevronRight size={12} /><button className="min-h-11 max-w-48 truncate px-2" onClick={() => { setMobilePropertyOpen(false); void openFolder(item.id); }}>{item.title}</button>
+              </React.Fragment>)}
+            </nav>
+            <div className="mb-5 grid gap-1">
+              <button className="sheet-action" onClick={() => { setMobilePropertyOpen(false); void openHistory(); }}><History size={17} />修改记录<ChevronRight size={15} className="ml-auto opacity-50" /></button>
+              <button className="sheet-action" onClick={() => { setMobilePropertyOpen(false); void openConflicts(); }}><GitCompareArrows size={17} />查看同步副本<ChevronRight size={15} className="ml-auto opacity-50" /></button>
+            </div>
             <div className="grid gap-2 text-sm opacity-80">
               <div>最近更新：{formatTimestamp(currentDocument.updated_at)}</div>
             </div>
 
             <div className="mt-5">
               <div className="mb-2 flex items-center justify-between">
-                <div className="shell-label">Tags</div>
+                <div className="shell-label">标签</div>
                 <span className="text-xs opacity-55">{documentTags.length}/7</span>
               </div>
               <div className="flex items-center gap-2 overflow-x-auto pb-2">
@@ -1699,11 +1573,11 @@ export default function HomePage() {
                       style={{ borderColor: border, backgroundColor: `${accentBg}40`, color: accent }}
                       onContextMenu={(event) => {
                         event.preventDefault();
-                        if (readOnly) return;
+                        if (historyDocument || conflictsScope) return;
                         setMobileTagDeleteTarget(tag);
                       }}
                       onPointerDown={(event) => {
-                        if (readOnly) return;
+                        if (historyDocument || conflictsScope) return;
                         const target = event.currentTarget;
                         const timer = window.setTimeout(() => setMobileTagDeleteTarget(tag), 520);
                         const clear = () => window.clearTimeout(timer);
@@ -1720,8 +1594,8 @@ export default function HomePage() {
                   type="button"
                   className="shrink-0 rounded-full border px-3 py-2 text-sm"
                   style={{ borderColor: border, color: accent, opacity: documentTags.length >= 7 ? 0.45 : 1 }}
-                  disabled={readOnly || documentTags.length >= 7}
-                  title={readOnly ? undefined : '添加标签'}
+                  disabled={documentTags.length >= 7}
+                  title="添加标签"
                   onClick={() => setMobileTagEditorOpen(true)}
                 >
                   + 添加
@@ -1755,20 +1629,14 @@ export default function HomePage() {
                 </div>
               )}
             </div>
-          </section>
-        </div>
+        </MobileSheet>
       )}
 
-      {isMobileLayout && mobileExportOpen && currentDocument && (
-        <div
-          className="fixed inset-0 z-[10060] flex items-end bg-black/55"
-          onClick={(event) => {
-            if (event.target !== event.currentTarget) return;
-            if (mobileExportStatus?.stage === 'generating' || mobileExportStatus?.stage === 'sharing') return;
-            setMobileExportOpen(false);
-            setMobileExportStatus(null);
-          }}
-        >
+      {isMobileLayout && currentDocument && (
+        <MobileSheet open={mobileExportOpen} label="分享文档" onClose={() => {
+          if (mobileExportStatus?.stage === 'generating' || mobileExportStatus?.stage === 'sharing') return;
+          setMobileExportOpen(false); setMobileExportStatus(null);
+        }}>
           <div
             className="shell-panel w-full border-t px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4"
             style={{ backgroundColor: surface, borderColor: border }}
@@ -1776,8 +1644,7 @@ export default function HomePage() {
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="shell-label">Share</div>
-                <h2 className="mt-1 truncate text-lg font-semibold">分享文档</h2>
+                                <h2 className="mt-1 truncate text-lg font-semibold">分享文档</h2>
                 <p className="mt-1 truncate text-xs" style={{ color: muted }}>{documentLeafTitle(currentDocument)}</p>
               </div>
               <button
@@ -1794,7 +1661,7 @@ export default function HomePage() {
               </button>
             </div>
             <p className="mb-3 text-sm leading-6" style={{ color: muted }}>
-              选择格式后，Vana 会先生成文件，再打开 Android 系统分享面板。微信、QQ、邮箱等应用会在支持该格式时显示。
+              选择格式，通过系统分享面板发送或保存。
             </p>
             {mobileExportStatus && (
               <div
@@ -1822,26 +1689,16 @@ export default function HomePage() {
                   disabled={mobileExportStatus?.stage === 'generating' || mobileExportStatus?.stage === 'sharing'}
                   onClick={() => void handleMobileShare(format)}
                 >
-                  <div className="text-sm font-medium">{label}</div>
+                  <div className="flex items-center gap-2 text-sm font-medium"><FileText size={17} />{label}</div>
                   <div className="mt-1 text-xs" style={{ color: muted }}>{description}</div>
                 </button>
               ))}
             </div>
           </div>
-        </div>
+        </MobileSheet>
       )}
 
-      {isMobileLayout && mobileTagDeleteTarget && (
-        <div
-          className="fixed inset-0 z-[10002] flex items-center justify-center p-5"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.58)' }}
-          onClick={() => setMobileTagDeleteTarget(null)}
-        >
-          <div
-            className="w-full max-w-sm rounded border p-5"
-            style={{ backgroundColor: surface, borderColor: border }}
-            onClick={(event) => event.stopPropagation()}
-          >
+      <AnimatedDialog open={isMobileLayout && !!mobileTagDeleteTarget} label="删除标签" onClose={() => setMobileTagDeleteTarget(null)}>
             <h2 className="text-base font-semibold">删除标签？</h2>
             <p className="mt-2 text-sm opacity-70">从当前文档移除 “{mobileTagDeleteTarget}”。</p>
             <div className="mt-5 flex justify-end gap-2">
@@ -1857,14 +1714,12 @@ export default function HomePage() {
                 type="button"
                 className="rounded border px-4 py-2 text-sm"
                 style={{ borderColor: border, backgroundColor: accentBg, color: accent }}
-                onClick={() => void removeTag(mobileTagDeleteTarget)}
+                onClick={() => { if (mobileTagDeleteTarget) void removeTag(mobileTagDeleteTarget); }}
               >
                 删除
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </AnimatedDialog>
 
       <InputModal
         isOpen={Boolean(renameTarget)}
@@ -1901,17 +1756,7 @@ export default function HomePage() {
         }}
       />
 
-      {replaceDialogOpen && (
-        <div
-          className="fixed inset-0 z-[10001] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-          onClick={() => setReplaceDialogOpen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded border shadow-xl"
-            style={{ backgroundColor: surface, borderColor: border }}
-            onClick={(event) => event.stopPropagation()}
-          >
+      <AnimatedDialog open={replaceDialogOpen} label="替换文本" onClose={() => setReplaceDialogOpen(false)}>
             <div className="border-b px-6 py-4" style={{ borderColor: border }}>
               <h2 className="text-lg font-semibold" style={{ color: accent }}>替换文本</h2>
               <p className="mt-1 text-sm opacity-70">对当前文档执行全文替换。</p>
@@ -1957,74 +1802,10 @@ export default function HomePage() {
                 应用替换
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </AnimatedDialog>
 
-      {moveTarget && (
-        <div
-          className="fixed inset-0 z-[10001] flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-          onClick={() => setMoveTarget(null)}
-        >
-          <div
-            className="w-full max-w-lg rounded border shadow-xl"
-            style={{ backgroundColor: surface, borderColor: border }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="border-b px-6 py-4" style={{ borderColor: border }}>
-              <h2 className="text-lg font-semibold" style={{ color: accent }}>
-                移动到分组
-              </h2>
-              <p className="mt-1 text-sm opacity-70">
-                {moveTarget.title}
-              </p>
-            </div>
-            <div className="max-h-[50vh] overflow-y-auto px-4 py-3">
-              <div className="space-y-1">
-                {availableMoveTargets.map((candidate) => {
-                  const active = candidate.id === (moveTarget.parent_id ?? null);
-                  return (
-                    <button
-                      key={candidate.id ?? 'root'}
-                      type="button"
-                      onClick={async () => {
-                        const updated = await moveDocument(moveTarget.id, candidate.id);
-                        if (currentDocument?.id === updated.id && updated.node_kind === 'document') {
-                          setCurrentDocument(updated);
-                        }
-                        setMoveTarget(null);
-                        toast.success('节点已移动');
-                        await refresh(currentDocument?.id ?? null);
-                        await triggerAutoSync('move', false, updated.id);
-                      }}
-                      className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm transition-opacity hover:opacity-85"
-                      style={{
-                        color: accent,
-                        backgroundColor: active ? `${accentBg}40` : 'transparent',
-                        paddingLeft: `${12 + Math.max(0, candidate.depth) * 16}px`,
-                      }}
-                    >
-                      {candidate.id ? <Folder size={14} className="shrink-0" /> : <FolderOpen size={14} className="shrink-0" />}
-                      <span className="truncate">{candidate.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="flex justify-end border-t px-6 py-4" style={{ borderColor: border }}>
-              <button
-                type="button"
-                onClick={() => setMoveTarget(null)}
-                className="rounded border px-4 py-2 text-sm transition-opacity hover:opacity-80"
-                style={{ borderColor: border, color: accent }}
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DocumentMoveDialog onBusyChange={busy => { moveBusy.current = busy; }} source={moveTarget} documents={documents} onClose={() => setMoveTarget(null)} onMove={handleMoveBySelection} />
+
     </div>
   );
 }

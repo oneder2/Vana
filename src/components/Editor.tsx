@@ -1,6 +1,8 @@
 'use client';
 
 import { letterText, readLetter, selectedExcerpt, type LetterpressRequest, type TextExcerpt } from '@/lib/letterpress/document';
+import { dialogueText } from '@/lib/dialogue/model';
+import { storyRollText } from '@/lib/storyRoll/model';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor as TiptapEditor } from '@tiptap/react';
@@ -8,7 +10,9 @@ import type { JSONContent } from '@tiptap/core';
 import { Bold, Copy, Clipboard, Scissors, Share2, Sparkles, Trash2, Heading1, Heading2, Italic, List, ListOrdered, MousePointer2, Quote, Underline } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getTiptapExtensions } from '@/lib/tiptap-extensions';
-import { useReadingClick } from './useReadingClick';
+import { useEditorSelection } from '@/lib/useEditorSelection';
+import { useKeyboardInset } from '@/lib/useKeyboardInset';
+import { usePresence } from '@/lib/usePresence';
 import { getDocumentStyleCssVars } from '@/lib/documentStyles';
 import { getThemeAccentColor, getThemeBorderColor, getThemeSurfaceColor } from '@/lib/themeStyles';
 import { documentDrafts } from '@/lib/documentDrafts';
@@ -31,12 +35,13 @@ interface EditorProps {
   tags?: string[];
   mobile?: boolean;
   readOnly?: boolean;
-  onReadingClick?: () => void;
   onLetterpress?: (request: LetterpressRequest) => void;
 }
 
 function extractPlainText(node?: JSONContent): string {
   if (!node) return '';
+  if (node.type === 'storyRoll') return storyRollText(node) + '\n';
+  if (node.type === 'dialogue' || node.type === 'dialogueLine') return dialogueText(node);
   if (node.type === 'letterpress') return letterText(readLetter(node));
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(extractPlainText).join('');
@@ -57,7 +62,6 @@ export function Editor({
   tags = [],
   mobile = false,
   readOnly = false,
-  onReadingClick,
   onLetterpress,
 }: EditorProps) {
   const { theme } = useTheme();
@@ -68,7 +72,7 @@ export function Editor({
   letterHandler.current = onLetterpress;
   const hasLetterHandler = Boolean(onLetterpress);
 
-  const extensions = useMemo(() => getTiptapExtensions(theme.id, hasLetterHandler ? request => letterHandler.current?.(request) : undefined), [theme.id, hasLetterHandler]);
+  const extensions = useMemo(() => getTiptapExtensions(theme.id, hasLetterHandler ? request => letterHandler.current?.(request) : undefined, accountScope), [theme.id, hasLetterHandler, accountScope]);
   const restoredContent = useMemo(() => {
     const draft = filePath ? documentDrafts.get(filePath, accountScope) : undefined;
     return draft ? JSON.parse(draft.content_json) as JSONContent : undefined;
@@ -108,7 +112,10 @@ export function Editor({
     },
     editorProps: {
       handleKeyDown: (view, event) => {
-        if (view.editable) return false;
+        const selection = window.getSelection();
+        const element = selection?.anchorNode?.parentElement;
+        const lockedModule = element?.closest('[data-module-editing=false]');
+        if (view.editable && !lockedModule) return false;
         // ProseMirror keymaps can run even when its DOM is not contenteditable.
         // Keep selection/navigation/copy, block undo, paste and formatting mutations.
         const key = event.key.toLowerCase();
@@ -116,16 +123,16 @@ export function Editor({
         return !['tab', 'escape', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown',
           'home', 'end', 'pageup', 'pagedown', 'shift', 'control', 'alt', 'meta'].includes(key);
       },
-      handlePaste: (view) => !view.editable,
+      handlePaste: (view) => !view.editable || !!window.getSelection()?.anchorNode?.parentElement?.closest('[data-module-editing=false]'),
       handleDOMEvents: {
         beforeinput: (view, event) => {
-          if (view.editable) return false;
+          if (view.editable && !window.getSelection()?.anchorNode?.parentElement?.closest('[data-module-editing=false]')) return false;
           event.preventDefault();
           return true;
         },
       },
       attributes: {
-        class: `tiptap-editor focus:outline-none ${mobile ? 'min-h-[calc(100dvh-210px)] px-4 py-5' : 'min-h-[360px] px-5 py-6 sm:px-8'}`,
+        class: `tiptap-editor focus:outline-none ${mobile ? 'min-h-[calc(100dvh-116px)] px-4 py-5' : 'min-h-[360px] px-5 py-6 sm:px-8'}`,
         role: 'textbox',
         'aria-label': '文档正文',
         'data-vana-letterpress-actions': hasLetterHandler ? 'true' : 'false',
@@ -136,10 +143,18 @@ export function Editor({
   });
 
   useEffect(() => {
-    editor?.setEditable(!readOnly, false);
+    if (editor && editor.isEditable !== !readOnly) {
+      editor.setEditable(!readOnly, false);
+      // Notify embedded controls without producing a document update or save.
+      editor.commands.setMeta('vana:editability', !readOnly);
+    }
   }, [editor, readOnly]);
 
-  const readingClickRoot = useReadingClick(readOnly && Boolean(editor), onReadingClick);
+  const scrollRoot = useRef<HTMLDivElement>(null);
+  const selectionVisible = useEditorSelection(editor, mobile && !readOnly);
+  const toolbarPresent = usePresence(selectionVisible);
+  const keyboardInset = useKeyboardInset(mobile);
+
 
   useEffect(() => {
     onEditorReady?.(editor);
@@ -181,7 +196,7 @@ export function Editor({
     // Preserve WebView's native selection handles, Floating ActionMode and OEM
     // copy/process-text actions. A page menu at the touch point obscures them.
     if (mobile || event.nativeEvent instanceof PointerEvent && event.nativeEvent.pointerType === 'touch') return;
-    if ((event.target as HTMLElement).closest('.vana-letter-actions')) return;
+    if ((event.target as HTMLElement).closest('[data-vana-module], input, textarea, select, button, summary')) return;
     event.preventDefault();
     setContextMenu({ x: event.clientX, y: event.clientY, excerpt: editor ? selectedExcerpt(editor) : undefined });
   }, [mobile, editor]);
@@ -251,10 +266,12 @@ export function Editor({
         ...getDocumentStyleCssVars(theme),
       }}
     >
-      {!readOnly && <div
-        className={`document-format-bar border-b ${mobile ? 'flex items-center overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center'}`}
+      {!readOnly && (!mobile || toolbarPresent) && <div
+        className={`document-format-bar ${mobile ? 'mobile-format-bar flex items-center overflow-x-auto whitespace-nowrap' : 'flex flex-wrap items-center border-b'}`}
+        data-visible={mobile ? selectionVisible : true} data-editor-format aria-hidden={mobile && !selectionVisible}
         role="toolbar" aria-label="正文格式"
-        style={{ borderColor: border }}
+        style={{ borderColor: border, ...(mobile ? { bottom: `calc(${keyboardInset}px + env(safe-area-inset-bottom) + 8px)` } : {}) }}
+        onPointerDown={event => event.preventDefault()}
       >
         {toolbarButtons.map((button) => (
           <button
@@ -263,8 +280,9 @@ export function Editor({
             aria-label={toolbarLabels[button.key]}
             aria-pressed={button.active}
             title={toolbarLabels[button.key]}
+            tabIndex={mobile && !selectionVisible ? -1 : 0}
             onClick={button.action}
-            className={`shrink-0 transition-colors ${mobile ? 'min-h-9 min-w-9 px-2 py-2' : 'px-2 py-1'}`}
+            className={`shrink-0 transition-colors ${mobile ? 'min-h-11 min-w-11 px-2 py-2' : 'px-2 py-1'}`}
             style={{
               color: accent,
             }}
@@ -274,19 +292,18 @@ export function Editor({
         ))}
       </div>}
 
-      <div ref={readingClickRoot} className="min-h-0 flex-1 overflow-y-auto relative" onContextMenu={handleContextMenu}>
+      <div ref={scrollRoot} className={`editor-scroll min-h-0 flex-1 overflow-y-auto relative ${mobile ? "is-mobile" : ""}`} onContextMenu={handleContextMenu}>
         <EditorContent editor={editor} />
       </div>
 
-      {contextMenu && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
+      <ContextMenu
+          open={!!contextMenu}
+          x={contextMenu?.x ?? 0}
+          y={contextMenu?.y ?? 0}
           onClose={() => setContextMenu(null)}
           onAction={handleMenuAction}
-          hasSelection={Boolean(contextMenu.excerpt?.text)}
           items={[
-            ...(contextMenu.excerpt?.text ? [
+            ...(contextMenu?.excerpt?.text ? [
               { id: 'copy', label: '复制', icon: Copy },
               ...(!readOnly ? [{ id: 'cut', label: '剪切', icon: Scissors }] : []),
               ...(hasLetterHandler ? [
@@ -296,10 +313,9 @@ export function Editor({
             ] : []),
             ...(!readOnly ? [{ id: 'paste', label: '粘贴', icon: Clipboard }] : []),
             { id: 'selectAll', label: '全选', icon: MousePointer2 },
-            ...(!readOnly && contextMenu.excerpt ? [{ id: 'delete', label: '删除选区', icon: Trash2 }] : []),
+            ...(!readOnly && contextMenu?.excerpt ? [{ id: 'delete', label: '删除选区', icon: Trash2 }] : []),
           ]}
         />
-      )}
     </div>
   );
 }

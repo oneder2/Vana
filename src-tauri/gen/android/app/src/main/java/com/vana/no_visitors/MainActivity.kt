@@ -75,14 +75,18 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // WebView safe-area CSS is zero on some Android versions. Keep all native
-    // screens and overlays clear of system bars/cutouts, while forwarding IME
-    // insets so keyboard resizing continues to work.
+    // screens and fixed editing tools clear of system bars and the IME. With
+    // edge-to-edge enabled, adjustResize delivers insets but does not itself
+    // shrink the WebView; apply the IME here and consume it to avoid doubling.
     val content = findViewById<View>(android.R.id.content)
     val systemInsets = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val bars = insets.getInsets(systemInsets)
-      view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-      WindowInsetsCompat.Builder(insets).setInsets(systemInsets, Insets.NONE).build()
+      val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
+      WindowInsetsCompat.Builder(insets)
+        .setInsets(systemInsets or WindowInsetsCompat.Type.ime(), Insets.NONE)
+        .build()
     }
     ViewCompat.requestApplyInsets(content)
   }

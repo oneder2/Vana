@@ -10,7 +10,7 @@ import { useTheme } from './ThemeProvider';
 import { useDialogFocus } from '@/lib/useDialogFocus';
 
 const reasons = { 'concurrent-tree-change': '同时修改正文或目录，已保留完整本地目录树', 'edit-during-sync': '编辑期间收到云端版本，已保留本地草稿', 'cloud-edit-during-delete': '删除期间收到云端修改，已保留云端正文', 'name-marker': '根据副本名称找到；本机没有记录原文关联' };
-export function DocumentConflictsModal({ scope, onClose, onOpen }: { scope: string; onClose: () => void; onOpen: (document: DocumentRecord) => void }) {
+export function DocumentConflictsModal({ scope, onClose, onOpen, open = true }: { open?: boolean; scope: string; onClose: () => void; onOpen: (document: DocumentRecord) => void }) {
   const { theme } = useTheme();
   const [items, setItems] = useState<DocumentConflictSummary[]>([]);
   const [selected, setSelected] = useState('');
@@ -19,7 +19,7 @@ export function DocumentConflictsModal({ scope, onClose, onOpen }: { scope: stri
   const dialog = useRef<HTMLDivElement>(null), close = useRef<HTMLButtonElement>(null);
   const busyRef = useRef(false), alive = useRef(true);
   const dismiss = useCallback(() => { if (!busyRef.current) onClose(); }, [onClose]);
-  useDialogFocus(dialog, close, dismiss);
+  useDialogFocus(dialog, close, dismiss, open);
   useEffect(() => {
     alive.current = true; setLoading(true);
     void listDocumentConflicts(scope).then(rows => { if (alive.current) { setItems(rows); setSelected(rows[0]?.copy_id ?? ''); } })
@@ -40,8 +40,8 @@ export function DocumentConflictsModal({ scope, onClose, onOpen }: { scope: stri
   }, [item]);
   const preview = (() => { try { return parseDocumentBody((view === 'original' ? item?.original : item?.copy)?.content_json ?? 'null'); } catch { return null; } })();
   const border = getThemeBorderColor(theme), accent = getThemeAccentColor(theme);
-  return createPortal(<div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 p-2 sm:p-5" onClick={event => { if (event.target === event.currentTarget) dismiss(); }}>
-    <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="conflicts-title" tabIndex={-1} className="history-dialog flex h-[min(92dvh,850px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border shadow-2xl" style={{ borderColor: border, backgroundColor: getThemeSurfaceColor(theme), color: getThemeTextColor(theme), '--history-accent': accent } as CSSProperties}>
+  return createPortal(<div className="vana-modal-overlay" data-open={open} inert={!open} onClick={event => { if (event.target === event.currentTarget) dismiss(); }}>
+    <div ref={dialog} role={open ? 'dialog' : undefined} aria-modal={open ? true : undefined} aria-labelledby="conflicts-title" tabIndex={-1} className="vana-modal history-dialog flex h-[min(92dvh,850px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border shadow-2xl" style={{ borderColor: border, backgroundColor: getThemeSurfaceColor(theme), color: getThemeTextColor(theme), '--history-accent': accent } as CSSProperties}>
       <header className="flex items-center gap-3 border-b px-4 py-4 sm:px-6" style={{ borderColor: border }}><span className="history-icon"><GitCompareArrows size={20} /></span><div className="min-w-0 flex-1"><p className="mb-1 text-[10px] uppercase tracking-[0.18em] opacity-60">Sync copies</p><h2 id="conflicts-title">同步副本</h2></div><button ref={close} disabled={busy} className="history-control p-2" onClick={dismiss} aria-label="关闭同步副本"><X size={18} /></button></header>
       <p className="border-b px-4 py-3 text-xs leading-6 opacity-70" style={{ borderColor: border }}>同步保留的内容可在这里对照。确认已查看会移出本机列表，正文继续保留在文档库；需要合并时，打开副本复制所需内容。</p>
       {loading ? <div role="status" className="flex items-center gap-2 p-5 text-sm"><Loader2 size={14} className="animate-spin" />正在读取副本…</div> : !items.length ? <p className="p-6 text-sm opacity-70">没有待查看的同步副本。</p> : <div className="flex min-h-0 flex-1 flex-col sm:flex-row">

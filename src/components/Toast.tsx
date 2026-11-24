@@ -7,7 +7,6 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
 import { X, CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
 import { getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor } from '@/lib/themeStyles';
@@ -19,13 +18,6 @@ import { useToast, useToastList, type ToastItem } from './ToastProvider';
 function ToastItemComponent({ toast }: { toast: ToastItem }) {
   const { theme } = useTheme();
   const { removeToast } = useToast();
-  const [isVisible, setIsVisible] = useState(false);
-
-  // 淡入动画
-  useEffect(() => {
-    setTimeout(() => setIsVisible(true), 10);
-  }, []);
-
   // 获取图标和颜色
   const getIcon = () => {
     switch (toast.type) {
@@ -40,22 +32,11 @@ function ToastItemComponent({ toast }: { toast: ToastItem }) {
     }
   };
 
-  // 处理关闭
-  const handleClose = () => {
-    setIsVisible(false);
-    setTimeout(() => {
-      removeToast(toast.id);
-    }, 200); // 等待淡出动画完成
-  };
-
   return (
     <div
-      className={`transition-all duration-200 ${
-        isVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full'
-      }`}
-      style={{
-        transform: isVisible ? 'translateX(0)' : 'translateX(100%)',
-      }}
+      className="vana-toast"
+      data-open={!toast.closing}
+      inert={!!toast.closing}
     >
       <div
         className="min-w-[300px] max-w-md px-4 py-3 rounded border shadow-lg flex items-start gap-3 mb-2"
@@ -81,7 +62,7 @@ function ToastItemComponent({ toast }: { toast: ToastItem }) {
 
         {/* 关闭按钮 */}
         <button
-          onClick={handleClose}
+          onClick={() => removeToast(toast.id)}
           className="flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
           style={{
             color: getThemeAccentColor(theme),

@@ -1,4 +1,9 @@
 import { Node } from '@tiptap/core';
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Copy, Files, FileText, Pencil, Share2, Trash2 } from 'lucide-react';
+import { LetterModuleMenu } from '@/components/LetterModuleMenu';
+import { closeHistory } from '@tiptap/pm/history';
 import { parseLetter } from './model';
 import { letterText, readLetter, type LetterpressRequest } from './document';
 import './embedded.css';
@@ -19,24 +24,31 @@ export const LetterpressBlock = Node.create<{ onOpen?: (request: LetterpressRequ
   },
   renderText({ node }) { return letterText(readLetter(node.toJSON())); },
   addNodeView() {
-    return ({ node }) => {
+    return ({ node, editor, getPos }) => {
       let current = node, destroyed = false, revision = 0;
       const dom = document.createElement('figure');
-      dom.className = 'vana-letter-block'; dom.contentEditable = 'false';
+      dom.className = 'vana-letter-block'; dom.contentEditable = 'false'; dom.dataset.vanaModule = 'letterpress'; dom.dataset.moduleEditing = 'false'; dom.tabIndex = 0;
       const canvas = document.createElement('canvas');
       canvas.setAttribute('role', 'img');
       const fallback = document.createElement('figcaption');
       fallback.className = 'vana-letter-fallback';
-      const actions = document.createElement('div'); actions.className = 'vana-letter-actions';
-      const open = document.createElement('button'); open.type = 'button'; open.textContent = '调整信稿';
-      open.addEventListener('click', () => {
-        if (!destroyed) this.options.onOpen?.({ purpose: 'embed', design: readLetter(current.toJSON()), blockId: current.attrs.id });
-      });
-      const share = document.createElement('button'); share.type = 'button'; share.textContent = '分享图片';
-      share.addEventListener('click', () => {
-        if (!destroyed) this.options.onOpen?.({ purpose: 'share', design: readLetter(current.toJSON()), blockId: current.attrs.id });
-      });
-      actions.append(open, share); dom.append(canvas, fallback, actions);
+      const actions = document.createElement('div'); actions.className = 'module-actions';
+      dom.append(canvas, fallback, actions);
+      const root = createRoot(actions);
+      const menu = () => {
+        if (!this.options.onOpen) return;
+        root.render(createElement(LetterModuleMenu, { host: dom, design: readLetter(current.toJSON()), items: [
+          ...(editor.isEditable ? [{ id: 'edit', label: '编辑信稿', icon: Pencil }] : []),
+          { id: 'copy', label: '复制文字', icon: Copy }, { id: 'share', label: '分享图片', icon: Share2 },
+          ...(editor.isEditable ? [{ id: 'duplicate', label: '复制模块', icon: Files }, { id: 'convert', label: '转为普通正文', icon: FileText }, { id: 'delete', label: '删除模块', icon: Trash2, danger: true, separator: true }] : []),
+        ], onAction: (id: string) => {
+          if (id === 'edit') { this.options.onOpen?.({ purpose: 'embed', design: readLetter(current.toJSON()), blockId: current.attrs.id }); return; }
+          const pos = getPos(); if (!editor.isEditable || typeof pos !== 'number') return;
+          if (id === 'duplicate') { const copy = current.toJSON(); copy.attrs = { ...copy.attrs, id: crypto.randomUUID() }; editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; }).insertContentAt(pos + current.nodeSize, copy).run(); }
+          if (id === 'delete') editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; }).deleteRange({ from: pos, to: pos + current.nodeSize }).run();
+          if (id === 'convert') editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; }).insertContentAt({ from: pos, to: pos + current.nodeSize }, letterText(readLetter(current.toJSON())).split('\n').map(text => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] }))).run();
+        } }));
+      };
       const draw = async () => {
         const n = ++revision;
         try {
@@ -54,14 +66,13 @@ export const LetterpressBlock = Node.create<{ onOpen?: (request: LetterpressRequ
         }
       };
       // History previews have no callback and remain passive.
-      actions.hidden = !this.options.onOpen;
-      void draw();
+      menu(); void draw();
       return {
         dom,
-        update(next) { if (next.type !== current.type) return false; current = next; canvas.hidden = false; void draw(); return true; },
+        update(next) { if (next.type !== current.type) return false; current = next; canvas.hidden = false; menu(); void draw(); return true; },
         stopEvent(event) { return actions.contains(event.target as globalThis.Node); },
         ignoreMutation() { return true; },
-        destroy() { destroyed = true; revision++; },
+        destroy() { destroyed = true; revision++; queueMicrotask(() => root.unmount()); },
         selectNode() { dom.classList.add('ProseMirror-selectednode'); },
         deselectNode() { dom.classList.remove('ProseMirror-selectednode'); },
       };

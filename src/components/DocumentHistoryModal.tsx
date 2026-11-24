@@ -1,3 +1,4 @@
+import { Disclosure } from '@/components/Disclosure';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, History, Loader2, RotateCcw, X } from 'lucide-react';
@@ -12,8 +13,8 @@ import { useTheme } from './ThemeProvider';
 type View = 'diff' | 'version' | 'current';
 const tabs: { id: View; label: string }[] = [{ id: 'diff', label: '正文差异' }, { id: 'version', label: '所选版本' }, { id: 'current', label: '当前正文' }];
 
-export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChange }: {
-  document: DocumentRecord; onClose: () => void; onRestored: (record: DocumentRecord) => void; onBusyChange: (busy: boolean) => void;
+export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChange, open = true }: {
+  open?: boolean; document: DocumentRecord; onClose: () => void; onRestored: (record: DocumentRecord) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const { theme } = useTheme();
   const [entries, setEntries] = useState<DocumentHistoryEntry[]>([]);
@@ -45,6 +46,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChan
   }, [document.id, document.account_scope]);
 
   useEffect(() => {
+    if (!open) return;
     const previous = window.document.activeElement as HTMLElement | null;
     closeButton.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
@@ -61,7 +63,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChan
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => { window.removeEventListener('keydown', onKeyDown, true); if (previous?.isConnected) previous.focus(); };
-  }, [onClose, confirming]);
+  }, [onClose, confirming, open]);
 
   useEffect(() => { if (confirming) cancelButton.current?.focus(); }, [confirming]);
 
@@ -94,10 +96,10 @@ export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChan
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 p-2 sm:p-5"
+    <div className="vana-modal-overlay" data-open={open} inert={!open}
       onClick={event => { if (event.target === event.currentTarget && !busyRef.current) onClose(); }}>
-      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="document-history-title" tabIndex={-1} aria-busy={busy}
-        className="history-dialog flex h-[min(92dvh,850px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border shadow-2xl"
+      <div ref={dialog} role={open ? 'dialog' : undefined} aria-modal={open ? true : undefined} aria-labelledby="document-history-title" tabIndex={-1} aria-busy={busy}
+        className="vana-modal history-dialog flex h-[min(92dvh,850px)] w-full max-w-6xl flex-col overflow-hidden rounded-xl border shadow-2xl"
         style={{ backgroundColor: getThemeSurfaceColor(theme), borderColor: border, color: getThemeTextColor(theme), '--history-accent': accent } as CSSProperties}>
         <header className="flex items-center gap-3 border-b px-4 py-4 sm:px-6" style={{ borderColor: border }}>
           <span className="history-icon"><History size={20} /></span>
@@ -150,7 +152,7 @@ export function DocumentHistoryModal({ document, onClose, onRestored, onBusyChan
             <p className="max-w-xl text-xs leading-6">恢复到 {entry ? new Date(entry.created_at).toLocaleString() : ''} 的正文？当前正文会保存为一条记录，标题、标签和目录不变。</p>
             <div className="flex gap-2"><button ref={cancelButton} disabled={busy} className="history-control rounded-md border px-3 py-2 text-xs" style={{ borderColor: border }} onClick={() => { setConfirming(false); restoreButton.current?.focus(); }}>取消</button><button disabled={busy} className="history-restore" onClick={() => void restore()}>{busy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}{busy ? '正在恢复…' : '确认恢复正文'}</button></div>
           </div> : <div className="flex flex-wrap items-center justify-between gap-3">
-            <details className="max-w-xl text-xs leading-6 opacity-65"><summary className="cursor-pointer">记录说明</summary><p className="mt-2">修改记录保存在此设备，仅包含正文。最近 30 天内每篇最多保留 20 条，较早记录可能被清理；长期留存可在设置中导出备份。</p></details>
+            <Disclosure className="max-w-xl text-xs leading-6 opacity-65" title={<>记录说明</>}><p className="mt-2">修改记录保存在此设备，仅包含正文。最近 30 天内每篇最多保留 20 条，较早记录可能被清理；长期留存可在设置中导出备份。</p></Disclosure>
             <button ref={restoreButton} disabled={!comparison || comparison.identical || document.status !== 'active' || busy} className="history-restore" onClick={() => setConfirming(true)}><RotateCcw size={14} />恢复所选正文</button>
           </div>}
         </footer>

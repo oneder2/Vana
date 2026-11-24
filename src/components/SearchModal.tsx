@@ -5,6 +5,8 @@
 
 'use client';
 
+import { usePresence } from '@/lib/usePresence';
+import { useDialogFocus } from '@/lib/useDialogFocus';
 import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from './ThemeProvider';
 import { getThemeBgColor, getThemeSurfaceColor, getThemeBorderColor, getThemeAccentColor, getThemeAccentBgColor } from '@/lib/themeStyles';
@@ -24,6 +26,7 @@ interface SearchModalProps {
  * 搜索模态框组件
  */
 export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: SearchModalProps) {
+  const present = usePresence(isOpen), panel = useRef<HTMLDivElement>(null);
   const { theme } = useTheme();
   const toast = useToast();
   const [query, setQuery] = useState('');
@@ -33,6 +36,8 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
   const [selectedIndex, setSelectedIndex] = useState(-1); // 当前选中的结果索引
   const inputRef = React.useRef<HTMLInputElement>(null);
   const resultsRef = React.useRef<HTMLDivElement>(null);
+
+  useDialogFocus(panel, inputRef, onClose, isOpen);
 
   // 重置选中索引
   useEffect(() => {
@@ -58,19 +63,6 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
     return () => { clearTimeout(timer); ++searchIntent.current; };
   }, [query, isOpen, workspacePath, toast]);
 
-  // 阻止背景滚动
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-
-    return () => {
-      document.body.style.overflow = '';
-    };
-  }, [isOpen]);
-
   const handleFileSelect = (result: SearchResult) => {
     onFileSelect?.(result.document_id);
     onClose();
@@ -81,9 +73,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      } else if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
         const maxIndex = results.length - 1;
         setSelectedIndex((prev) => (prev < maxIndex ? prev + 1 : prev));
@@ -137,7 +127,7 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
     );
   };
 
-  if (!isOpen) {
+  if (!present) {
     return null;
   }
 
@@ -145,17 +135,18 @@ export function SearchModal({ isOpen, onClose, workspacePath, onFileSelect }: Se
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-2 md:p-4"
+      ref={panel}
+      className="vana-modal-overlay" data-open={isOpen} inert={!isOpen}
       style={{
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
       }}
       onClick={onClose}
-      role="dialog"
-      aria-modal="true"
+      role={isOpen ? 'dialog' : undefined}
+      aria-modal={isOpen ? true : undefined}
       aria-labelledby="search-modal-title"
     >
       <div
-        className="w-full max-w-2xl max-h-[calc(100dvh-1rem)] md:max-h-[80vh] flex flex-col rounded-lg border shadow-lg"
+        className="vana-modal w-full max-w-2xl max-h-[calc(100dvh-1rem)] md:max-h-[80vh] flex flex-col rounded-lg border shadow-lg"
         style={{
           backgroundColor: getThemeBgColor(theme),
           borderColor: getThemeBorderColor(theme),

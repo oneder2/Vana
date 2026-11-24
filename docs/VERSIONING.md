@@ -1,6 +1,6 @@
 # 版本与分支
 
-当前版本为 0.8.0，内容见 [更新说明](RELEASE_NOTES_0.8.0.md)。SemVer 使用 `major.minor.patch`；Beta 是产品成熟度说明，不代表每次都创建预发布 tag。
+当前源码版本为 0.8.1，内容见 [更新说明](RELEASE_NOTES_0.8.1.md)。SemVer 使用 `major.minor.patch`；Beta 是产品成熟度说明，不代表每次都创建预发布 tag。
 
 0.8.x 用于增加新功能和文字组件，0.9.x 用于最后一轮前端界面优化，完成验收后发布 1.0.0。各阶段都处理缺陷与数据可靠性问题；具体范围见 [开发路线](ROADMAP.md)。
 
@@ -15,7 +15,7 @@
 ## 统一版本
 
 ```bash
-node scripts/sync-version.mjs 0.8.0
+node scripts/sync-version.mjs 0.8.1
 ```
 
 同时更新 `package.json`、`package-lock.json`（含根包）、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 的本包记录和 `src-tauri/tauri.conf.json`。不要手改一个文件而遗漏 lockfile。MSI 四段版本只在对应 Windows 构建中作为第二参数传入；旧的 `bundle.windows.version` 字段会移除。

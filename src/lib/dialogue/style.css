@@ -1,0 +1,51 @@
+.vana-dialogue { margin: 1.5rem 0; padding: 18px; border: 1px solid var(--doc-border-color); border-radius: 8px; color: var(--doc-text-color); --dialogue-gap: 22px; }
+.vana-dialogue[data-density=compact] { --dialogue-gap: 10px; }
+.vana-dialogue [hidden] { display: none !important; }
+.vana-dialogue .dialogue-words p.is-empty::before { content: attr(data-placeholder); float: left; color: var(--doc-muted-color); pointer-events: none; height: 0; font-size: 14px; }
+.vana-dialogue .vana-dialogue-lines { display: grid; gap: var(--dialogue-gap); }
+.vana-dialogue-line { min-width: 0; font-family: var(--dialogue-font); }
+.dialogue-speaker { display: flex; align-items: center; gap: 8px; font-family: var(--doc-body-font-family); font-size: 13px; font-weight: 600; color: var(--doc-accent-color); margin-bottom: 5px; min-height: 24px; }
+.dialogue-speaker input { width: 140px; min-width: 0; max-width: 65%; background: transparent; color: inherit; padding: 6px 0; border-bottom: 1px solid var(--doc-border-color); border-radius: 0; font: inherit; }
+.dialogue-speaker span, .dialogue-title { overflow-wrap: anywhere; min-width: 0; }
+.dialogue-line-actions { display: flex; gap: 4px; margin-left: auto; opacity: .7; }
+.dialogue-line-actions button { font-size: 12px; white-space: nowrap; }
+.vana-dialogue:not([data-layout=chat]) .dialogue-side { display: none; }
+.vana-dialogue .dialogue-words p { margin: 0; font-size: inherit; min-height: 1.7em; line-height: 1.8; }
+.vana-dialogue .dialogue-words p + p { margin-top: .5em; }
+.vana-dialogue .dialogue-words { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.vana-dialogue[data-layout=chat] .vana-dialogue-line { width: min(88%, 640px); }
+.vana-dialogue[data-layout=chat] .vana-dialogue-line[data-side=right] { margin-left: auto; }
+.vana-dialogue[data-layout=chat] .dialogue-words { background: var(--doc-surface-color); border: 1px solid var(--doc-border-color); border-radius: 3px 14px 14px; padding: 12px 16px; }
+.vana-dialogue[data-layout=chat] .vana-dialogue-line[data-side=right] .dialogue-words { background: color-mix(in srgb, var(--doc-accent-color) 12%, var(--doc-surface-color)); border-radius: 14px 3px 14px 14px; }
+.vana-dialogue[data-layout=chat] .vana-dialogue-line[data-side=right] .dialogue-speaker { flex-direction: row-reverse; }
+.vana-dialogue[data-layout=chat] .vana-dialogue-line[data-side=right] .dialogue-speaker input { text-align: right; }
+.vana-dialogue[data-layout=chat] .vana-dialogue-line[data-side=right] .dialogue-line-actions { margin-right: auto; margin-left: 0; }
+.vana-dialogue[data-layout=script] .vana-dialogue-line { display: grid; grid-template-columns: minmax(80px, 22%) minmax(0, 1fr); gap: 18px; }
+.vana-dialogue[data-layout=script] .dialogue-speaker { flex-direction: column; align-items: flex-start; margin: 0; }
+.vana-dialogue[data-layout=script] .dialogue-speaker input { width: 100%; max-width: 100%; }
+.vana-dialogue[data-layout=script] .dialogue-line-actions { margin-left: 0; }
+.vana-dialogue[data-layout=transcript] .dialogue-words { padding-left: 14px; border-left: 2px solid var(--doc-border-color); }
+.dialogue-tools { font-family: var(--doc-body-font-family); margin-bottom: 20px; }
+.dialogue-title-input { width: 100%; color: inherit; background: transparent; font: inherit; font-size: 15px; margin-bottom: 10px; padding: 5px 0; }
+.vana-dialogue .dialogue-title { margin: 0 0 20px; font-size: 16px; font-weight: 600; }
+.dialogue-tools summary { cursor: pointer; font-size: 13px; min-height: 36px; padding: 8px 0; color: var(--doc-muted-color); }
+.dialogue-settings { padding: 14px; border: 1px solid var(--doc-border-color); border-radius: 5px; margin: 8px 0; font-size: 13px; }
+.dialogue-style-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.dialogue-style-fields label { display: grid; gap: 8px; }
+.dialogue-style-fields select { min-width: 0; width: 100%; color: inherit; background: var(--doc-surface-color); padding: 9px; border: 1px solid var(--doc-border-color); border-radius: 4px; }
+.vana-dialogue button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 6px 10px; border-radius: 4px; font-family: var(--doc-body-font-family); }
+.vana-dialogue button:hover:not(:disabled) { background: var(--doc-surface-color); }
+.vana-dialogue button:disabled { opacity: .4; cursor: default; }
+.vana-dialogue :is(button, input, select, summary):focus-visible { outline: 2px solid var(--doc-accent-color); outline-offset: 2px; }
+.dialogue-footer { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 20px; color: var(--doc-muted-color); font-family: var(--doc-body-font-family); font-size: 12px; }
+@media (max-width: 640px) {
+  .vana-dialogue { padding: 12px; }
+  .vana-dialogue button, .dialogue-speaker input, .dialogue-tools summary, .dialogue-style-fields select { min-height: 44px; }
+  .dialogue-style-fields { grid-template-columns: 1fr; }
+  .vana-dialogue[data-layout=chat] .vana-dialogue-line { width: 96%; }
+  .vana-dialogue[data-layout=script] .vana-dialogue-line { grid-template-columns: 1fr; gap: 6px; }
+  .vana-dialogue[data-layout=script] .dialogue-speaker { flex-direction: row; align-items: center; }
+  .vana-dialogue[data-layout=script] .dialogue-speaker input { max-width: 60%; }
+  .dialogue-settings { padding: 10px; }
+}
+@media print { .dialogue-tools, .dialogue-footer, .dialogue-line-actions { display: none; } }

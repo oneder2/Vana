@@ -307,7 +307,9 @@ mod regressions {
         assert_eq!(export_sync_documents(&app,"guest").unwrap().documents.iter().find(|r| r.id == d.id).unwrap().content_json, letter.content_json);
         let backup = export_space_backup(&app, "guest").unwrap();
         let imported = import_space_backup(&app, "guest", &backup).unwrap();
-        assert_eq!(get_document(&app, imported.first_document_id.as_deref().unwrap()).unwrap().unwrap().content_json, letter.content_json);
+        assert!(imported.documents > 0);
+        let copied: serde_json::Value = serde_json::from_str(&export_space_backup(&app, "guest").unwrap()).unwrap();
+        assert_eq!(copied["documents"].as_array().unwrap().iter().filter(|d| d["content_json"].as_str() == Some(letter.content_json.as_str())).count(), 2);
         let receiver = AppHandle(std::env::temp_dir().join(format!("vana-letter-receiver-{}",uuid::Uuid::new_v4())));
         let mut cloud = remote(&restored,1,"信稿云端正文"); cloud.content_json=letter.content_json.clone(); cloud.plain_text=restored.plain_text.clone();
         apply_remote_documents(&receiver,"guest",vec![cloud]).unwrap();
@@ -332,6 +334,85 @@ mod regressions {
         assert_eq!(get_document(&app,&d.id).unwrap().unwrap().content_json, letter.content_json);
         assert_eq!(export_sync_documents(&app,"guest").unwrap().pending_job_ids, before_jobs);
         assert_eq!(list_document_history(&app,"guest",&d.id).unwrap().len(), before_history);
+        std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn dialogue_text_survives_history_backup_and_sync_and_invalid_styles_do_not_write() {
+        let app = app(); let d = create(&app, "guest", "document", None);
+        let card: serde_json::Value = serde_json::from_str(include_str!("../../fixtures/dialogue-v1.json")).unwrap();
+        let body = serde_json::json!({"type":"doc","content":[card,{"type":"paragraph"}]});
+        let mut draft = input(&d, "对话测试"); draft.content_json = body.to_string();
+        draft.plain_text = "灯塔值守记录\n\n旅人：灯还亮着吗？\n守塔人：我一直在等你。".into();
+        let saved = save_document(&app, draft).unwrap();
+        assert!(saved.plain_text.contains("守塔人：我一直在等你。") && saved.plain_text.contains("灯塔值守记录"));
+        assert_eq!(get_document(&AppHandle(app.0.clone()), &d.id).unwrap().unwrap().content_json, saved.content_json);
+        let history = list_document_history(&app, "guest", &d.id).unwrap();
+        let entry = history.iter().find(|h| h.content_json == saved.content_json).unwrap();
+        let edited = save_document(&app, input(&saved, "修改之后")).unwrap();
+        let restored = restore_document_history(&app, restore_input(&edited, &entry.id)).unwrap();
+        assert_eq!(restored.content_json, saved.content_json);
+        assert!(restored.plain_text.contains("守塔人：我一直在等你。") && restored.plain_text.contains("灯塔值守记录"));
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().documents.iter().find(|r| r.id == d.id).unwrap().content_json, saved.content_json);
+        let backup = export_space_backup(&app, "guest").unwrap();
+        let imported = import_space_backup(&app, "guest", &backup).unwrap();
+        assert!(imported.documents > 0);
+        let copied: serde_json::Value = serde_json::from_str(&export_space_backup(&app, "guest").unwrap()).unwrap();
+        assert_eq!(copied["documents"].as_array().unwrap().iter().filter(|d| d["content_json"].as_str() == Some(saved.content_json.as_str())).count(), 2);
+        let receiver = AppHandle(std::env::temp_dir().join(format!("vana-dialogue-receiver-{}", uuid::Uuid::new_v4())));
+        let mut cloud = remote(&restored, 1, "对话同步"); cloud.content_json = saved.content_json.clone(); cloud.plain_text = saved.plain_text.clone();
+        apply_remote_documents(&receiver, "guest", vec![cloud]).unwrap();
+        assert_eq!(get_document(&receiver, &d.id).unwrap().unwrap().content_json, saved.content_json);
+        let before_jobs = export_sync_documents(&app, "guest").unwrap().pending_job_ids;
+        for (field, value) in [("layout", serde_json::json!("<script>")), ("font", serde_json::json!("url(https://bad.test)")), ("title", serde_json::json!("x".repeat(121))), ("extra", serde_json::json!(true))] {
+            let mut invalid = body.clone(); invalid["content"][0]["attrs"][field] = value;
+            let mut draft = input(&restored, "invalid"); draft.content_json = invalid.to_string();
+            assert!(save_document(&app, draft).is_err());
+        }
+        let mut invalid = body.clone(); invalid["content"][0]["content"][0]["type"] = serde_json::json!("blockquote");
+        assert!(document_content::validate(&invalid.to_string()).is_err());
+        let mut invalid = body.clone(); invalid["content"][0]["content"] = serde_json::json!(vec![body["content"][0]["content"][0].clone(); 65]);
+        assert!(document_content::validate(&invalid.to_string()).is_err());
+        assert_eq!(get_document(&app, &d.id).unwrap().unwrap().content_json, saved.content_json);
+        assert_eq!(export_sync_documents(&app, "guest").unwrap().pending_job_ids, before_jobs);
+        std::fs::remove_dir_all(receiver.0).unwrap(); std::fs::remove_dir_all(app.0).unwrap();
+    }
+
+    #[test]
+    fn story_roll_retains_point_and_result_through_restore_backup_and_remote_snapshot() {
+        let app = app();
+        let document = create(&app, "guest", "document", None);
+        let card: serde_json::Value = serde_json::from_str(include_str!("../../fixtures/story-roll-v1.json")).unwrap();
+        let body = serde_json::json!({"type": "doc", "content": [card, {"type": "paragraph"}]});
+        let mut draft = input(&document, "她能进入档案室吗？");
+        draft.content_json = body.to_string();
+        let saved = save_document(&app, draft).unwrap();
+        let entry = list_document_history(&app, "guest", &document.id).unwrap().into_iter()
+            .find(|entry| entry.content_json == saved.content_json).unwrap();
+        let edited = save_document(&app, input(&saved, "后续")).unwrap();
+        let restored = restore_document_history(&app, restore_input(&edited, &entry.id)).unwrap();
+        assert_eq!(restored.content_json, body.to_string());
+        assert_eq!(restored.plain_text.trim_end(), "她能进入档案室吗？\n1D100 · 掷出 43\n她只能带走一份档案。");
+        let backup = export_space_backup(&app, "guest").unwrap();
+        assert!(import_space_backup(&app, "guest", &backup).unwrap().documents > 0);
+        let receiver = AppHandle(std::env::temp_dir().join(format!("vana-story-receiver-{}", uuid::Uuid::new_v4())));
+        let mut snapshot = remote(&restored, 1, "剧情判定");
+        snapshot.content_json = restored.content_json.clone();
+        snapshot.plain_text = restored.plain_text.clone();
+        apply_remote_documents(&receiver, "guest", vec![snapshot]).unwrap();
+        assert_eq!(get_document(&receiver, &document.id).unwrap().unwrap().content_json, restored.content_json);
+        for invalid in [
+            serde_json::json!({"value": 101, "text": "她只能带走一份档案。"}),
+            serde_json::json!({"value": 43, "text": "其他分支"}),
+        ] {
+            let mut body = body.clone();
+            body["content"][0]["attrs"]["result"] = invalid;
+            let mut input = input(&restored, "无效判定");
+            input.content_json = body.to_string();
+            assert!(save_document(&app, input).is_err());
+        }
+        assert_eq!(get_document(&app, &document.id).unwrap().unwrap().content_json, restored.content_json);
+        std::fs::remove_dir_all(receiver.0).unwrap();
         std::fs::remove_dir_all(app.0).unwrap();
     }
 
